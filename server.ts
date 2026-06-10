@@ -60,8 +60,10 @@ app.use((_req, res) => {
 app.use(errorHandler);
 
 // ─── Start Server ─────────────────────────────────────────────────────
-app.listen(PORT, () => {
-  console.log(`🚀 AttendBox API running at http://localhost:${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 AttendBox API running at http://0.0.0.0:${PORT}`);
+  console.log(`   Local:   http://localhost:${PORT}`);
+  console.log(`   Network: http://<your-ip>:${PORT}`);
 });
 
 export default app;

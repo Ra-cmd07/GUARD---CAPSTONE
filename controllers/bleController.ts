@@ -90,7 +90,7 @@ export async function uploadBleData(req: Request, res: Response): Promise<void> 
     const rejectedCount = { value: 0 };
 
     const insertPromises = devices.map(async (device: any) => {
-      const macAddress = String(device.mac_address || '').trim().toUpperCase();
+      const macAddress = String(device.mac_address || '').trim();
       const distance = Number(device.distance || 0);
       const rssi = Number(device.rssi || 0);
       const timestamp = String(device.timestamp || new Date().toISOString()).trim();
@@ -101,10 +101,14 @@ export async function uploadBleData(req: Request, res: Response): Promise<void> 
       }
 
       try {
+        // ✅ FIX: Normalize MAC for comparison (remove colons and dashes)
+        const normalizedMac = normalizeMac(macAddress);
+
         // Check if MAC address is registered in students table
         const [students] = await pool.execute(
-          `SELECT id FROM students WHERE UPPER(mac_address) = ?`,
-          [macAddress]
+          `SELECT id FROM students 
+           WHERE REPLACE(REPLACE(LOWER(mac_address), ':', ''), '-', '') = ?`,
+          [normalizedMac]
         ) as any[];
 
         if ((students as any[]).length === 0) {
