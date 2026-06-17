@@ -1,38 +1,34 @@
 import { Request, Response } from 'express';
-import path from 'path';
-import fs from 'fs';
 import pool from '../lib/db';
 import { AuthRequest } from '../middleware/authMiddleware';
 
 // ─── POST /api/guardians ──────────────────────────────────────────────
 export async function createGuardian(req: AuthRequest, res: Response): Promise<void> {
   try {
-    const { name, age, address, relationship, contact, student_name, photo_base64 } = req.body;
+    const { student_id, student_name, role, name, contact_number } = req.body;
 
-    if (!name || !student_name) {
-      res.status(400).json({ error: 'name and student_name are required' });
+    if (!name) {
+      res.status(400).json({ error: 'name is required' });
       return;
     }
 
-    let photoPath: string | null = null;
+    // Resolve student_id from student_name if not provided
+    let resolvedStudentId = student_id;
+    if (!resolvedStudentId && student_name) {
+      const [rows] = await pool.execute(
+        'SELECT id FROM students WHERE name LIKE ? LIMIT 1', [`%${student_name}%`]
+      ) as any[];
+      resolvedStudentId = (rows as any[])[0]?.id;
+    }
 
-    // Save base64 photo if provided
-    if (photo_base64) {
-      const uploadsDir = path.join(__dirname, '..', process.env.UPLOAD_DIR || 'uploads');
-      if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
-
-      const filename  = `guardian_${Date.now()}.jpg`;
-      const filepath  = path.join(uploadsDir, filename);
-      const buffer    = Buffer.from(photo_base64, 'base64');
-      fs.writeFileSync(filepath, buffer);
-      photoPath = `/uploads/${filename}`;
+    if (!resolvedStudentId) {
+      res.status(400).json({ error: 'student_id or a valid student_name is required' });
+      return;
     }
 
     const [result] = await pool.execute(
-      `INSERT INTO teacher (name, age, address, relationship, contact, student_name, photo_path)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [name, age || null, address || null, relationship || null,
-       contact || null, student_name, photoPath]
+      'INSERT INTO parents_teachers (student_id, role, name, contact_number) VALUES (?, ?, ?, ?)',
+      [resolvedStudentId, role || 'Guardian', name, contact_number || null]
     ) as any[];
 
     res.status(201).json({
@@ -45,20 +41,23 @@ export async function createGuardian(req: AuthRequest, res: Response): Promise<v
   }
 }
 
-// ─── GET /api/guardians?student_name= ────────────────────────────────
+// ─── GET /api/guardians?student_name=&student_id= ─────────────────────
 export async function getGuardians(req: Request, res: Response): Promise<void> {
   try {
-    const { student_name } = req.query;
+    const { student_name, student_id } = req.query;
 
-    let query  = 'SELECT * FROM teacher';
-    let params: any[] = [];
+    let query  = 'SELECT pt.*, s.name AS student_name FROM parents_teachers pt JOIN students s ON s.id = pt.student_id';
+    const params: any[] = [];
 
-    if (student_name) {
-      query  += ' WHERE student_name LIKE ?';
-      params  = [`%${student_name}%`];
+    if (student_id) {
+      query  += ' WHERE pt.student_id = ?';
+      params.push(student_id);
+    } else if (student_name) {
+      query  += ' WHERE s.name LIKE ?';
+      params.push(`%${student_name}%`);
     }
 
-    query += ' ORDER BY created_at DESC';
+    query += ' ORDER BY pt.created_at DESC';
 
     const [rows] = await pool.execute(query, params) as any[];
     res.json(rows);

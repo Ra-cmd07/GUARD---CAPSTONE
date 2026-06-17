@@ -5,32 +5,26 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createGuardian = createGuardian;
 exports.getGuardians = getGuardians;
-const path_1 = __importDefault(require("path"));
-const fs_1 = __importDefault(require("fs"));
 const db_1 = __importDefault(require("../lib/db"));
 // ─── POST /api/guardians ──────────────────────────────────────────────
 async function createGuardian(req, res) {
     try {
-        const { name, age, address, relationship, contact, student_name, photo_base64 } = req.body;
-        if (!name || !student_name) {
-            res.status(400).json({ error: 'name and student_name are required' });
+        const { student_id, student_name, role, name, contact_number } = req.body;
+        if (!name) {
+            res.status(400).json({ error: 'name is required' });
             return;
         }
-        let photoPath = null;
-        // Save base64 photo if provided
-        if (photo_base64) {
-            const uploadsDir = path_1.default.join(__dirname, '..', process.env.UPLOAD_DIR || 'uploads');
-            if (!fs_1.default.existsSync(uploadsDir))
-                fs_1.default.mkdirSync(uploadsDir, { recursive: true });
-            const filename = `guardian_${Date.now()}.jpg`;
-            const filepath = path_1.default.join(uploadsDir, filename);
-            const buffer = Buffer.from(photo_base64, 'base64');
-            fs_1.default.writeFileSync(filepath, buffer);
-            photoPath = `/uploads/${filename}`;
+        // Resolve student_id from student_name if not provided
+        let resolvedStudentId = student_id;
+        if (!resolvedStudentId && student_name) {
+            const [rows] = await db_1.default.execute('SELECT id FROM students WHERE name LIKE ? LIMIT 1', [`%${student_name}%`]);
+            resolvedStudentId = rows[0]?.id;
         }
-        const [result] = await db_1.default.execute(`INSERT INTO teacher (name, age, address, relationship, contact, student_name, photo_path)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`, [name, age || null, address || null, relationship || null,
-            contact || null, student_name, photoPath]);
+        if (!resolvedStudentId) {
+            res.status(400).json({ error: 'student_id or a valid student_name is required' });
+            return;
+        }
+        const [result] = await db_1.default.execute('INSERT INTO parents_teachers (student_id, role, name, contact_number) VALUES (?, ?, ?, ?)', [resolvedStudentId, role || 'Guardian', name, contact_number || null]);
         res.status(201).json({
             id: result.insertId,
             message: 'Guardian registered successfully',
@@ -41,17 +35,21 @@ async function createGuardian(req, res) {
         res.status(500).json({ error: 'Server error' });
     }
 }
-// ─── GET /api/guardians?student_name= ────────────────────────────────
+// ─── GET /api/guardians?student_name=&student_id= ─────────────────────
 async function getGuardians(req, res) {
     try {
-        const { student_name } = req.query;
-        let query = 'SELECT * FROM teacher';
-        let params = [];
-        if (student_name) {
-            query += ' WHERE student_name LIKE ?';
-            params = [`%${student_name}%`];
+        const { student_name, student_id } = req.query;
+        let query = 'SELECT pt.*, s.name AS student_name FROM parents_teachers pt JOIN students s ON s.id = pt.student_id';
+        const params = [];
+        if (student_id) {
+            query += ' WHERE pt.student_id = ?';
+            params.push(student_id);
         }
-        query += ' ORDER BY created_at DESC';
+        else if (student_name) {
+            query += ' WHERE s.name LIKE ?';
+            params.push(`%${student_name}%`);
+        }
+        query += ' ORDER BY pt.created_at DESC';
         const [rows] = await db_1.default.execute(query, params);
         res.json(rows);
     }

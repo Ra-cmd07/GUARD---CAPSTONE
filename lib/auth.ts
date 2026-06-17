@@ -2,9 +2,13 @@ import jwt from 'jsonwebtoken';
 
 const SECRET = process.env.JWT_SECRET || 'fallback_secret_change_this';
 
+export type UserRole = 'admin' | 'teacher' | 'parent' | 'student';
+
 export interface TokenPayload {
-  id: number;
+  id:       number;
   username: string;
+  role:     UserRole;
+  profileId?: number; // teacher.id / parent.id / student.id
 }
 
 export function signToken(payload: TokenPayload): string {

@@ -7,16 +7,20 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-// Route imports
+// ─── Route imports ────────────────────────────────────────────────────
 import authRoutes       from './routes/authRoutes';
+import adminRoutes      from './routes/adminRoutes';
 import attendanceRoutes from './routes/attendanceRoutes';
 import studentRoutes    from './routes/studentRoutes';
 import guardianRoutes   from './routes/guardianRoutes';
 import scanPhotoRoutes  from './routes/scanPhotoRoutes';
-import bleRoutes       from './routes/bleRoutes';
-import rfidRoutes      from './routes/rfidRoutes';
+import bleRoutes        from './routes/bleRoutes';
+import rfidRoutes       from './routes/rfidRoutes';
+import kioskRoutes      from './routes/kioskRoutes';
+import locationRoutes   from './routes/locationRoutes';
+import bleApprovalRoutes from './routes/bleApprovalRoutes';
+import rfidApprovalRoutes from './routes/rfidApprovalRoutes';
 
-// Middleware imports
 import { errorHandler } from './middleware/errorMiddleware';
 
 const app  = express();
@@ -25,33 +29,38 @@ const PORT = parseInt(process.env.PORT || '5000');
 // ─── Core Middleware ──────────────────────────────────────────────────
 app.use(helmet());
 app.use(cors({
-  origin:      process.env.CLIENT_ORIGIN || 'http://localhost:5173',
-  credentials: true,
-  methods:     ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  origin:         process.env.CLIENT_ORIGIN || 'http://localhost:5173',
+  credentials:    true,
+  methods:        ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 app.use(morgan('dev'));
-app.use(express.json({ limit: '10mb' }));          // large limit for base64 photos
+app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// ─── Static Files (uploaded scan photos) ─────────────────────────────
+// ─── Static Files ─────────────────────────────────────────────────────
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// ─── API Routes ───────────────────────────────────────────────────────
+// ─── API Routes ────────────────────────────────────────────────────────
 app.use('/api/auth',        authRoutes);
+app.use('/api/admin',       adminRoutes);
 app.use('/api/attendance',  attendanceRoutes);
 app.use('/api/students',    studentRoutes);
 app.use('/api/guardians',   guardianRoutes);
 app.use('/api/scan-photos', scanPhotoRoutes);
-app.use('/api/ble',          bleRoutes);
-app.use('/api/rfid',         rfidRoutes);
+app.use('/api/ble',         bleRoutes);
+app.use('/api/ble',         bleApprovalRoutes);  // BLE pending approval routes
+app.use('/api/rfid',        rfidApprovalRoutes); // RFID approval routes FIRST (/detect, /pending, /approve, /reject)
+app.use('/api/rfid',        rfidRoutes);         // Old RFID routes second (/logs, /dashboard)
+app.use('/api/kiosk',       kioskRoutes);
+app.use('/api/location',    locationRoutes);
 
 // ─── Health Check ─────────────────────────────────────────────────────
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// ─── 404 Handler ─────────────────────────────────────────────────────
+// ─── 404 Handler ──────────────────────────────────────────────────────
 app.use((_req, res) => {
   res.status(404).json({ error: 'Route not found' });
 });
@@ -63,7 +72,6 @@ app.use(errorHandler);
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 AttendBox API running at http://0.0.0.0:${PORT}`);
   console.log(`   Local:   http://localhost:${PORT}`);
-  console.log(`   Network: http://<your-ip>:${PORT}`);
 });
 
 export default app;

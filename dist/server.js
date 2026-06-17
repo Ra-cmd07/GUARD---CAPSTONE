@@ -1,136 +1,70 @@
-import express from 'express';
-import cors from 'cors';
-import helmet from 'helmet';
-import morgan from 'morgan';
-import path from 'path';
-import dotenv from 'dotenv';
-import rateLimit from 'express-rate-limit';
-
-dotenv.config();
-
-// ─── ROUTE IMPORTS ────────────────────────────────────────────────────
-import authRoutes from './routes/authRoutes';
-import attendanceRoutes from './routes/attendanceRoutes';
-import studentRoutes from './routes/studentRoutes';
-import guardianRoutes from './routes/guardianRoutes';
-import scanPhotoRoutes from './routes/scanPhotoRoutes';
-import bleRoutes from './routes/bleRoutes';
-import rfidRoutes from './routes/rfidRoutes';
-import { errorHandler } from './middleware/errorMiddleware';
-
-// ─── ENV ──────────────────────────────────────────────────────────────
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = __importDefault(require("express"));
+const cors_1 = __importDefault(require("cors"));
+const helmet_1 = __importDefault(require("helmet"));
+const morgan_1 = __importDefault(require("morgan"));
+const path_1 = __importDefault(require("path"));
+const dotenv_1 = __importDefault(require("dotenv"));
+dotenv_1.default.config();
+// ─── Route imports ────────────────────────────────────────────────────
+const authRoutes_1 = __importDefault(require("./routes/authRoutes"));
+const adminRoutes_1 = __importDefault(require("./routes/adminRoutes"));
+const attendanceRoutes_1 = __importDefault(require("./routes/attendanceRoutes"));
+const studentRoutes_1 = __importDefault(require("./routes/studentRoutes"));
+const guardianRoutes_1 = __importDefault(require("./routes/guardianRoutes"));
+const scanPhotoRoutes_1 = __importDefault(require("./routes/scanPhotoRoutes"));
+const bleRoutes_1 = __importDefault(require("./routes/bleRoutes"));
+const rfidRoutes_1 = __importDefault(require("./routes/rfidRoutes"));
+const kioskRoutes_1 = __importDefault(require("./routes/kioskRoutes"));
+const locationRoutes_1 = __importDefault(require("./routes/locationRoutes"));
+const bleApprovalRoutes_1 = __importDefault(require("./routes/bleApprovalRoutes"));
+const rfidApprovalRoutes_1 = __importDefault(require("./routes/rfidApprovalRoutes"));
+const errorMiddleware_1 = require("./middleware/errorMiddleware");
+const app = (0, express_1.default)();
 const PORT = parseInt(process.env.PORT || '5000');
-const NODE_ENV = process.env.NODE_ENV || 'development';
-
-// ─── CORS ORIGINS ─────────────────────────────────────────────────────
-const ALLOWED_ORIGINS = [
-    'http://localhost:3000',
-    'http://localhost:5000',
-    'http://localhost:5173',
-    'http://127.0.0.1:3000',
-    'http://127.0.0.1:5000',
-    'http://127.0.0.1:5173',
-];
-
-if (NODE_ENV === 'development') {
-    ALLOWED_ORIGINS.push('http://192.168.1.29:5173');
-    ALLOWED_ORIGINS.push('http://192.168.1.29:3000');
-}
-
-// ─── RATE LIMITERS ────────────────────────────────────────────────────
-const globalLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 100,
-    message: 'Too many requests, please try again later.',
-    standardHeaders: true,
-    legacyHeaders: false,
-    skip: (req) => req.path === '/api/health',
-});
-
-const bleLimiter = rateLimit({
-    windowMs: 60 * 1000,
-    max: 10,
-    message: 'Too many BLE uploads. Max 10 per minute.',
-    statusCode: 429,
-    standardHeaders: true,
-    legacyHeaders: false,
-});
-
-// ─── APP INIT ─────────────────────────────────────────────────────────
-const app = express();
-
-// ─── CORE MIDDLEWARE ──────────────────────────────────────────────────
-app.use(helmet());
-app.use(cors({
-    origin: (origin, callback) => {
-        if (!origin) return callback(null, true); // allow curl/mobile
-        if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
-        console.warn(`❌ CORS rejected: ${origin}`);
-        callback(new Error(`CORS policy: origin ${origin} not allowed`));
-    },
+// ─── Core Middleware ──────────────────────────────────────────────────
+app.use((0, helmet_1.default)());
+app.use((0, cors_1.default)({
+    origin: process.env.CLIENT_ORIGIN || 'http://localhost:5173',
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
-    maxAge: 86400,
 }));
-app.use(morgan('dev'));
-app.use(globalLimiter);
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true }));
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-
-// ─── HEALTH CHECK ─────────────────────────────────────────────────────
+app.use((0, morgan_1.default)('dev'));
+app.use(express_1.default.json({ limit: '10mb' }));
+app.use(express_1.default.urlencoded({ extended: true }));
+// ─── Static Files ─────────────────────────────────────────────────────
+app.use('/uploads', express_1.default.static(path_1.default.join(__dirname, 'uploads')));
+// ─── API Routes ────────────────────────────────────────────────────────
+app.use('/api/auth', authRoutes_1.default);
+app.use('/api/admin', adminRoutes_1.default);
+app.use('/api/attendance', attendanceRoutes_1.default);
+app.use('/api/students', studentRoutes_1.default);
+app.use('/api/guardians', guardianRoutes_1.default);
+app.use('/api/scan-photos', scanPhotoRoutes_1.default);
+app.use('/api/ble', bleRoutes_1.default);
+app.use('/api/ble', bleApprovalRoutes_1.default); // BLE pending approval routes
+app.use('/api/rfid', rfidApprovalRoutes_1.default); // RFID approval routes FIRST (/detect, /pending, /approve, /reject)
+app.use('/api/rfid', rfidRoutes_1.default); // Old RFID routes second (/logs, /dashboard)
+app.use('/api/kiosk', kioskRoutes_1.default);
+app.use('/api/location', locationRoutes_1.default);
+// ─── Health Check ─────────────────────────────────────────────────────
 app.get('/api/health', (_req, res) => {
-    res.json({
-        status: 'ok',
-        timestamp: new Date().toISOString(),
-        environment: NODE_ENV,
-        uptime: process.uptime(),
-    });
+    res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
-
-// ─── ROUTES ───────────────────────────────────────────────────────────
-app.use('/api/auth', authRoutes);
-app.use('/api/attendance', attendanceRoutes);
-app.use('/api/students', studentRoutes);
-app.use('/api/guardians', guardianRoutes);
-app.use('/api/scan-photos', scanPhotoRoutes);
-app.use('/api/rfid', rfidRoutes);
-
-// BLE routes — auth is handled inside bleRoutes
-app.use('/api/ble', bleLimiter, bleRoutes);
-
-// ─── 404 ──────────────────────────────────────────────────────────────
-app.use((req, res) => {
-    res.status(404).json({
-        status: 'error',
-        error: 'Route not found',
-        path: req.path,
-        method: req.method,
-    });
+// ─── 404 Handler ──────────────────────────────────────────────────────
+app.use((_req, res) => {
+    res.status(404).json({ error: 'Route not found' });
 });
-
-// ─── ERROR HANDLER ────────────────────────────────────────────────────
-app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
-    if (err.message?.includes('CORS')) {
-        return res.status(403).json({
-            status: 'error',
-            error: 'CORS policy violation',
-            message: err.message,
-        });
-    }
-    errorHandler(err, req, res, next);
-});
-
-// ─── START ────────────────────────────────────────────────────────────
-const server = app.listen(PORT, '0.0.0.0', () => {
+// ─── Global Error Handler ─────────────────────────────────────────────
+app.use(errorMiddleware_1.errorHandler);
+// ─── Start Server ─────────────────────────────────────────────────────
+app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 AttendBox API running at http://0.0.0.0:${PORT}`);
     console.log(`   Local:   http://localhost:${PORT}`);
-    console.log(`   Network: http://192.168.1.29:${PORT}`);
-    console.log(`✅ MySQL connected successfully`);
 });
-
-process.on('SIGTERM', () => server.close(() => process.exit(0)));
-process.on('SIGINT', () => server.close(() => process.exit(0)));
-
-export default app;
+exports.default = app;
