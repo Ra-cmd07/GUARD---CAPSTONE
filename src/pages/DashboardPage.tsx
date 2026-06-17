@@ -16,7 +16,7 @@ import { enqueueRecord, syncQueue } from '../utils/offlineQueue';
 type Snack = { open: boolean; msg: string; sev: 'success' | 'error' | 'warning' | 'info' };
 
 export default function DashboardPage() {
-  const { teacher, token } = useAuth();
+  const { user: teacher, token } = useAuth();
 
   const [rows,           setRows]           = useState<AttendanceRecord[]>([]);
   const [mode,           setMode]           = useState<'Time-In' | 'Time-Out'>('Time-In');

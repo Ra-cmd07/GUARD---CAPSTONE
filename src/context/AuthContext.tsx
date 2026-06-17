@@ -1,52 +1,57 @@
 import { createContext, useContext, useState } from 'react';
 import type { ReactNode } from 'react';
-
-interface Teacher {
-  id:       number;
-  name:     string;
-  username: string;
-  section?: string;
-}
+import type { UserProfile, UserRole } from '../types';
 
 interface AuthContextType {
-  teacher:  Teacher | null;
+  user:     UserProfile | null;
   token:    string | null;
-  login:    (token: string, teacher: Teacher) => void;
+  role:     UserRole | null;
+  login:    (token: string, user: UserProfile) => void;
   logout:   () => void;
   isAuthed: boolean;
+  // Legacy aliases
+  teacher:  UserProfile | null;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [teacher, setTeacher] = useState<Teacher | null>(() => {
-    const stored = localStorage.getItem('teacher');
-    return stored ? JSON.parse(stored) : null;
+  const [user, setUser] = useState<UserProfile | null>(() => {
+    try { return JSON.parse(localStorage.getItem('attUser') || 'null'); }
+    catch { return null; }
   });
   const [token, setToken] = useState<string | null>(
     () => localStorage.getItem('authToken')
   );
 
-  const login = (newToken: string, newTeacher: Teacher) => {
+  const login = (newToken: string, newUser: UserProfile) => {
     setToken(newToken);
-    setTeacher(newTeacher);
-    localStorage.setItem('authToken',  newToken);
-    localStorage.setItem('teacher',    JSON.stringify(newTeacher));
-    localStorage.setItem('teacherId',  String(newTeacher.id));
-    localStorage.setItem('teacherName', newTeacher.name);
+    setUser(newUser);
+    localStorage.setItem('authToken', newToken);
+    localStorage.setItem('attUser',   JSON.stringify(newUser));
+    // legacy keys
+    localStorage.setItem('teacherId',   String(newUser.id));
+    localStorage.setItem('teacherName', (newUser.profile as any)?.name || newUser.username);
   };
 
   const logout = () => {
     setToken(null);
-    setTeacher(null);
+    setUser(null);
     localStorage.removeItem('authToken');
-    localStorage.removeItem('teacher');
+    localStorage.removeItem('attUser');
     localStorage.removeItem('teacherId');
     localStorage.removeItem('teacherName');
+    localStorage.removeItem('teacher');
   };
 
   return (
-    <AuthContext.Provider value={{ teacher, token, login, logout, isAuthed: !!token }}>
+    <AuthContext.Provider value={{
+      user, token,
+      role:     user?.role ?? null,
+      login, logout,
+      isAuthed: !!token,
+      teacher:  user,   // legacy compat
+    }}>
       {children}
     </AuthContext.Provider>
   );

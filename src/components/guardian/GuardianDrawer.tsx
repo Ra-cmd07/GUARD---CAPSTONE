@@ -10,8 +10,7 @@ interface Props { open: boolean; onClose: () => void; }
 
 export default function GuardianDrawer({ open, onClose }: Props) {
   const [form, setForm] = useState({
-    name: '', age: '', address: '',
-    relationship: '', contact: '', student_name: '',
+    name: '', role: 'Parent 1', contact_number: '', student_name: '',
   });
   const [loading, setLoading] = useState(false);
   const [alert,   setAlert]   = useState<{ type: 'success'|'error'; text: string } | null>(null);
@@ -20,14 +19,14 @@ export default function GuardianDrawer({ open, onClose }: Props) {
 
   const handleSave = async () => {
     if (!form.name || !form.student_name) {
-      setAlert({ type: 'error', text: 'Name and Student Name are required' });
+      setAlert({ type: 'error', text: 'Guardian name and student name are required' });
       return;
     }
     setLoading(true);
     try {
-      await api.post('/guardians', { ...form, age: parseInt(form.age) || null });
-      setAlert({ type: 'success', text: `✅ ${form.name} registered successfully!` });
-      setForm({ name:'', age:'', address:'', relationship:'', contact:'', student_name:'' });
+      await api.post('/guardians', form);
+      setAlert({ type: 'success', text: `✅ ${form.name} registered as guardian successfully!` });
+      setForm({ name: '', role: 'Parent 1', contact_number: '', student_name: '' });
     } catch (err: any) {
       setAlert({ type: 'error', text: err.response?.data?.error || 'Failed to register' });
     } finally {
@@ -37,13 +36,13 @@ export default function GuardianDrawer({ open, onClose }: Props) {
 
   return (
     <Drawer anchor="right" open={open} onClose={onClose}
-      PaperProps={{ sx: { width: { xs: '100vw', sm: 480 } } }}>
+      PaperProps={{ sx: { width: { xs: '100vw', sm: 420 } } }}>
       {/* Header */}
       <Box sx={{
         background: '#0b4d79', color: '#fff', p: 2.5,
         display: 'flex', justifyContent: 'space-between', alignItems: 'center',
       }}>
-        <Typography variant="h6" fontWeight={700}>👥 Register New Teacher</Typography>
+        <Typography variant="h6" fontWeight={700}>👥 Register Guardian</Typography>
         <IconButton onClick={onClose} sx={{ color: '#fff' }}><Close /></IconButton>
       </Box>
 
@@ -51,24 +50,21 @@ export default function GuardianDrawer({ open, onClose }: Props) {
       <Box sx={{ p: 3, overflowY: 'auto', flex: 1 }}>
         {alert && <Alert severity={alert.type} sx={{ mb: 2 }}>{alert.text}</Alert>}
 
-        <TextField label="Full Name *" fullWidth margin="normal"
+        <TextField label="Guardian / Parent Name *" fullWidth margin="normal"
           value={form.name} onChange={e => set('name', e.target.value)} />
-        <TextField label="Age *" type="number" fullWidth margin="normal"
-          inputProps={{ min: 18, max: 100 }}
-          value={form.age} onChange={e => set('age', e.target.value)} />
-        <TextField label="Address" fullWidth margin="normal"
-          value={form.address} onChange={e => set('address', e.target.value)} />
-        <TextField label="Contact Number" fullWidth margin="normal"
-          value={form.contact} onChange={e => set('contact', e.target.value)} />
+
         <FormControl fullWidth margin="normal">
-          <InputLabel>Relationship to Student</InputLabel>
-          <Select value={form.relationship} label="Relationship to Student"
-            onChange={e => set('relationship', e.target.value)}>
-            {['Parent','Teacher','Grandparent','Sibling','Relative','Other'].map(r => (
+          <InputLabel>Role</InputLabel>
+          <Select value={form.role} label="Role" onChange={e => set('role', e.target.value)}>
+            {['Parent 1','Parent 2','Teacher','Grandparent','Sibling','Guardian','Other'].map(r => (
               <MenuItem key={r} value={r}>{r}</MenuItem>
             ))}
           </Select>
         </FormControl>
+
+        <TextField label="Contact Number" fullWidth margin="normal"
+          value={form.contact_number} onChange={e => set('contact_number', e.target.value)} />
+
         <TextField label="Student Name *" fullWidth margin="normal"
           placeholder="Full name of the student"
           value={form.student_name} onChange={e => set('student_name', e.target.value)} />
@@ -79,7 +75,7 @@ export default function GuardianDrawer({ open, onClose }: Props) {
         <Button variant="outlined" onClick={onClose} fullWidth>Cancel</Button>
         <Button variant="contained" color="primary" fullWidth
           onClick={handleSave} disabled={loading}>
-          {loading ? <CircularProgress size={22} color="inherit" /> : '✅ Save Teacher'}
+          {loading ? <CircularProgress size={22} color="inherit" /> : '✅ Save Guardian'}
         </Button>
       </Box>
     </Drawer>
