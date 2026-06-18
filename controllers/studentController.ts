@@ -209,3 +209,74 @@ export async function getStudentAttendance(req: Request, res: Response): Promise
     res.status(500).json({ error: 'Server error' });
   }
 }
+
+// ─── GET /api/students/:id/sms-logs ──────────────────────────────────────
+export async function getStudentSmsLogs(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const { id } = req.params;
+    
+    // Get SMS logs for this student
+    const [logs] = await pool.execute(
+      `SELECT 
+        id, student_name, parent_name, phone_number, message, 
+        status, provider, sent_at, created_at
+       FROM sms_logs 
+       WHERE student_name = (SELECT name FROM students WHERE id = ?)
+       ORDER BY created_at DESC
+       LIMIT 100`,
+      [id]
+    ) as any[];
+    
+    res.json(logs);
+  } catch (err) {
+    console.error('Error fetching SMS logs:', err);
+    res.status(500).json({ error: 'Failed to fetch SMS logs' });
+  }
+}
+
+// ─── DELETE /api/students/:id/sms-logs/clear ─────────────────────────────
+export async function clearStudentSmsLogs(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const { id } = req.params;
+    
+    console.log(`🗑️  Parent clearing SMS history for student ${id}...`);
+    
+    // Get student name first
+    const [students] = await pool.execute(
+      'SELECT name FROM students WHERE id = ?',
+      [id]
+    ) as any[];
+    
+    if ((students as any[]).length === 0) {
+      res.status(404).json({ error: 'Student not found' });
+      return;
+    }
+    
+    const studentName = (students as any[])[0].name;
+    
+    // Count before deletion
+    const [countBefore] = await pool.execute(
+      'SELECT COUNT(*) as total FROM sms_logs WHERE student_name = ?',
+      [studentName]
+    ) as any[];
+    const totalBefore = (countBefore as any[])[0].total;
+    
+    // Delete SMS logs for this student only
+    const [result] = await pool.execute(
+      'DELETE FROM sms_logs WHERE student_name = ?',
+      [studentName]
+    ) as any[];
+    
+    console.log(`✅ Deleted ${(result as any).affectedRows} SMS logs for ${studentName}`);
+    
+    res.json({
+      success: true,
+      message: 'SMS history cleared successfully',
+      deletedCount: (result as any).affectedRows,
+      previousCount: totalBefore
+    });
+  } catch (err) {
+    console.error('Error clearing student SMS logs:', err);
+    res.status(500).json({ error: 'Failed to clear SMS history' });
+  }
+}

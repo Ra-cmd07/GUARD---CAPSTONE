@@ -7,9 +7,8 @@ exports.detectRFID = detectRFID;
 exports.getPendingRFID = getPendingRFID;
 exports.approveRFID = approveRFID;
 exports.rejectRFID = rejectRFID;
-const path_1 = __importDefault(require("path"));
-const fs_1 = __importDefault(require("fs"));
 const db_1 = __importDefault(require("../lib/db"));
+const cloudinary_1 = require("../config/cloudinary");
 // Lightweight SMS helper
 async function sendSms(phone, message) {
     try {
@@ -127,11 +126,20 @@ async function approveRFID(req, res) {
             return;
         }
         const student = students[0];
-        // Determine attendance status
+        // Determine attendance status (Philippines timezone UTC+8)
         const now = new Date();
-        const today = now.toISOString().split('T')[0];
-        const session = now.getHours() < 12 ? 'AM' : 'PM';
-        const timeStr = now.toTimeString().slice(0, 8);
+        const phTime = new Date(now.getTime() + (8 * 60 * 60 * 1000));
+        const today = phTime.toISOString().split('T')[0];
+        // Format time in 12-hour format with AM/PM
+        // Use getUTC methods since phTime is already adjusted to PH time
+        const hour24 = phTime.getUTCHours();
+        const minutes = phTime.getUTCMinutes().toString().padStart(2, '0');
+        const seconds = phTime.getUTCSeconds().toString().padStart(2, '0');
+        const hour12 = hour24 % 12 || 12;
+        const ampm = hour24 < 12 ? 'AM' : 'PM';
+        const timeStr = `${hour12}:${minutes}:${seconds} ${ampm}`;
+        const localHour = hour24;
+        const session = hour24 < 12 ? 'AM' : 'PM';
         // Check if Time-In already exists today
         const [existingIn] = await db_1.default.execute(`SELECT id FROM attendance
        WHERE student_id = ? AND date = ? AND status IN ('Time-In','Late')`, [student.id, today]);
@@ -140,8 +148,9 @@ async function approveRFID(req, res) {
             status = 'Time-Out';
         }
         else {
-            const hour = now.getHours();
-            const min = now.getMinutes();
+            // Late check: after 8:00 AM Philippines time
+            const hour = phTime.getUTCHours();
+            const min = phTime.getUTCMinutes();
             status = (hour > 8 || (hour === 8 && min > 0)) ? 'Late' : 'Time-In';
         }
         // Prevent duplicate same status
@@ -157,17 +166,25 @@ async function approveRFID(req, res) {
             });
             return;
         }
-        // Save photo
+        // Save photo to Cloudinary
         let photoPath = null;
         if (photo_base64) {
-            const uploadsDir = path_1.default.join(__dirname, '..', 'uploads', 'scans');
-            if (!fs_1.default.existsSync(uploadsDir))
-                fs_1.default.mkdirSync(uploadsDir, { recursive: true });
-            const base64Data = photo_base64.replace(/^data:image\/\w+;base64,/, '');
-            const buffer = Buffer.from(base64Data, 'base64');
-            const filename = `rfid_${Date.now()}_${student.name.replace(/\s+/g, '_')}.jpg`;
-            fs_1.default.writeFileSync(path_1.default.join(uploadsDir, filename), buffer);
-            photoPath = `/uploads/scans/${filename}`;
+            try {
+                const base64Data = photo_base64.replace(/^data:image\/\w+;base64,/, '');
+                const filename = `rfid_${Date.now()}_${student.name.replace(/\s+/g, '_')}`;
+                // Upload to Cloudinary
+                const uploadResult = await cloudinary_1.cloudinary.uploader.upload(`data:image/jpeg;base64,${base64Data}`, {
+                    folder: 'attendbox/scans',
+                    public_id: filename,
+                    resource_type: 'image',
+                    transformation: [{ width: 800, height: 800, crop: 'limit' }]
+                });
+                photoPath = uploadResult.secure_url;
+                console.log('📸 RFID photo uploaded to Cloudinary:', photoPath);
+            }
+            catch (err) {
+                console.error('Failed to upload RFID photo to Cloudinary:', err);
+            }
         }
         // Insert attendance
         const [attResult] = await db_1.default.execute(`INSERT INTO attendance

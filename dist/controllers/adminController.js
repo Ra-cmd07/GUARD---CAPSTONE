@@ -15,6 +15,7 @@ exports.createKiosk = createKiosk;
 exports.updateKiosk = updateKiosk;
 exports.getSmsLogs = getSmsLogs;
 exports.getLoginLogs = getLoginLogs;
+exports.clearSmsLogs = clearSmsLogs;
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
 const db_1 = __importDefault(require("../lib/db"));
 // ─── GET /api/admin/dashboard ─────────────────────────────────────────
@@ -292,5 +293,27 @@ async function getLoginLogs(_req, res) {
     }
     catch (err) {
         res.status(500).json({ error: 'Server error' });
+    }
+}
+// ─── DELETE /api/admin/sms-logs/clear ─────────────────────────────────
+async function clearSmsLogs(req, res) {
+    try {
+        console.log(`🗑️  Admin ${req.user?.username} clearing SMS history...`);
+        // Count before deletion
+        const [countBefore] = await db_1.default.execute('SELECT COUNT(*) as total FROM sms_logs');
+        const totalBefore = countBefore[0].total;
+        // Delete all SMS logs
+        const [result] = await db_1.default.execute('DELETE FROM sms_logs');
+        console.log(`✅ Deleted ${result.affectedRows} SMS log records`);
+        res.json({
+            success: true,
+            message: 'SMS history cleared successfully',
+            deletedCount: result.affectedRows,
+            previousCount: totalBefore
+        });
+    }
+    catch (err) {
+        console.error('clearSmsLogs error:', err);
+        res.status(500).json({ error: 'Failed to clear SMS history' });
     }
 }

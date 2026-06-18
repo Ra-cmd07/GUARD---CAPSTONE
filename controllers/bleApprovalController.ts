@@ -1,5 +1,16 @@
 import { Request, Response } from 'express';
 import pool from '../lib/db';
+import { cloudinary } from '../config/cloudinary';
+
+// Lightweight SMS helper
+async function sendSms(phone: string, message: string): Promise<boolean> {
+  try {
+    console.log(`📱 SMS → ${phone}: ${message}`);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 // ─── GET /api/ble/pending ─────────────────────────────────────────────
 // Get pending BLE detections for kiosk approval
@@ -75,35 +86,48 @@ export async function approveDetection(req: Request, res: Response): Promise<voi
       section: student.section
     });
 
-    // Handle photo if provided
+    // Handle photo upload to Cloudinary if provided
     let photoPath = null;
     if (photo_base64) {
-      const fs = require('fs');
-      const path = require('path');
-      
-      const uploadsDir = path.join(__dirname, '../uploads/scans');
-      if (!fs.existsSync(uploadsDir)) {
-        fs.mkdirSync(uploadsDir, { recursive: true });
+      try {
+        const base64Data = photo_base64.replace(/^data:image\/\w+;base64,/, '');
+        const filename = `ble_approved_${Date.now()}_${student.name.replace(/\s+/g, '_')}`;
+        
+        // Upload to Cloudinary
+        const uploadResult = await cloudinary.uploader.upload(
+          `data:image/jpeg;base64,${base64Data}`,
+          {
+            folder: 'attendbox/scans',
+            public_id: filename,
+            resource_type: 'image',
+            transformation: [{ width: 800, height: 800, crop: 'limit' }]
+          }
+        );
+        
+        photoPath = uploadResult.secure_url;
+        console.log('📸 BLE photo uploaded to Cloudinary:', photoPath);
+      } catch (err) {
+        console.error('Failed to upload BLE photo to Cloudinary:', err);
       }
-
-      const timestamp = Date.now();
-      const filename = `ble_approved_${timestamp}_${student.name.replace(/\s+/g, '_')}.jpg`;
-      photoPath = `uploads/scans/${filename}`;
-      const fullPath = path.join(__dirname, '../', photoPath);
-
-      const base64Data = photo_base64.replace(/^data:image\/\w+;base64,/, '');
-      const buffer = Buffer.from(base64Data, 'base64');
-      fs.writeFileSync(fullPath, buffer);
     }
 
     // Calculate Philippines time (UTC+8)
     const now = new Date();
     const phTime = new Date(now.getTime() + (8 * 60 * 60 * 1000));
     const localDate = phTime.toISOString().split('T')[0];
-    const localTime = phTime.toISOString().split('T')[1].split('.')[0];
-    const localHour = parseInt(localTime.split(':')[0]);
-    const localMinute = parseInt(localTime.split(':')[1]);
-    const session = localHour < 12 ? 'AM' : 'PM';
+    
+    // Format time in 12-hour format with AM/PM
+    // Use getUTC methods since phTime is already adjusted to PH time
+    const hour24 = phTime.getUTCHours();
+    const minutes = phTime.getUTCMinutes().toString().padStart(2, '0');
+    const seconds = phTime.getUTCSeconds().toString().padStart(2, '0');
+    const hour12 = hour24 % 12 || 12;
+    const ampm = hour24 < 12 ? 'AM' : 'PM';
+    const localTime = `${hour12}:${minutes}:${seconds} ${ampm}`;
+    
+    const localHour = hour24;
+    const localMinute = phTime.getUTCMinutes();
+    const session = hour24 < 12 ? 'AM' : 'PM';
 
     // Check if attendance already exists for today
     const [existingAttendance] = await pool.execute(
@@ -173,6 +197,27 @@ export async function approveDetection(req: Request, res: Response): Promise<voi
       } else {
         attendanceId = existing.id;
         attendanceStatus = existing.status;
+      }
+    }
+
+    // Send SMS notification to parents/guardians
+    const [guardians] = await pool.execute(
+      'SELECT * FROM parents_teachers WHERE student_id = ?',
+      [student.id]
+    ) as any[];
+
+    const statusEmoji = attendanceStatus === 'Time-In' ? '✅' : attendanceStatus === 'Late' ? '⏰' : '🔔';
+    const message = `${statusEmoji} ATTENDBOX: ${student.name} has ${attendanceStatus === 'Time-In' ? 'arrived at school' : attendanceStatus === 'Time-Out' ? 'left school' : 'arrived LATE'} at ${localTime}. Date: ${localDate}.`;
+
+    for (const g of guardians as any[]) {
+      if (g.contact_number) {
+        const sent = await sendSms(g.contact_number, message);
+        await pool.execute(
+          `INSERT INTO sms_logs (attendance_id, student_name, parent_name, phone_number, message, status, sent_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [attendanceId, student.name, g.name, g.contact_number, message,
+           sent ? 'sent' : 'failed', sent ? new Date() : null]
+        );
       }
     }
 

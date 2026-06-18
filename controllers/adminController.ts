@@ -328,3 +328,29 @@ export async function getLoginLogs(_req: AuthRequest, res: Response): Promise<vo
     res.status(500).json({ error: 'Server error' });
   }
 }
+
+// ─── DELETE /api/admin/sms-logs/clear ─────────────────────────────────
+export async function clearSmsLogs(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    console.log(`🗑️  Admin ${req.user?.username} clearing SMS history...`);
+    
+    // Count before deletion
+    const [countBefore] = await pool.execute('SELECT COUNT(*) as total FROM sms_logs') as any[];
+    const totalBefore = (countBefore as any[])[0].total;
+    
+    // Delete all SMS logs
+    const [result] = await pool.execute('DELETE FROM sms_logs') as any[];
+    
+    console.log(`✅ Deleted ${(result as any).affectedRows} SMS log records`);
+    
+    res.json({
+      success: true,
+      message: 'SMS history cleared successfully',
+      deletedCount: (result as any).affectedRows,
+      previousCount: totalBefore
+    });
+  } catch (err) {
+    console.error('clearSmsLogs error:', err);
+    res.status(500).json({ error: 'Failed to clear SMS history' });
+  }
+}

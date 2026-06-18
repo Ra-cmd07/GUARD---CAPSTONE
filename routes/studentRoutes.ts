@@ -6,6 +6,8 @@ import {
   getStudentById,
   updateStudent,
   getStudentAttendance,
+  getStudentSmsLogs,
+  clearStudentSmsLogs,
 } from '../controllers/studentController';
 
 const router = Router();
@@ -15,5 +17,7 @@ router.post('/',                 protect, requireRole('admin','teacher'), create
 router.get('/:id',               protect, getStudentById);
 router.put('/:id',               protect, requireRole('admin','teacher'), updateStudent);
 router.get('/:id/attendance',    protect, getStudentAttendance);
+router.get('/:id/sms-logs',      protect, getStudentSmsLogs);
+router.delete('/:id/sms-logs/clear', protect, clearStudentSmsLogs);
 
 export default router;

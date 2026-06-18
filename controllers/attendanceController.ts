@@ -162,15 +162,33 @@ export async function updateAttendance(req: AuthRequest, res: Response): Promise
       return;
     }
 
-    // Teacher can only update their section
+    // Teacher can only update their section (with flexible matching)
     if (role === 'teacher' && profileId) {
       const [tRows] = await pool.execute(
         'SELECT section FROM teachers WHERE id = ?', [profileId]
       ) as any[];
       const teacherSection = (tRows as any[])[0]?.section;
-      if (teacherSection && existing.section !== teacherSection) {
-        res.status(403).json({ error: 'Cannot update records outside your section' });
-        return;
+      
+      if (teacherSection && existing.section) {
+        // Extract section part from teacher's section (e.g., "section 1" from "Grade 7 - section 1")
+        const teacherSectionPart = teacherSection.includes(' - ') 
+          ? teacherSection.split(' - ')[1].trim() 
+          : teacherSection;
+        
+        // Check if sections match (exact or partial)
+        const sectionsMatch = 
+          existing.section === teacherSection ||  // Exact match
+          existing.section === teacherSectionPart ||  // Part match
+          existing.section.includes(teacherSectionPart) ||  // Contains match
+          teacherSectionPart.includes(existing.section);  // Reverse contains
+        
+        if (!sectionsMatch) {
+          console.log(`❌ Section mismatch: Teacher="${teacherSection}" vs Record="${existing.section}"`);
+          res.status(403).json({ error: 'Cannot update records outside your section' });
+          return;
+        } else {
+          console.log(`✅ Section match: Teacher="${teacherSection}" matches Record="${existing.section}"`);
+        }
       }
     }
 

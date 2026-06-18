@@ -4,6 +4,8 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import path from 'path';
 import dotenv from 'dotenv';
+import { createServer } from 'http';
+import { initializeWebSocket } from './src/websocket/socketHandler';
 
 dotenv.config();
 
@@ -27,7 +29,10 @@ const app  = express();
 const PORT = parseInt(process.env.PORT || '5000');
 
 // ─── Core Middleware ──────────────────────────────────────────────────
-app.use(helmet());
+app.use(helmet({
+  contentSecurityPolicy: false, // Disable CSP to allow images from same origin
+  crossOriginEmbedderPolicy: false,
+}));
 app.use(cors({
   origin:         process.env.CLIENT_ORIGIN || 'http://localhost:5173',
   credentials:    true,
@@ -39,7 +44,13 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 // ─── Static Files ─────────────────────────────────────────────────────
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+// Handle both dev (ts-node from root) and prod (node from dist/) modes
+const uploadsPath = __dirname.endsWith('dist') 
+  ? path.join(__dirname, '..', 'uploads')  // Production: dist/server.js -> ../uploads
+  : path.join(__dirname, 'uploads');       // Development: server.ts -> ./uploads
+  
+console.log('📁 Serving static uploads from:', path.resolve(uploadsPath));
+app.use('/uploads', express.static(uploadsPath));
 
 // ─── API Routes ────────────────────────────────────────────────────────
 app.use('/api/auth',        authRoutes);
@@ -69,9 +80,16 @@ app.use((_req, res) => {
 app.use(errorHandler);
 
 // ─── Start Server ─────────────────────────────────────────────────────
-app.listen(PORT, '0.0.0.0', () => {
+const httpServer = createServer(app);
+
+// Initialize WebSocket
+const io = initializeWebSocket(httpServer);
+
+httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 AttendBox API running at http://0.0.0.0:${PORT}`);
   console.log(`   Local:   http://localhost:${PORT}`);
+  console.log(`🔌 WebSocket server ready for real-time updates`);
 });
 
 export default app;
+export { io };

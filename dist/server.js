@@ -3,12 +3,15 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.io = void 0;
 const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
 const helmet_1 = __importDefault(require("helmet"));
 const morgan_1 = __importDefault(require("morgan"));
 const path_1 = __importDefault(require("path"));
 const dotenv_1 = __importDefault(require("dotenv"));
+const http_1 = require("http");
+const socketHandler_1 = require("./src/websocket/socketHandler");
 dotenv_1.default.config();
 // ─── Route imports ────────────────────────────────────────────────────
 const authRoutes_1 = __importDefault(require("./routes/authRoutes"));
@@ -27,7 +30,10 @@ const errorMiddleware_1 = require("./middleware/errorMiddleware");
 const app = (0, express_1.default)();
 const PORT = parseInt(process.env.PORT || '5000');
 // ─── Core Middleware ──────────────────────────────────────────────────
-app.use((0, helmet_1.default)());
+app.use((0, helmet_1.default)({
+    contentSecurityPolicy: false, // Disable CSP to allow images from same origin
+    crossOriginEmbedderPolicy: false,
+}));
 app.use((0, cors_1.default)({
     origin: process.env.CLIENT_ORIGIN || 'http://localhost:5173',
     credentials: true,
@@ -38,7 +44,12 @@ app.use((0, morgan_1.default)('dev'));
 app.use(express_1.default.json({ limit: '10mb' }));
 app.use(express_1.default.urlencoded({ extended: true }));
 // ─── Static Files ─────────────────────────────────────────────────────
-app.use('/uploads', express_1.default.static(path_1.default.join(__dirname, 'uploads')));
+// Handle both dev (ts-node from root) and prod (node from dist/) modes
+const uploadsPath = __dirname.endsWith('dist')
+    ? path_1.default.join(__dirname, '..', 'uploads') // Production: dist/server.js -> ../uploads
+    : path_1.default.join(__dirname, 'uploads'); // Development: server.ts -> ./uploads
+console.log('📁 Serving static uploads from:', path_1.default.resolve(uploadsPath));
+app.use('/uploads', express_1.default.static(uploadsPath));
 // ─── API Routes ────────────────────────────────────────────────────────
 app.use('/api/auth', authRoutes_1.default);
 app.use('/api/admin', adminRoutes_1.default);
@@ -63,8 +74,13 @@ app.use((_req, res) => {
 // ─── Global Error Handler ─────────────────────────────────────────────
 app.use(errorMiddleware_1.errorHandler);
 // ─── Start Server ─────────────────────────────────────────────────────
-app.listen(PORT, '0.0.0.0', () => {
+const httpServer = (0, http_1.createServer)(app);
+// Initialize WebSocket
+const io = (0, socketHandler_1.initializeWebSocket)(httpServer);
+exports.io = io;
+httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 AttendBox API running at http://0.0.0.0:${PORT}`);
     console.log(`   Local:   http://localhost:${PORT}`);
+    console.log(`🔌 WebSocket server ready for real-time updates`);
 });
 exports.default = app;

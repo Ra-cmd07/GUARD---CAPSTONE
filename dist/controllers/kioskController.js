@@ -7,9 +7,9 @@ exports.kioskScan = kioskScan;
 exports.kioskPing = kioskPing;
 exports.getKioskList = getKioskList;
 exports.getRecentScans = getRecentScans;
-const path_1 = __importDefault(require("path"));
-const fs_1 = __importDefault(require("fs"));
 const db_1 = __importDefault(require("../lib/db"));
+const socketHandler_1 = require("../src/websocket/socketHandler");
+const cloudinary_1 = require("../config/cloudinary");
 // Lightweight SMS helper — replace body with real provider (Semaphore, Vonage, etc.)
 async function sendSms(phone, message) {
     try {
@@ -58,11 +58,20 @@ async function kioskScan(req, res) {
             res.status(404).json({ error: 'Student not found or not registered for this scan method' });
             return;
         }
-        // ── Determine status ─────────────────────────────────────────────
+        // ── Determine status (Philippines timezone UTC+8) ────────────────
         const now = new Date();
-        const today = now.toISOString().split('T')[0];
-        const session = now.getHours() < 12 ? 'AM' : 'PM';
-        const timeStr = now.toTimeString().slice(0, 8);
+        const phTime = new Date(now.getTime() + (8 * 60 * 60 * 1000));
+        const today = phTime.toISOString().split('T')[0];
+        // Format time in 12-hour format with AM/PM
+        // Use getUTC methods since phTime is already adjusted to PH time
+        const hour24 = phTime.getUTCHours();
+        const minutes = phTime.getUTCMinutes().toString().padStart(2, '0');
+        const seconds = phTime.getUTCSeconds().toString().padStart(2, '0');
+        const hour12 = hour24 % 12 || 12; // Convert 0 to 12 for midnight
+        const ampm = hour24 < 12 ? 'AM' : 'PM';
+        const timeStr = `${hour12}:${minutes}:${seconds} ${ampm}`;
+        const localHour = hour24;
+        const session = hour24 < 12 ? 'AM' : 'PM';
         // Check if Time-In already exists today → this is a Time-Out
         const [existingIn] = await db_1.default.execute(`SELECT id FROM attendance
        WHERE student_id = ? AND date = ? AND status IN ('Time-In','Late')`, [student.id, today]);
@@ -71,9 +80,9 @@ async function kioskScan(req, res) {
             status = 'Time-Out';
         }
         else {
-            // Late check: after 8:00 AM
-            const hour = now.getHours();
-            const min = now.getMinutes();
+            // Late check: after 8:00 AM Philippines time
+            const hour = phTime.getUTCHours();
+            const min = phTime.getUTCMinutes();
             status = (hour > 8 || (hour === 8 && min > 0)) ? 'Late' : 'Time-In';
         }
         // Prevent duplicate same status
@@ -87,17 +96,26 @@ async function kioskScan(req, res) {
             });
             return;
         }
-        // ── Save photo ───────────────────────────────────────────────────
+        // ── Save photo to Cloudinary ─────────────────────────────────────
         let photoPath = null;
         if (photo_base64) {
-            const uploadsDir = path_1.default.join(__dirname, '..', 'uploads', 'scans');
-            if (!fs_1.default.existsSync(uploadsDir))
-                fs_1.default.mkdirSync(uploadsDir, { recursive: true });
-            const base64Data = photo_base64.replace(/^data:image\/\w+;base64,/, '');
-            const buffer = Buffer.from(base64Data, 'base64');
-            const filename = `scan_${Date.now()}_${student.name.replace(/\s+/g, '_')}.jpg`;
-            fs_1.default.writeFileSync(path_1.default.join(uploadsDir, filename), buffer);
-            photoPath = `/uploads/scans/${filename}`;
+            try {
+                const base64Data = photo_base64.replace(/^data:image\/\w+;base64,/, '');
+                const filename = `scan_${Date.now()}_${student.name.replace(/\s+/g, '_')}`;
+                // Upload to Cloudinary
+                const uploadResult = await cloudinary_1.cloudinary.uploader.upload(`data:image/jpeg;base64,${base64Data}`, {
+                    folder: 'attendbox/scans',
+                    public_id: filename,
+                    resource_type: 'image',
+                    transformation: [{ width: 800, height: 800, crop: 'limit' }]
+                });
+                photoPath = uploadResult.secure_url; // Cloudinary HTTPS URL
+                console.log('📸 Photo uploaded to Cloudinary:', photoPath);
+            }
+            catch (err) {
+                console.error('Failed to upload photo to Cloudinary:', err);
+                // Don't fail the attendance, just log the error
+            }
         }
         // ── Insert attendance ────────────────────────────────────────────
         const [attResult] = await db_1.default.execute(`INSERT INTO attendance
@@ -136,6 +154,19 @@ async function kioskScan(req, res) {
         if (kiosk_id) {
             await db_1.default.execute('UPDATE kiosks SET last_ping = NOW() WHERE id = ?', [kiosk_id]);
         }
+        // ── Emit real-time WebSocket event ────────────────────────────────
+        // Get parent ID for WebSocket room targeting
+        const parentId = guardians[0]?.id || null;
+        (0, socketHandler_1.emitAttendanceEvent)({
+            studentId: student.id,
+            studentName: student.name,
+            status,
+            section: student.section,
+            grade: student.grade,
+            parentId,
+            method: scan_method,
+            timestamp: phTime,
+        });
         res.status(201).json({
             message: 'Attendance recorded',
             attendanceId,

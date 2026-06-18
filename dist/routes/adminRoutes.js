@@ -16,5 +16,6 @@ router.get('/kiosks', ...admin, adminController_1.getKiosks);
 router.post('/kiosks', ...admin, adminController_1.createKiosk);
 router.put('/kiosks/:id', ...admin, adminController_1.updateKiosk);
 router.get('/sms-logs', ...admin, adminController_1.getSmsLogs);
+router.delete('/sms-logs/clear', ...admin, adminController_1.clearSmsLogs);
 router.get('/login-logs', ...admin, adminController_1.getLoginLogs);
 exports.default = router;

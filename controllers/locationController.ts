@@ -218,3 +218,45 @@ export async function getCampusMap(req: AuthRequest, res: Response): Promise<voi
     res.status(500).json({ error: 'Server error' });
   }
 }
+
+// ─── DELETE /api/location/student/:studentId/clear ──────────────────
+// Clear location history for a specific student (parent/admin)
+export async function clearStudentLocationHistory(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const { studentId } = req.params;
+
+    // Check permission: parents can only clear their own children's history
+    if (req.user?.role === 'parent' && req.user?.profileId) {
+      const [linkCheck] = await pool.execute(
+        'SELECT 1 FROM parent_student WHERE parent_id = ? AND student_id = ?',
+        [req.user.profileId, studentId]
+      ) as any[];
+      if ((linkCheck as any[]).length === 0) {
+        res.status(403).json({ error: 'Access denied' });
+        return;
+      }
+    }
+
+    // Delete location history for this student
+    await pool.execute(
+      'DELETE FROM student_locations WHERE student_id = ?',
+      [studentId]
+    );
+
+    // Delete BLE detections for this student
+    await pool.execute(
+      'DELETE FROM ble_detections WHERE student_id = ?',
+      [studentId]
+    );
+
+    console.log(`🗑️  Location history cleared for student ID: ${studentId}`);
+
+    res.json({
+      message: 'Location history cleared successfully',
+      student_id: studentId,
+    });
+  } catch (err) {
+    console.error('clearStudentLocationHistory error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+}

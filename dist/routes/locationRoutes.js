@@ -8,6 +8,8 @@ const router = (0, express_1.Router)();
 router.post('/ble-update', locationController_1.updateBleLocation);
 // Get student location (parents/teachers/admin)
 router.get('/student/:studentId', authMiddleware_1.protect, locationController_1.getStudentLocation);
+// Clear student location history (parents/admin)
+router.delete('/student/:studentId/clear', authMiddleware_1.protect, locationController_1.clearStudentLocationHistory);
 // Get all beacons (for map display)
 router.get('/beacons', authMiddleware_1.protect, locationController_1.getBeacons);
 // Get campus-wide location map (admin/teacher only)

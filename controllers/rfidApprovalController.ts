@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import path from 'path';
 import fs from 'fs';
 import pool from '../lib/db';
+import { cloudinary } from '../config/cloudinary';
 
 // Lightweight SMS helper
 async function sendSms(phone: string, message: string): Promise<boolean> {
@@ -164,9 +165,18 @@ export async function approveRFID(req: Request, res: Response): Promise<void> {
     const now = new Date();
     const phTime = new Date(now.getTime() + (8 * 60 * 60 * 1000));
     const today = phTime.toISOString().split('T')[0];
-    const timeStr = phTime.toISOString().split('T')[1].split('.')[0];
-    const localHour = parseInt(timeStr.split(':')[0]);
-    const session = localHour < 12 ? 'AM' : 'PM';
+    
+    // Format time in 12-hour format with AM/PM
+    // Use getUTC methods since phTime is already adjusted to PH time
+    const hour24 = phTime.getUTCHours();
+    const minutes = phTime.getUTCMinutes().toString().padStart(2, '0');
+    const seconds = phTime.getUTCSeconds().toString().padStart(2, '0');
+    const hour12 = hour24 % 12 || 12;
+    const ampm = hour24 < 12 ? 'AM' : 'PM';
+    const timeStr = `${hour12}:${minutes}:${seconds} ${ampm}`;
+    
+    const localHour = hour24;
+    const session = hour24 < 12 ? 'AM' : 'PM';
 
     // Check if Time-In already exists today
     const [existingIn] = await pool.execute(
@@ -179,8 +189,9 @@ export async function approveRFID(req: Request, res: Response): Promise<void> {
     if ((existingIn as any[]).length > 0) {
       status = 'Time-Out';
     } else {
-      const hour = now.getHours();
-      const min = now.getMinutes();
+      // Late check: after 8:00 AM Philippines time
+      const hour = phTime.getUTCHours();
+      const min = phTime.getUTCMinutes();
       status = (hour > 8 || (hour === 8 && min > 0)) ? 'Late' : 'Time-In';
     }
 
@@ -206,16 +217,29 @@ export async function approveRFID(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    // Save photo
+    // Save photo to Cloudinary
     let photoPath: string | null = null;
     if (photo_base64) {
-      const uploadsDir = path.join(__dirname, '..', 'uploads', 'scans');
-      if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
-      const base64Data = photo_base64.replace(/^data:image\/\w+;base64,/, '');
-      const buffer = Buffer.from(base64Data, 'base64');
-      const filename = `rfid_${Date.now()}_${student.name.replace(/\s+/g, '_')}.jpg`;
-      fs.writeFileSync(path.join(uploadsDir, filename), buffer);
-      photoPath = `/uploads/scans/${filename}`;
+      try {
+        const base64Data = photo_base64.replace(/^data:image\/\w+;base64,/, '');
+        const filename = `rfid_${Date.now()}_${student.name.replace(/\s+/g, '_')}`;
+        
+        // Upload to Cloudinary
+        const uploadResult = await cloudinary.uploader.upload(
+          `data:image/jpeg;base64,${base64Data}`,
+          {
+            folder: 'attendbox/scans',
+            public_id: filename,
+            resource_type: 'image',
+            transformation: [{ width: 800, height: 800, crop: 'limit' }]
+          }
+        );
+        
+        photoPath = uploadResult.secure_url;
+        console.log('📸 RFID photo uploaded to Cloudinary:', photoPath);
+      } catch (err) {
+        console.error('Failed to upload RFID photo to Cloudinary:', err);
+      }
     }
 
     // Insert attendance

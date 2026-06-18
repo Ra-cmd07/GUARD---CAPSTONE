@@ -7,6 +7,7 @@ exports.updateBleLocation = updateBleLocation;
 exports.getStudentLocation = getStudentLocation;
 exports.getBeacons = getBeacons;
 exports.getCampusMap = getCampusMap;
+exports.clearStudentLocationHistory = clearStudentLocationHistory;
 const db_1 = __importDefault(require("../lib/db"));
 // ─── POST /api/location/ble-update ───────────────────────────────────
 // Receives BLE beacon detection from student's device or BLE gateway
@@ -171,6 +172,34 @@ async function getCampusMap(req, res) {
     }
     catch (err) {
         console.error('getCampusMap error:', err);
+        res.status(500).json({ error: 'Server error' });
+    }
+}
+// ─── DELETE /api/location/student/:studentId/clear ──────────────────
+// Clear location history for a specific student (parent/admin)
+async function clearStudentLocationHistory(req, res) {
+    try {
+        const { studentId } = req.params;
+        // Check permission: parents can only clear their own children's history
+        if (req.user?.role === 'parent' && req.user?.profileId) {
+            const [linkCheck] = await db_1.default.execute('SELECT 1 FROM parent_student WHERE parent_id = ? AND student_id = ?', [req.user.profileId, studentId]);
+            if (linkCheck.length === 0) {
+                res.status(403).json({ error: 'Access denied' });
+                return;
+            }
+        }
+        // Delete location history for this student
+        await db_1.default.execute('DELETE FROM student_locations WHERE student_id = ?', [studentId]);
+        // Delete BLE detections for this student
+        await db_1.default.execute('DELETE FROM ble_detections WHERE student_id = ?', [studentId]);
+        console.log(`🗑️  Location history cleared for student ID: ${studentId}`);
+        res.json({
+            message: 'Location history cleared successfully',
+            student_id: studentId,
+        });
+    }
+    catch (err) {
+        console.error('clearStudentLocationHistory error:', err);
         res.status(500).json({ error: 'Server error' });
     }
 }

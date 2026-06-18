@@ -8,6 +8,8 @@ exports.createStudent = createStudent;
 exports.getStudentById = getStudentById;
 exports.updateStudent = updateStudent;
 exports.getStudentAttendance = getStudentAttendance;
+exports.getStudentSmsLogs = getStudentSmsLogs;
+exports.clearStudentSmsLogs = clearStudentSmsLogs;
 const db_1 = __importDefault(require("../lib/db"));
 // ─── GET /api/students ────────────────────────────────────────────────
 async function getStudents(req, res) {
@@ -16,23 +18,23 @@ async function getStudents(req, res) {
     try {
         const { role, profileId } = req.user;
         console.log(`[getStudents] Role: ${role}, ProfileId: ${profileId}`);
-        // For parent role, get their children via parents_teachers.user_id
-        if (role === 'parent') {
-            console.log(`[getStudents] Querying for parent user_id: ${req.user.id}`);
-            // Query students linked to this parent via user_id
-            const [students] = await db_1.default.execute(`SELECT DISTINCT
-          s.id, s.lrn, s.name, s.gender, s.grade, s.section,
-          s.mac_address, s.rfid_uid, s.is_active, s.created_at
-         FROM students s
-         INNER JOIN parents_teachers pt ON s.id = pt.student_id
-         WHERE pt.user_id = ?
-         ORDER BY s.name`, [req.user.id]);
-            console.log(`[getStudents] Found ${students.length} children for parent`);
-            // Add guardians info for each student
-            for (const student of students) {
-                const [guardians] = await db_1.default.execute('SELECT role, name, contact_number FROM parents_teachers WHERE student_id = ?', [student.id]);
-                student.parents_guardians = guardians;
+        // For parent role, directly query without complex joins
+        if (role === 'parent' && profileId) {
+            console.log(`[getStudents] Querying for parent ${profileId}`);
+            // Get student linked to this parent (using parents_teachers.student_id)
+            const [parentRows] = await db_1.default.execute('SELECT student_id FROM parents_teachers WHERE id = ? AND student_id IS NOT NULL', [profileId]);
+            console.log(`[getStudents] Parent record:`, parentRows);
+            if (parentRows.length === 0 || !parentRows[0].student_id) {
+                console.log('[getStudents] No children found for this parent');
+                res.json([]);
+                return;
             }
+            const studentId = parentRows[0].student_id;
+            console.log(`[getStudents] Student ID:`, studentId);
+            // Get student details
+            const [students] = await db_1.default.execute(`SELECT id, lrn, name, gender, grade, section, mac_address, rfid_uid, is_active, created_at
+         FROM students WHERE id = ?`, [studentId]);
+            console.log(`[getStudents] Found ${students.length} student(s)`);
             res.json(students);
             return;
         }
@@ -158,7 +160,7 @@ async function getStudentAttendance(req, res) {
         const { id } = req.params;
         const from = req.query.from;
         const to = req.query.to;
-        let q = 'SELECT * FROM attendance WHERE student_id = ?';
+        let q = 'SELECT *, DATE_FORMAT(date, "%Y-%m-%d") as date_str FROM attendance WHERE student_id = ?';
         const p = [id];
         if (from) {
             q += ' AND date >= ?';
@@ -170,10 +172,64 @@ async function getStudentAttendance(req, res) {
         }
         q += ' ORDER BY date DESC, timestamp DESC';
         const [rows] = await db_1.default.execute(q, p);
-        res.json(rows);
+        // Replace date with formatted string to avoid timezone issues
+        const formatted = rows.map(r => ({
+            ...r,
+            date: r.date_str // Use the formatted string instead of DATE object
+        }));
+        res.json(formatted);
     }
     catch (err) {
         console.error('getStudentAttendance error:', err);
         res.status(500).json({ error: 'Server error' });
+    }
+}
+// ─── GET /api/students/:id/sms-logs ──────────────────────────────────────
+async function getStudentSmsLogs(req, res) {
+    try {
+        const { id } = req.params;
+        // Get SMS logs for this student
+        const [logs] = await db_1.default.execute(`SELECT 
+        id, student_name, parent_name, phone_number, message, 
+        status, provider, sent_at, created_at
+       FROM sms_logs 
+       WHERE student_name = (SELECT name FROM students WHERE id = ?)
+       ORDER BY created_at DESC
+       LIMIT 100`, [id]);
+        res.json(logs);
+    }
+    catch (err) {
+        console.error('Error fetching SMS logs:', err);
+        res.status(500).json({ error: 'Failed to fetch SMS logs' });
+    }
+}
+// ─── DELETE /api/students/:id/sms-logs/clear ─────────────────────────────
+async function clearStudentSmsLogs(req, res) {
+    try {
+        const { id } = req.params;
+        console.log(`🗑️  Parent clearing SMS history for student ${id}...`);
+        // Get student name first
+        const [students] = await db_1.default.execute('SELECT name FROM students WHERE id = ?', [id]);
+        if (students.length === 0) {
+            res.status(404).json({ error: 'Student not found' });
+            return;
+        }
+        const studentName = students[0].name;
+        // Count before deletion
+        const [countBefore] = await db_1.default.execute('SELECT COUNT(*) as total FROM sms_logs WHERE student_name = ?', [studentName]);
+        const totalBefore = countBefore[0].total;
+        // Delete SMS logs for this student only
+        const [result] = await db_1.default.execute('DELETE FROM sms_logs WHERE student_name = ?', [studentName]);
+        console.log(`✅ Deleted ${result.affectedRows} SMS logs for ${studentName}`);
+        res.json({
+            success: true,
+            message: 'SMS history cleared successfully',
+            deletedCount: result.affectedRows,
+            previousCount: totalBefore
+        });
+    }
+    catch (err) {
+        console.error('Error clearing student SMS logs:', err);
+        res.status(500).json({ error: 'Failed to clear SMS history' });
     }
 }

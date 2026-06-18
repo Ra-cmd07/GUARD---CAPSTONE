@@ -16,8 +16,12 @@ const db_1 = __importDefault(require("../lib/db"));
 async function getAttendance(req, res) {
     try {
         const { role, id: userId, profileId } = req.user;
-        const date = req.query.date || new Date().toISOString().split('T')[0];
+        // Use Philippines timezone (UTC+8)
+        const now = new Date();
+        const phTime = new Date(now.getTime() + (8 * 60 * 60 * 1000));
+        const date = req.query.date || phTime.toISOString().split('T')[0];
         const section = req.query.section;
+        console.log('🔍 getAttendance called:', { role, userId, profileId, date, section });
         let query = `
       SELECT a.id, a.student_id, a.student_name, a.lrn, a.gender,
              a.grade, a.section, a.teacher_id, a.teacher_name,
@@ -33,9 +37,15 @@ async function getAttendance(req, res) {
             // Teacher sees only their assigned section
             const [tRows] = await db_1.default.execute('SELECT section FROM teachers WHERE id = ?', [profileId]);
             const teacherSection = tRows[0]?.section;
+            console.log('👨‍🏫 Teacher section:', teacherSection);
             if (teacherSection) {
-                query += ' AND a.section = ?';
-                params.push(teacherSection);
+                // Flexible matching: works with both "Grade 7 - section 1" and "section 1" formats
+                // Extract the section number/identifier from teacher's section (e.g., "section 1" from "Grade 7 - section 1")
+                const sectionPart = teacherSection.split('-').pop()?.trim() || teacherSection;
+                console.log('📝 Section part extracted:', sectionPart);
+                query += ' AND (a.section = ? OR a.section = ? OR a.section LIKE ? OR a.teacher_id = ?)';
+                params.push(teacherSection, sectionPart, `%${sectionPart}%`, profileId);
+                console.log('🔍 Query params:', params);
             }
             else {
                 query += ' AND a.teacher_id = ?';
@@ -61,7 +71,13 @@ async function getAttendance(req, res) {
             }
         }
         query += ' ORDER BY a.timestamp DESC';
+        console.log('📤 Executing query:', query);
+        console.log('📤 With params:', params);
         const [rows] = await db_1.default.execute(query, params);
+        console.log('✅ Query returned', rows.length, 'rows');
+        if (rows.length > 0) {
+            console.log('📋 First row:', rows[0]);
+        }
         res.json(rows);
     }
     catch (err) {
@@ -131,13 +147,28 @@ async function updateAttendance(req, res) {
             res.status(404).json({ error: 'Record not found' });
             return;
         }
-        // Teacher can only update their section
+        // Teacher can only update their section (with flexible matching)
         if (role === 'teacher' && profileId) {
             const [tRows] = await db_1.default.execute('SELECT section FROM teachers WHERE id = ?', [profileId]);
             const teacherSection = tRows[0]?.section;
-            if (teacherSection && existing.section !== teacherSection) {
-                res.status(403).json({ error: 'Cannot update records outside your section' });
-                return;
+            if (teacherSection && existing.section) {
+                // Extract section part from teacher's section (e.g., "section 1" from "Grade 7 - section 1")
+                const teacherSectionPart = teacherSection.includes(' - ')
+                    ? teacherSection.split(' - ')[1].trim()
+                    : teacherSection;
+                // Check if sections match (exact or partial)
+                const sectionsMatch = existing.section === teacherSection || // Exact match
+                    existing.section === teacherSectionPart || // Part match
+                    existing.section.includes(teacherSectionPart) || // Contains match
+                    teacherSectionPart.includes(existing.section); // Reverse contains
+                if (!sectionsMatch) {
+                    console.log(`❌ Section mismatch: Teacher="${teacherSection}" vs Record="${existing.section}"`);
+                    res.status(403).json({ error: 'Cannot update records outside your section' });
+                    return;
+                }
+                else {
+                    console.log(`✅ Section match: Teacher="${teacherSection}" matches Record="${existing.section}"`);
+                }
             }
         }
         await db_1.default.execute(`UPDATE attendance SET status = ?, session = ?, notes = ?, is_overridden = 1, updated_by = ?
@@ -173,15 +204,20 @@ async function deleteAttendance(req, res) {
 async function getAttendanceStats(req, res) {
     try {
         const { role, profileId } = req.user;
-        const date = req.query.date || new Date().toISOString().split('T')[0];
+        // Use Philippines timezone (UTC+8)
+        const now = new Date();
+        const phTime = new Date(now.getTime() + (8 * 60 * 60 * 1000));
+        const date = req.query.date || phTime.toISOString().split('T')[0];
         let sectionFilter = '';
         let params = [date];
         if (role === 'teacher' && profileId) {
             const [tRows] = await db_1.default.execute('SELECT section FROM teachers WHERE id = ?', [profileId]);
-            const sec = tRows[0]?.section;
-            if (sec) {
-                sectionFilter = ' AND section = ?';
-                params.push(sec);
+            const teacherSection = tRows[0]?.section;
+            if (teacherSection) {
+                // Flexible matching: works with both "Grade 7 - section 1" and "section 1" formats
+                const sectionPart = teacherSection.split('-').pop()?.trim() || teacherSection;
+                sectionFilter = ' AND (section = ? OR section = ? OR section LIKE ?)';
+                params.push(teacherSection, sectionPart, `%${sectionPart}%`);
             }
         }
         const [rows] = await db_1.default.execute(`SELECT status, COUNT(*) AS count
