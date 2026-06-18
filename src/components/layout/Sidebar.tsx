@@ -57,7 +57,7 @@ export default function Sidebar({
 
   return (
     <Box sx={{
-      width: 280, background: '#0b4d79', color: '#fff',
+      width: 280, background: '#3b82f6', color: '#fff',
       display: 'flex', flexDirection: 'column', p: 2.5,
       overflowY: 'auto', boxShadow: '3px 0 8px rgba(0,0,0,0.3)',
       flexShrink: 0,
@@ -100,7 +100,7 @@ export default function Sidebar({
         sx={{
           mb: 1.5, fontWeight: 700,
           background: scannerOn ? '#dc3545' : '#ffffff',
-          color: scannerOn ? '#fff' : '#0b4d79',
+          color: scannerOn ? '#fff' : '#3b82f6',
           '&:hover': { background: scannerOn ? '#b02a37' : '#e8f5e9' },
         }}
         startIcon={<QrCodeScanner />}

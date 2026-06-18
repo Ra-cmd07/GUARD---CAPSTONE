@@ -40,7 +40,7 @@ export default function PhotoCaptureModal({ open, studentName, onCaptureDone }: 
 
   return (
     <Dialog open={open} fullScreen
-      PaperProps={{ sx: { bgcolor: '#0b4d79' } }}>
+      PaperProps={{ sx: { bgcolor: '#3b82f6' } }}>
       <DialogContent sx={{
         display: 'flex', flexDirection: 'column',
         alignItems: 'center', justifyContent: 'center',

@@ -3,9 +3,9 @@ import { createTheme } from '@mui/material/styles';
 const theme = createTheme({
   palette: {
     primary: {
-      main:          '#0b4d79',
+      main:          '#3b82f6',
       light:         '#3b82f6',
-      dark:          '#062d48',
+      dark:          '#3b82f6',
       contrastText:  '#ffffff',
     },
     secondary: {
@@ -42,7 +42,7 @@ const theme = createTheme({
       styleOverrides: {
         head: {
           fontWeight: 700,
-          background: '#0b4d79',
+          background: '#3b82f6',
           color:      '#ffffff',
         },
       },

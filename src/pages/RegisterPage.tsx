@@ -38,7 +38,7 @@ export default function RegisterPage() {
   return (
     <Box sx={{
       minHeight: '100vh',
-      background: 'linear-gradient(135deg, #0b4d79 0%, #3b82f6 60%, #062d48 100%)',
+      background: 'linear-gradient(135deg, #3b82f6 0%, #3b82f6 60%, #3b82f6 100%)',
       display: 'flex', flexDirection: 'column',
     }}>
       <Box sx={{ px: 5, py: 2, borderBottom: '1px solid rgba(255,255,255,0.15)' }}>
@@ -106,7 +106,7 @@ export default function RegisterPage() {
 
             <Typography variant="body2" textAlign="center" sx={{ mt: 2, color: 'text.secondary' }}>
               Already have an account?{' '}
-              <Link to="/login" style={{ color: '#0b4d79', fontWeight: 700 }}>Login</Link>
+              <Link to="/login" style={{ color: '#3b82f6', fontWeight: 700 }}>Login</Link>
             </Typography>
           </Box>
         </Paper>

@@ -4,20 +4,20 @@
 export const colors = {
   // Primary Brand Colors
   primary: {
-    main: '#1e40af',      // Deep Professional Blue
+    main: '#3b82f6',      // Bright Professional Blue (for tabs/buttons)
     light: '#3b82f6',     // Bright Accent Blue
-    dark: '#1e3a8a',      // Navy for headers
-    gradient: 'linear-gradient(135deg, #1e40af 0%, #3b82f6 100%)',
+    dark: '#2563eb',      // Slightly darker blue (for backgrounds)
+    gradient: 'linear-gradient(135deg, #2563eb 0%, #3b82f6 100%)', // Darker to lighter
     50: '#eff6ff',
     100: '#dbeafe',
     200: '#bfdbfe',
     300: '#93c5fd',
     400: '#60a5fa',
     500: '#3b82f6',
-    600: '#2563eb',
-    700: '#1d4ed8',
-    800: '#1e40af',
-    900: '#1e3a8a',
+    600: '#3b82f6',
+    700: '#3b82f6',
+    800: '#2563eb',      // Darker for backgrounds
+    900: '#2563eb',      // Darker for backgrounds
   },
   
   // Secondary/Accent Colors
@@ -74,7 +74,7 @@ export const colors = {
     info: {
       main: '#3b82f6',
       light: '#dbeafe',
-      dark: '#1e40af',
+      dark: '#3b82f6',
       border: '#bfdbfe'
     }
   }

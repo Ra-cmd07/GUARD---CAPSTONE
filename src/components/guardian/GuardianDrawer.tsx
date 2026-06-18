@@ -39,7 +39,7 @@ export default function GuardianDrawer({ open, onClose }: Props) {
       PaperProps={{ sx: { width: { xs: '100vw', sm: 420 } } }}>
       {/* Header */}
       <Box sx={{
-        background: '#0b4d79', color: '#fff', p: 2.5,
+        background: '#3b82f6', color: '#fff', p: 2.5,
         display: 'flex', justifyContent: 'space-between', alignItems: 'center',
       }}>
         <Typography variant="h6" fontWeight={700}>👥 Register Guardian</Typography>

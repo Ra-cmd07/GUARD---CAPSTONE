@@ -12,6 +12,7 @@ import { useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import api from '../api/client';
 import type { AttendanceRecord, StudentProfile } from '../types';
+import theme from '../theme/professionalTheme';
 
 export default function StudentPortalPage() {
   const { user, logout } = useAuth();
@@ -42,9 +43,14 @@ export default function StudentPortalPage() {
 
   useEffect(() => { fetchRecords(); }, [fetchRecords]);
 
-  const STATUS_COLOR: Record<string, any> = {
-    'Time-In': 'success', 'Time-Out': 'info', Late: 'warning', Absent: 'error',
-  };
+  // Auto-refresh every 10 seconds to show new attendance without manual reload
+  useEffect(() => {
+    const interval = setInterval(() => {
+      fetchRecords();
+    }, 10000); // Poll every 10 seconds
+
+    return () => clearInterval(interval);
+  }, [fetchRecords]);
 
   const stats = {
     present: records.filter(r => r.status === 'Time-In' || r.status === 'Late').length,
@@ -75,50 +81,151 @@ export default function StudentPortalPage() {
   const handleLogout = () => { logout(); navigate('/login', { replace: true }); };
 
   return (
-    <Box sx={{ display: 'flex', height: '100vh', bgcolor: '#f5f7fa' }}>
-      {/* Sidebar */}
+    <Box sx={{ display: 'flex', height: '100vh', background: '#2563eb' }}>
+      {/* Sidebar with Solid Blue Gradient */}
       <Box sx={{
-        width: 220, bgcolor: '#0b4d79', color: '#fff',
-        display: 'flex', flexDirection: 'column', flexShrink: 0,
+        width: 240, 
+        background: '#3b82f6',
+        color: '#fff',
+        display: 'flex', 
+        flexDirection: 'column', 
+        flexShrink: 0,
+        boxShadow: theme.shadows.elevation3,
       }}>
-        <Box sx={{ p: 2.5, borderBottom: '1px solid rgba(255,255,255,0.15)' }}>
-          <Typography variant="h6" fontWeight={800}>ATTENDBOX</Typography>
-          <Typography variant="caption" sx={{ opacity: 0.7 }}>Student Portal</Typography>
+        <Box sx={{ p: 3, borderBottom: '1px solid rgba(255,255,255,0.15)' }}>
+          <Typography 
+            variant="h5" 
+            sx={{
+              fontFamily: theme.typography.fontFamily.display,
+              fontWeight: theme.typography.fontWeight.extrabold,
+              letterSpacing: '0.5px',
+            }}
+          >
+            ATTENDBOX
+          </Typography>
+          <Typography 
+            variant="caption" 
+            sx={{ 
+              opacity: 0.85,
+              fontFamily: theme.typography.fontFamily.primary,
+              fontWeight: theme.typography.fontWeight.medium,
+            }}
+          >
+            Student Portal
+          </Typography>
         </Box>
-        <Box sx={{ p: 2, flex: 1 }}>
-          <Box textAlign="center" mb={2}>
-            <Avatar sx={{ width: 64, height: 64, bgcolor: 'rgba(255,255,255,0.2)', mx: 'auto', mb: 1, fontSize: 28 }}>
+        <Box sx={{ p: 2.5, flex: 1 }}>
+          <Box textAlign="center" mb={3}>
+            <Avatar sx={{ 
+              width: 72, 
+              height: 72, 
+              bgcolor: 'rgba(255,255,255,0.25)', 
+              mx: 'auto', 
+              mb: 1.5, 
+              fontSize: 32,
+              fontWeight: theme.typography.fontWeight.bold,
+              border: '3px solid rgba(255,255,255,0.3)',
+            }}>
               {profile?.name?.charAt(0) || '?'}
             </Avatar>
-            <Typography fontWeight={700}>{profile?.name || user?.username}</Typography>
-            <Typography variant="caption" sx={{ opacity: 0.7 }}>
+            <Typography 
+              sx={{
+                fontFamily: theme.typography.fontFamily.primary,
+                fontWeight: theme.typography.fontWeight.bold,
+                fontSize: theme.typography.fontSize.base,
+              }}
+            >
+              {profile?.name || user?.username}
+            </Typography>
+            <Typography 
+              variant="caption" 
+              sx={{ 
+                opacity: 0.85,
+                display: 'block',
+                mt: 0.5,
+                fontWeight: theme.typography.fontWeight.medium,
+              }}
+            >
               {profile?.grade} — {profile?.section}
             </Typography>
-            <br />
-            <Typography variant="caption" sx={{ opacity: 0.7 }}>
+            <Typography 
+              variant="caption" 
+              sx={{ 
+                opacity: 0.75,
+                display: 'block',
+                mt: 0.5,
+              }}
+            >
               LRN: {profile?.lrn}
             </Typography>
           </Box>
         </Box>
-        <Box sx={{ p: 2, borderTop: '1px solid rgba(255,255,255,0.15)' }}>
-          <Button fullWidth variant="contained" startIcon={<Logout />} onClick={handleLogout}
-            sx={{ bgcolor: '#dc3545', '&:hover': { bgcolor: '#b02a37' } }}>
+        <Box sx={{ p: 2.5, borderTop: '1px solid rgba(255,255,255,0.15)' }}>
+          <Button 
+            fullWidth 
+            variant="contained" 
+            startIcon={<Logout />} 
+            onClick={handleLogout}
+            sx={{ 
+              bgcolor: 'rgba(255,255,255,0.15)',
+              color: '#fff',
+              fontWeight: theme.typography.fontWeight.semibold,
+              '&:hover': { 
+                bgcolor: 'rgba(255,255,255,0.25)',
+                transform: 'translateY(-2px)',
+              },
+              transition: theme.transitions.button,
+            }}
+          >
             Logout
           </Button>
         </Box>
       </Box>
 
-      {/* Main */}
-      <Box sx={{ flex: 1, overflow: 'auto', p: 3 }}>
+      {/* Main Content Area */}
+      <Box sx={{ flex: 1, overflow: 'auto', p: 4 }}>
         <Grid container spacing={3}>
           {/* QR Code Panel */}
           <Grid size={{ xs: 12, md: 4 }}>
-            <Paper elevation={2} sx={{ p: 3, borderRadius: 2, textAlign: 'center' }}>
-              <Typography variant="h6" fontWeight={700} gutterBottom>📱 My QR Code</Typography>
-              <Typography variant="body2" color="text.secondary" mb={2}>
+            <Paper sx={{ 
+              ...theme.components.card.default,
+              p: 3, 
+              textAlign: 'center',
+              '&:hover': {
+                boxShadow: theme.shadows.elevation3,
+              },
+            }}>
+              <Typography 
+                variant="h6" 
+                sx={{
+                  fontFamily: theme.typography.fontFamily.display,
+                  fontWeight: theme.typography.fontWeight.bold,
+                  color: theme.colors.primary.dark,
+                  mb: 1,
+                }}
+              >
+                📱 My QR Code
+              </Typography>
+              <Typography 
+                variant="body2" 
+                color="text.secondary" 
+                mb={2.5}
+                sx={{ fontFamily: theme.typography.fontFamily.primary }}
+              >
                 Present this QR code at the kiosk for attendance
               </Typography>
-              <Box ref={qrRef} sx={{ display: 'inline-block', p: 1.5, border: '2px solid #0b4d79', borderRadius: 2, mb: 2 }}>
+              <Box 
+                ref={qrRef} 
+                sx={{ 
+                  display: 'inline-block', 
+                  p: 2, 
+                  border: `3px solid ${theme.colors.primary.main}`, 
+                  borderRadius: theme.borderRadius.md, 
+                  mb: 2.5,
+                  background: '#fff',
+                  boxShadow: theme.shadows.md,
+                }}
+              >
                 {qrPayload && (
                   <QRCodeCanvas
                     value={qrPayload}
@@ -129,38 +236,111 @@ export default function StudentPortalPage() {
                 )}
               </Box>
               <br />
-              <Button variant="outlined" startIcon={<Download />} onClick={downloadQR} size="small">
+              <Button 
+                variant="contained" 
+                startIcon={<Download />} 
+                onClick={downloadQR}
+                sx={{
+                  background: theme.colors.primary.gradient,
+                  color: '#fff',
+                  fontWeight: theme.typography.fontWeight.semibold,
+                  px: 3,
+                  py: 1,
+                  '&:hover': {
+                    transform: 'translateY(-2px)',
+                    boxShadow: theme.shadows.hoverLift,
+                  },
+                  transition: theme.transitions.button,
+                }}
+              >
                 Download QR
               </Button>
             </Paper>
 
             {/* Stats Summary */}
-            <Paper elevation={2} sx={{ p: 2.5, borderRadius: 2, mt: 2.5 }}>
-              <Typography fontWeight={700} gutterBottom>📊 Attendance Summary (30 days)</Typography>
+            <Paper sx={{ 
+              ...theme.components.card.default,
+              p: 3, 
+              mt: 3,
+              '&:hover': {
+                boxShadow: theme.shadows.elevation3,
+              },
+            }}>
+              <Typography 
+                sx={{
+                  fontFamily: theme.typography.fontFamily.display,
+                  fontWeight: theme.typography.fontWeight.bold,
+                  color: theme.colors.primary.dark,
+                  mb: 2,
+                }}
+              >
+                📊 Attendance Summary (30 days)
+              </Typography>
               {[
-                { label: 'Present', count: stats.present, color: '#2e7d32' },
-                { label: 'Late',    count: stats.late,    color: '#e65100' },
-                { label: 'Absent',  count: stats.absent,  color: '#c62828' },
+                { label: 'Present', count: stats.present, color: theme.colors.status.success.main },
+                { label: 'Late',    count: stats.late,    color: theme.colors.status.warning.main },
+                { label: 'Absent',  count: stats.absent,  color: theme.colors.status.error.main },
               ].map(s => (
-                <Box key={s.label} display="flex" justifyContent="space-between" mb={1}>
-                  <Typography variant="body2" color="text.secondary">{s.label}</Typography>
-                  <Chip label={s.count} size="small" sx={{ bgcolor: s.color, color: '#fff', fontWeight: 700 }} />
+                <Box key={s.label} display="flex" justifyContent="space-between" alignItems="center" mb={1.5}>
+                  <Typography 
+                    variant="body2" 
+                    sx={{
+                      fontFamily: theme.typography.fontFamily.primary,
+                      fontWeight: theme.typography.fontWeight.medium,
+                      color: theme.colors.neutral[600],
+                    }}
+                  >
+                    {s.label}
+                  </Typography>
+                  <Chip 
+                    label={s.count} 
+                    size="small" 
+                    sx={{ 
+                      bgcolor: s.color, 
+                      color: '#fff', 
+                      fontWeight: theme.typography.fontWeight.bold,
+                      minWidth: 42,
+                    }} 
+                  />
                 </Box>
               ))}
-              <Box mt={1.5}>
-                <Box display="flex" justifyContent="space-between" mb={0.5}>
-                  <Typography variant="body2" fontWeight={700}>Attendance Rate</Typography>
-                  <Typography variant="body2" fontWeight={700} color={rate >= 80 ? '#2e7d32' : '#c62828'}>
+              <Box mt={2.5}>
+                <Box display="flex" justifyContent="space-between" mb={1}>
+                  <Typography 
+                    variant="body2" 
+                    sx={{
+                      fontFamily: theme.typography.fontFamily.primary,
+                      fontWeight: theme.typography.fontWeight.bold,
+                      color: theme.colors.neutral[700],
+                    }}
+                  >
+                    Attendance Rate
+                  </Typography>
+                  <Typography 
+                    variant="body2" 
+                    sx={{
+                      fontFamily: theme.typography.fontFamily.display,
+                      fontWeight: theme.typography.fontWeight.bold,
+                      color: rate >= 80 ? theme.colors.status.success.main : theme.colors.status.error.main,
+                    }}
+                  >
                     {rate}%
                   </Typography>
                 </Box>
                 <LinearProgress
-                  variant="determinate" value={rate}
+                  variant="determinate" 
+                  value={rate}
                   sx={{
-                    height: 8, borderRadius: 4,
-                    bgcolor: '#e0e0e0',
+                    height: 10, 
+                    borderRadius: theme.borderRadius.full,
+                    bgcolor: theme.colors.neutral[200],
                     '& .MuiLinearProgress-bar': {
-                      bgcolor: rate >= 80 ? '#2e7d32' : rate >= 60 ? '#e65100' : '#c62828',
+                      bgcolor: rate >= 80 
+                        ? theme.colors.status.success.main 
+                        : rate >= 60 
+                        ? theme.colors.status.warning.main 
+                        : theme.colors.status.error.main,
+                      borderRadius: theme.borderRadius.full,
                     },
                   }}
                 />
@@ -170,27 +350,98 @@ export default function StudentPortalPage() {
 
           {/* Attendance Records */}
           <Grid size={{ xs: 12, md: 8 }}>
-            <Paper elevation={2} sx={{ borderRadius: 2 }}>
-              <Box sx={{ p: 2, borderBottom: '1px solid #eee', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <Typography fontWeight={700}>Recent Attendance Records</Typography>
-                <Chip label="Last 30 days" size="small" variant="outlined" />
+            <Paper sx={{ 
+              ...theme.components.card.default,
+              overflow: 'hidden',
+            }}>
+              <Box sx={{ 
+                p: 2.5, 
+                background: theme.colors.primary.gradient,
+                color: '#fff',
+                display: 'flex', 
+                justifyContent: 'space-between', 
+                alignItems: 'center' 
+              }}>
+                <Typography 
+                  sx={{
+                    fontFamily: theme.typography.fontFamily.display,
+                    fontWeight: theme.typography.fontWeight.bold,
+                    fontSize: theme.typography.fontSize.h5,
+                  }}
+                >
+                  Recent Attendance Records
+                </Typography>
+                <Chip 
+                  label="Last 30 days" 
+                  size="small" 
+                  sx={{
+                    bgcolor: 'rgba(255,255,255,0.2)',
+                    color: '#fff',
+                    fontWeight: theme.typography.fontWeight.semibold,
+                    border: '1px solid rgba(255,255,255,0.3)',
+                  }}
+                />
               </Box>
               <TableContainer sx={{ maxHeight: 520 }}>
                 <Table stickyHeader size="small">
                   <TableHead>
                     <TableRow>
-                      <TableCell>Date</TableCell>
-                      <TableCell>Time In</TableCell>
-                      <TableCell>Method</TableCell>
-                      <TableCell>Status</TableCell>
+                      <TableCell sx={{
+                        bgcolor: theme.colors.neutral[100],
+                        fontFamily: theme.typography.fontFamily.primary,
+                        fontWeight: theme.typography.fontWeight.bold,
+                        color: theme.colors.neutral[700],
+                        borderBottom: `2px solid ${theme.colors.primary.main}`,
+                      }}>
+                        Date
+                      </TableCell>
+                      <TableCell sx={{
+                        bgcolor: theme.colors.neutral[100],
+                        fontFamily: theme.typography.fontFamily.primary,
+                        fontWeight: theme.typography.fontWeight.bold,
+                        color: theme.colors.neutral[700],
+                        borderBottom: `2px solid ${theme.colors.primary.main}`,
+                      }}>
+                        Time In
+                      </TableCell>
+                      <TableCell sx={{
+                        bgcolor: theme.colors.neutral[100],
+                        fontFamily: theme.typography.fontFamily.primary,
+                        fontWeight: theme.typography.fontWeight.bold,
+                        color: theme.colors.neutral[700],
+                        borderBottom: `2px solid ${theme.colors.primary.main}`,
+                      }}>
+                        Method
+                      </TableCell>
+                      <TableCell sx={{
+                        bgcolor: theme.colors.neutral[100],
+                        fontFamily: theme.typography.fontFamily.primary,
+                        fontWeight: theme.typography.fontWeight.bold,
+                        color: theme.colors.neutral[700],
+                        borderBottom: `2px solid ${theme.colors.primary.main}`,
+                      }}>
+                        Status
+                      </TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
                     {loading && (
-                      <TableRow><TableCell colSpan={4} align="center" sx={{ py: 4 }}><CircularProgress size={24} /></TableCell></TableRow>
+                      <TableRow>
+                        <TableCell colSpan={4} align="center" sx={{ py: 5 }}>
+                          <CircularProgress size={32} sx={{ color: theme.colors.primary.main }} />
+                        </TableCell>
+                      </TableRow>
                     )}
                     {!loading && records.length === 0 && (
-                      <TableRow><TableCell colSpan={4} align="center" sx={{ py: 5, color: 'text.secondary' }}>No attendance records found</TableCell></TableRow>
+                      <TableRow>
+                        <TableCell colSpan={4} align="center" sx={{ 
+                          py: 6, 
+                          color: theme.colors.neutral[500],
+                          fontFamily: theme.typography.fontFamily.primary,
+                        }}>
+                          No attendance records found
+                        </TableCell>
+                      </TableRow>
                     )}
                     {records.map(r => {
                       // Safe date formatting with error handling
@@ -214,15 +465,55 @@ export default function StudentPortalPage() {
                         timeStr = r.time_in || '—';
                       }
 
+                      // Get status badge style
+                      const getStatusBadge = (status: string) => {
+                        const statusKey = status === 'Time-In' ? 'success' 
+                                        : status === 'Late' ? 'warning'
+                                        : status === 'Time-Out' ? 'info'
+                                        : 'error';
+                        return theme.components.badge[statusKey] || {};
+                      };
+
                       return (
-                      <TableRow key={r.id} hover>
-                        <TableCell>{dateStr}</TableCell>
-                        <TableCell sx={{ fontSize: '0.8rem' }}>{timeStr}</TableCell>
-                        <TableCell>
-                          <Chip label={r.scan_method || 'QR'} size="small" variant="outlined" />
+                      <TableRow key={r.id} hover sx={{
+                        '&:hover': {
+                          bgcolor: theme.colors.neutral[50],
+                        },
+                      }}>
+                        <TableCell sx={{ 
+                          fontFamily: theme.typography.fontFamily.primary,
+                          color: theme.colors.neutral[700],
+                        }}>
+                          {dateStr}
+                        </TableCell>
+                        <TableCell sx={{ 
+                          fontFamily: theme.typography.fontFamily.mono,
+                          fontSize: theme.typography.fontSize.sm,
+                          color: theme.colors.neutral[600],
+                        }}>
+                          {timeStr}
                         </TableCell>
                         <TableCell>
-                          <Chip label={r.status} size="small" color={STATUS_COLOR[r.status] || 'default'} sx={{ fontWeight: 700 }} />
+                          <Chip 
+                            label={r.scan_method || 'QR'} 
+                            size="small" 
+                            sx={{
+                              bgcolor: theme.colors.primary[100],
+                              color: theme.colors.primary.dark,
+                              fontWeight: theme.typography.fontWeight.semibold,
+                              fontSize: theme.typography.fontSize.xs,
+                              border: `1px solid ${theme.colors.primary[200]}`,
+                            }}
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Chip 
+                            label={r.status} 
+                            size="small" 
+                            sx={{
+                              ...getStatusBadge(r.status),
+                            }}
+                          />
                         </TableCell>
                       </TableRow>
                       );

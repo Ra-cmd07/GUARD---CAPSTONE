@@ -1,13 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
-  Box, Paper, Typography, Grid, Chip, Avatar,
+  Box, Paper, Typography, Grid, Chip, Avatar, IconButton,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Button, CircularProgress, Snackbar, Alert, Divider, List, ListItem, ListItemIcon, ListItemText,
   Tabs, Tab,
 } from '@mui/material';
 import {
   Logout, School, CheckCircle, Cancel, AccessTime, Dashboard as DashboardIcon,
-  CalendarToday, LocationOn, Sms as SmsIcon, Map as MapIcon,
+  CalendarToday, LocationOn, Sms as SmsIcon, Map as MapIcon, PhotoCamera, Delete,
 } from '@mui/icons-material';
 import { format, startOfWeek, endOfWeek, subDays } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
@@ -15,6 +15,8 @@ import { useAuth } from '../context/AuthContext';
 import api from '../api/client';
 import type { AttendanceRecord, ParentProfile, Student } from '../types';
 import CampusMap from '../components/CampusMap';
+import AttendancePhotoDialog from '../components/AttendancePhotoDialog';
+import theme from '../theme/professionalTheme';
 
 type Tab = 'overview' | 'attendance' | 'location' | 'sms';
 
@@ -34,8 +36,29 @@ export default function ParentDashboardPage() {
   const [locationView, setLocationView] = useState<'map' | 'list'>('map');
   const [loading,    setLoading]    = useState(false);
   const [snack,      setSnack]      = useState({ open: false, msg: '', sev: 'info' as any });
+  
+  // Photo viewer state
+  const [photoDialog, setPhotoDialog] = useState({
+    open: false,
+    photoUrl: null as string | null,
+    studentName: '',
+    status: '',
+    timestamp: null as Date | string | null,
+    method: '',
+  });
 
   const showSnack = (msg: string, sev: any = 'info') => setSnack({ open: true, msg, sev });
+
+  const handleViewPhoto = (record: AttendanceRecord) => {
+    setPhotoDialog({
+      open: true,
+      photoUrl: record.photo_path,
+      studentName: record.student_name,
+      status: record.status,
+      timestamp: record.timestamp || record.date,
+      method: record.scan_method || 'N/A',
+    });
+  };
 
   // Load children
   useEffect(() => {
@@ -68,13 +91,36 @@ export default function ParentDashboardPage() {
 
   useEffect(() => { fetchRecords(); }, [fetchRecords]);
 
-  // Load SMS logs (mock for now)
+  // Auto-refresh every 10 seconds to show new attendance without manual reload
+  useEffect(() => {
+    const interval = setInterval(() => {
+      fetchRecords();
+    }, 10000); // Poll every 10 seconds
+
+    return () => clearInterval(interval);
+  }, [fetchRecords]);
+
+  // Load recent SMS logs for overview
+  useEffect(() => {
+    if (selected) {
+      api.get(`/students/${selected.id}/sms-logs`)
+        .then(r => {
+          const recent = (r.data || []).slice(0, 5); // Get 5 most recent
+          setSmsLogs(recent);
+        })
+        .catch(() => setSmsLogs([]));
+    }
+  }, [selected]);
+
+  // Load SMS logs from database
   useEffect(() => {
     if (tab === 'sms' && selected) {
-      // In production: api.get(`/sms-logs?student_id=${selected.id}`)
-      setSmsLogs([
-        // SMS logs cleared - will show "No SMS notifications yet"
-      ]);
+      api.get(`/students/${selected.id}/sms-logs`)
+        .then(r => setSmsLogs(r.data || []))
+        .catch(() => {
+          console.error('Failed to load SMS logs');
+          setSmsLogs([]);
+        });
     }
   }, [tab, selected]);
 
@@ -124,29 +170,76 @@ export default function ParentDashboardPage() {
   ];
 
   return (
-    <Box sx={{ display: 'flex', height: '100vh', bgcolor: '#f5f7fa' }}>
+    <Box sx={{ display: 'flex', height: '100vh', background: '#2563eb' }}>
       {/* Sidebar */}
       <Box sx={{
         width: 240, 
-        background: 'linear-gradient(180deg, #0d4d7d 0%, #1a7a9e 100%)',
+        background: '#3b82f6',
         color: '#fff',
         display: 'flex', flexDirection: 'column', flexShrink: 0,
+        boxShadow: theme.shadows.elevation3,
       }}>
-        <Box sx={{ p: 2.5, borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
+        <Box sx={{ p: 2.5, borderBottom: '1px solid rgba(255,255,255,0.15)' }}>
           <Box display="flex" alignItems="center" gap={1} mb={0.5}>
-            <School sx={{ color: '#fff' }} />
-            <Typography variant="h6" fontWeight={800} sx={{ color: '#fff' }}>AttendBox</Typography>
+            <School sx={{ color: theme.colors.secondary.main }} />
+            <Typography 
+              variant="h6" 
+              sx={{
+                fontFamily: theme.typography.fontFamily.display,
+                fontWeight: theme.typography.fontWeight.extrabold,
+                color: '#fff',
+              }}
+            >
+              AttendBox
+            </Typography>
           </Box>
-          <Typography variant="caption" sx={{ opacity: 0.9, color: '#fff' }}>Parent Portal</Typography>
+          <Typography 
+            variant="caption" 
+            sx={{ 
+              opacity: 0.9, 
+              color: '#fff',
+              fontFamily: theme.typography.fontFamily.primary,
+            }}
+          >
+            Parent Portal
+          </Typography>
         </Box>
 
         <Box sx={{ flex: 1, py: 2 }}>
           <Box sx={{ px: 2, mb: 2 }}>
-            <Typography variant="caption" sx={{ opacity: 0.7, textTransform: 'uppercase', fontSize: 10, color: '#fff' }}>
+            <Typography 
+              variant="caption" 
+              sx={{ 
+                opacity: 0.7, 
+                textTransform: 'uppercase', 
+                fontSize: 10, 
+                color: '#fff',
+                fontFamily: theme.typography.fontFamily.primary,
+                fontWeight: theme.typography.fontWeight.semibold,
+              }}
+            >
               Logged in as
             </Typography>
-            <Typography fontWeight={700} fontSize="0.9rem" sx={{ color: '#fff' }}>{profile?.name || user?.username}</Typography>
-            <Typography variant="caption" sx={{ opacity: 0.8, color: '#fff' }}>{user?.username}</Typography>
+            <Typography 
+              sx={{
+                fontWeight: theme.typography.fontWeight.bold,
+                fontSize: '0.9rem',
+                color: '#fff',
+                fontFamily: theme.typography.fontFamily.primary,
+              }}
+            >
+              {profile?.name || user?.username}
+            </Typography>
+            <Typography 
+              variant="caption" 
+              sx={{ 
+                opacity: 0.8, 
+                color: '#fff',
+                fontFamily: theme.typography.fontFamily.primary,
+              }}
+            >
+              {user?.username}
+            </Typography>
           </Box>
 
           <Divider sx={{ borderColor: 'rgba(255,255,255,0.2)', my: 1 }} />
@@ -157,40 +250,74 @@ export default function ParentDashboardPage() {
               onClick={() => setTab(n.id as Tab)}
               sx={{
                 display: 'flex', alignItems: 'center', gap: 1.5,
-                px: 2.5, py: 1.5, cursor: 'pointer', mx: 1, borderRadius: 1,
+                px: 2.5, py: 1.5, cursor: 'pointer', mx: 1, 
+                borderRadius: theme.borderRadius.base,
                 bgcolor: tab === n.id ? 'rgba(255,255,255,0.2)' : 'transparent',
                 borderLeft: tab === n.id ? '3px solid #fff' : '3px solid transparent',
-                '&:hover': { bgcolor: 'rgba(255,255,255,0.1)' },
-                transition: 'all 0.2s',
+                '&:hover': { bgcolor: 'rgba(255,255,255,0.15)' },
+                transition: theme.transitions.button,
                 color: '#fff',
               }}>
               <Box sx={{ color: '#fff' }}>{n.icon}</Box>
-              <Typography variant="body2" fontWeight={tab === n.id ? 700 : 400} sx={{ color: '#fff' }}>{n.label}</Typography>
+              <Typography 
+                variant="body2" 
+                sx={{
+                  fontWeight: tab === n.id ? theme.typography.fontWeight.bold : theme.typography.fontWeight.normal,
+                  color: '#fff',
+                  fontFamily: theme.typography.fontFamily.primary,
+                }}
+              >
+                {n.label}
+              </Typography>
             </Box>
           ))}
         </Box>
 
-        <Box sx={{ p: 2, borderTop: '1px solid rgba(255,255,255,0.1)' }}>
-          <Button fullWidth variant="contained" startIcon={<Logout />} onClick={handleLogout}
-            sx={{ bgcolor: '#dc2626', '&:hover': { bgcolor: '#b91c1c' } }}>
+        <Box sx={{ p: 2, borderTop: '1px solid rgba(255,255,255,0.15)' }}>
+          <Button 
+            fullWidth 
+            variant="contained" 
+            startIcon={<Logout />} 
+            onClick={handleLogout}
+            sx={{ 
+              ...theme.components.button.secondary,
+              bgcolor: theme.colors.status.error.main,
+              color: '#fff',
+              '&:hover': { bgcolor: theme.colors.status.error.dark },
+            }}
+          >
             Logout
           </Button>
         </Box>
       </Box>
 
       {/* Main Content */}
-      <Box sx={{ flex: 1, overflow: 'auto', bgcolor: '#f5f7fa' }}>
+      <Box sx={{ flex: 1, overflow: 'auto' }}>
         {/* Top Bar */}
         <Box sx={{
           bgcolor: '#fff', px: 3, py: 2,
-          borderBottom: '1px solid #e0e0e0',
+          borderBottom: `1px solid ${theme.colors.neutral[200]}`,
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+          boxShadow: theme.shadows.elevation1,
         }}>
-          <Typography variant="h6" fontWeight={700} color="#1a1a1a">
+          <Typography 
+            variant="h6" 
+            sx={{
+              fontFamily: theme.typography.fontFamily.display,
+              fontWeight: theme.typography.fontWeight.bold,
+              color: theme.colors.neutral[900],
+            }}
+          >
             {selected ? `My child's attendance` : 'Parent Dashboard'}
           </Typography>
-          <Typography variant="body2" sx={{ opacity: 0.7, color: '#666' }}>
+          <Typography 
+            variant="body2" 
+            sx={{ 
+              opacity: 0.7, 
+              color: theme.colors.neutral[600],
+              fontFamily: theme.typography.fontFamily.primary,
+            }}
+          >
             👤 {user?.username}
           </Typography>
         </Box>
@@ -202,22 +329,40 @@ export default function ParentDashboardPage() {
               {tab === 'overview' && (
                 <>
                   {/* Child Profile Card */}
-                  <Paper elevation={2} sx={{
-                    p: 3, borderRadius: 2, mb: 3,
-                    bgcolor: '#fff', border: '1px solid #e0e0e0',
+                  <Paper sx={{
+                    ...theme.components.card.default,
+                    p: 3, mb: 3,
+                    '&:hover': theme.components.card.default.hover,
                   }}>
                     <Box display="flex" alignItems="center" gap={2}>
                       <Avatar sx={{
                         width: 64, height: 64,
-                        bgcolor: '#1a7a9e', fontSize: 28, fontWeight: 800,
+                        bgcolor: theme.colors.primary.main, 
+                        fontSize: 28, 
+                        fontWeight: theme.typography.fontWeight.extrabold,
+                        fontFamily: theme.typography.fontFamily.display,
                       }}>
                         {selected.name.split(' ').map(n => n[0]).join('').slice(0, 2)}
                       </Avatar>
                       <Box flex={1}>
-                        <Typography variant="h5" fontWeight={800} color="#1a1a1a" gutterBottom>
+                        <Typography 
+                          variant="h5" 
+                          sx={{
+                            fontFamily: theme.typography.fontFamily.display,
+                            fontWeight: theme.typography.fontWeight.extrabold,
+                            color: theme.colors.neutral[900],
+                          }}
+                          gutterBottom
+                        >
                           {selected.name}
                         </Typography>
-                        <Typography variant="body2" sx={{ color: '#666' }}>
+                        <Typography 
+                          variant="body2" 
+                          sx={{ 
+                            color: theme.colors.neutral[600],
+                            fontFamily: theme.typography.fontFamily.primary,
+                          }}
+                        >
                           {selected.grade} — Section {selected.section} · Iponan National High School
                         </Typography>
                       </Box>
@@ -225,35 +370,83 @@ export default function ParentDashboardPage() {
                         icon={onCampus ? <CheckCircle /> : <Cancel />}
                         label={onCampus ? 'On campus' : 'Off campus'}
                         sx={{
-                          bgcolor: onCampus ? 'rgba(34,197,94,0.2)' : 'rgba(148,163,184,0.2)',
-                          color: onCampus ? '#22c55e' : '#94a3b8',
-                          fontWeight: 700, fontSize: '0.95rem', px: 2, py: 2.5,
-                          border: `1px solid ${onCampus ? '#22c55e' : '#475569'}`,
+                          ...theme.components.badge[onCampus ? 'success' : 'error'],
+                          fontSize: '0.95rem', 
+                          px: 2, 
+                          py: 2.5,
                         }}
                       />
                     </Box>
                   </Paper>
 
                   {/* Weekly Attendance Table */}
-                  <Paper elevation={2} sx={{ borderRadius: 2, mb: 3, bgcolor: '#fff', overflow: 'hidden', border: '1px solid #e0e0e0' }}>
-                    <Box sx={{ p: 2.5, borderBottom: '1px solid #e0e0e0' }}>
-                      <Typography fontWeight={700} color="#1a1a1a">Attendance this week</Typography>
+                  <Paper sx={{
+                    ...theme.components.card.default,
+                    overflow: 'hidden',
+                    mb: 3,
+                  }}>
+                    <Box sx={{ 
+                      p: 2.5, 
+                      borderBottom: `1px solid ${theme.colors.neutral[200]}`,
+                    }}>
+                      <Typography 
+                        sx={{
+                          fontFamily: theme.typography.fontFamily.primary,
+                          fontWeight: theme.typography.fontWeight.bold,
+                          color: theme.colors.neutral[900],
+                        }}
+                      >
+                        Attendance this week
+                      </Typography>
                     </Box>
                     <TableContainer>
                       <Table>
                         <TableHead>
-                          <TableRow sx={{ bgcolor: '#0d5a8f' }}>
-                            <TableCell sx={{ color: '#fff', fontWeight: 700 }}>Date</TableCell>
-                            <TableCell sx={{ color: '#fff', fontWeight: 700 }}>Time in</TableCell>
-                            <TableCell sx={{ color: '#fff', fontWeight: 700 }}>Time out</TableCell>
-                            <TableCell sx={{ color: '#fff', fontWeight: 700 }}>Status</TableCell>
+                          <TableRow sx={{ 
+                            background: theme.colors.primary.gradient,
+                          }}>
+                            <TableCell sx={{ 
+                              color: '#fff', 
+                              fontFamily: theme.typography.fontFamily.primary,
+                              fontWeight: theme.typography.fontWeight.bold,
+                            }}>
+                              Date
+                            </TableCell>
+                            <TableCell sx={{ 
+                              color: '#fff', 
+                              fontFamily: theme.typography.fontFamily.primary,
+                              fontWeight: theme.typography.fontWeight.bold,
+                            }}>
+                              Time in
+                            </TableCell>
+                            <TableCell sx={{ 
+                              color: '#fff', 
+                              fontFamily: theme.typography.fontFamily.primary,
+                              fontWeight: theme.typography.fontWeight.bold,
+                            }}>
+                              Time out
+                            </TableCell>
+                            <TableCell sx={{ 
+                              color: '#fff', 
+                              fontFamily: theme.typography.fontFamily.primary,
+                              fontWeight: theme.typography.fontWeight.bold,
+                            }}>
+                              Status
+                            </TableCell>
+                            <TableCell sx={{ 
+                              color: '#fff', 
+                              fontFamily: theme.typography.fontFamily.primary,
+                              fontWeight: theme.typography.fontWeight.bold,
+                            }}>
+                              Photo
+                            </TableCell>
                           </TableRow>
                         </TableHead>
                         <TableBody>
                           {loading ? (
                             <TableRow>
-                              <TableCell colSpan={4} align="center" sx={{ py: 3, color: '#64748b' }}>
-                                <CircularProgress size={24} sx={{ color: '#7c3aed' }} />
+                              <TableCell colSpan={5} align="center" sx={{ py: 3 }}>
+                                <CircularProgress size={24} sx={{ color: theme.colors.primary.main }} />
                               </TableCell>
                             </TableRow>
                           ) : weekDays.map(d => {
@@ -267,15 +460,42 @@ export default function ParentDashboardPage() {
                             const tout = records.find(r => normalizeDate(r.date) === d && r.status === 'Time-Out');
                             const isToday = d === today;
                             return (
-                              <TableRow key={d} sx={{ bgcolor: isToday ? '#e3f2fd' : '#fff', '&:hover': { bgcolor: '#f5f7fa' } }}>
-                                <TableCell sx={{ color: '#1a1a1a', fontWeight: isToday ? 700 : 400 }}>
+                              <TableRow 
+                                key={d} 
+                                sx={{ 
+                                  bgcolor: isToday ? theme.colors.primary[50] : '#fff', 
+                                  '&:hover': { bgcolor: theme.colors.neutral[50] },
+                                }}
+                              >
+                                <TableCell sx={{ 
+                                  color: theme.colors.neutral[900], 
+                                  fontFamily: theme.typography.fontFamily.primary,
+                                  fontWeight: isToday ? theme.typography.fontWeight.bold : theme.typography.fontWeight.normal,
+                                }}>
                                   {format(new Date(d + 'T00:00:00'), 'MMM d, yyyy')}
-                                  {isToday && <Chip label="Today" size="small" sx={{ ml: 1, bgcolor: '#1a7a9e', color: 'white' }} />}
+                                  {isToday && (
+                                    <Chip 
+                                      label="Today" 
+                                      size="small" 
+                                      sx={{ 
+                                        ml: 1, 
+                                        ...theme.components.badge.info,
+                                      }} 
+                                    />
+                                  )}
                                 </TableCell>
-                                <TableCell sx={{ color: '#666', fontSize: '0.9rem' }}>
+                                <TableCell sx={{ 
+                                  color: theme.colors.neutral[600], 
+                                  fontFamily: theme.typography.fontFamily.primary,
+                                  fontSize: '0.9rem',
+                                }}>
                                   {rec?.time_in || (rec?.timestamp ? format(new Date(rec.timestamp), 'h:mm aa') : '—')}
                                 </TableCell>
-                                <TableCell sx={{ color: '#666', fontSize: '0.9rem' }}>
+                                <TableCell sx={{ 
+                                  color: theme.colors.neutral[600], 
+                                  fontFamily: theme.typography.fontFamily.primary,
+                                  fontSize: '0.9rem',
+                                }}>
                                   {tout?.time_out || (tout?.timestamp ? format(new Date(tout.timestamp), 'h:mm aa') : '—')}
                                 </TableCell>
                                 <TableCell>
@@ -284,15 +504,44 @@ export default function ParentDashboardPage() {
                                       label={rec.status}
                                       size="small"
                                       sx={{
-                                        bgcolor: rec.status === 'Time-In' ? 'rgba(34,197,94,0.2)'
-                                          : rec.status === 'Late' ? 'rgba(251,146,60,0.2)' : 'rgba(239,68,68,0.2)',
-                                        color: rec.status === 'Time-In' ? '#22c55e' : rec.status === 'Late' ? '#fb923c' : '#ef4444',
-                                        fontWeight: 700,
-                                        border: `1px solid ${rec.status === 'Time-In' ? '#22c55e' : rec.status === 'Late' ? '#fb923c' : '#ef4444'}`,
+                                        ...theme.components.badge[
+                                          rec.status === 'Time-In' ? 'success' :
+                                          rec.status === 'Late' ? 'warning' : 'error'
+                                        ]
                                       }}
                                     />
                                   ) : (
-                                    <Chip label="Absent" size="small" sx={{ bgcolor: 'rgba(239,68,68,0.2)', color: '#ef4444', fontWeight: 700 }} />
+                                    <Chip 
+                                      label="Absent" 
+                                      size="small" 
+                                      sx={{ ...theme.components.badge.error }} 
+                                    />
+                                  )}
+                                </TableCell>
+                                <TableCell>
+                                  {rec?.photo_path ? (
+                                    <IconButton
+                                      size="small"
+                                      onClick={() => handleViewPhoto(rec)}
+                                      sx={{
+                                        color: theme.colors.primary.main,
+                                        '&:hover': {
+                                          bgcolor: theme.colors.primary[50],
+                                        }
+                                      }}
+                                    >
+                                      <PhotoCamera fontSize="small" />
+                                    </IconButton>
+                                  ) : (
+                                    <Typography
+                                      variant="caption"
+                                      sx={{
+                                        color: theme.colors.neutral[400],
+                                        fontFamily: theme.typography.fontFamily.primary,
+                                      }}
+                                    >
+                                      —
+                                    </Typography>
                                   )}
                                 </TableCell>
                               </TableRow>
@@ -305,16 +554,45 @@ export default function ParentDashboardPage() {
 
                   {/* Recent SMS Notifications */}
                   <Paper elevation={2} sx={{ borderRadius: 2, bgcolor: '#fff', overflow: 'hidden', border: '1px solid #e0e0e0' }}>
-                    <Box sx={{ p: 2.5, borderBottom: '1px solid #e0e0e0', display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <SmsIcon sx={{ color: '#1a7a9e' }} />
-                      <Typography fontWeight={700} color="#1a1a1a">Recent SMS notifications</Typography>
+                    <Box sx={{ 
+                      p: 2.5, 
+                      background: theme.colors.primary.gradient,
+                      color: '#fff',
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      gap: 1 
+                    }}>
+                      <SmsIcon />
+                      <Typography 
+                        fontWeight={theme.typography.fontWeight.bold}
+                        sx={{ fontFamily: theme.typography.fontFamily.display }}
+                      >
+                        Recent SMS notifications
+                      </Typography>
                     </Box>
                     <List sx={{ p: 0 }}>
-                      {/* SMS notifications cleared */}
-                      {[].length === 0 && (
+                      {smsLogs.length === 0 ? (
                         <ListItem sx={{ py: 4, textAlign: 'center', justifyContent: 'center' }}>
                           <Typography color="#999" fontSize="0.9rem">No SMS notifications yet</Typography>
                         </ListItem>
+                      ) : (
+                        smsLogs.map((log: any, i: number) => (
+                          <ListItem 
+                            key={i}
+                            sx={{ 
+                              borderBottom: i < smsLogs.length - 1 ? '1px solid #e0e0e0' : 'none',
+                              py: 2 
+                            }}
+                          >
+                            <ListItemIcon>
+                              <SmsIcon sx={{ color: log.status === 'sent' ? '#2e7d32' : '#999' }} />
+                            </ListItemIcon>
+                            <ListItemText
+                              primary={log.message}
+                              secondary={`${log.parent_name} • ${log.phone_number} • ${format(new Date(log.created_at), 'MMM d, h:mm aa')}`}
+                            />
+                          </ListItem>
+                        ))
                       )}
                     </List>
                   </Paper>
@@ -324,24 +602,33 @@ export default function ParentDashboardPage() {
               {/* Attendance Log Tab */}
               {tab === 'attendance' && (
                 <Paper elevation={2} sx={{ borderRadius: 2, bgcolor: '#fff', border: '1px solid #e0e0e0' }}>
-                  <Box sx={{ p: 2, borderBottom: '1px solid #e0e0e0' }}>
-                    <Typography fontWeight={700} color="#1a1a1a">Full Attendance History</Typography>
+                  <Box sx={{ 
+                    p: 2.5, 
+                    background: theme.colors.primary.gradient,
+                    color: '#fff',
+                  }}>
+                    <Typography 
+                      fontWeight={theme.typography.fontWeight.bold}
+                      sx={{ fontFamily: theme.typography.fontFamily.display }}
+                    >
+                      Full Attendance History
+                    </Typography>
                   </Box>
                   <TableContainer sx={{ maxHeight: 500 }}>
                     <Table stickyHeader>
                       <TableHead>
                         <TableRow>
-                          <TableCell sx={{ bgcolor: '#0d5a8f', color: '#fff', fontWeight: 700 }}>Date</TableCell>
-                          <TableCell sx={{ bgcolor: '#0d5a8f', color: '#fff', fontWeight: 700 }}>Status</TableCell>
-                          <TableCell sx={{ bgcolor: '#0d5a8f', color: '#fff', fontWeight: 700 }}>Time</TableCell>
-                          <TableCell sx={{ bgcolor: '#0d5a8f', color: '#fff', fontWeight: 700 }}>Method</TableCell>
+                          <TableCell sx={{ bgcolor: '#3b82f6', color: '#fff', fontWeight: 700 }}>Date</TableCell>
+                          <TableCell sx={{ bgcolor: '#3b82f6', color: '#fff', fontWeight: 700 }}>Status</TableCell>
+                          <TableCell sx={{ bgcolor: '#3b82f6', color: '#fff', fontWeight: 700 }}>Time</TableCell>
+                          <TableCell sx={{ bgcolor: '#3b82f6', color: '#fff', fontWeight: 700 }}>Method</TableCell>
                         </TableRow>
                       </TableHead>
                       <TableBody>
                         {loading && (
                           <TableRow>
                             <TableCell colSpan={4} align="center" sx={{ py: 3 }}>
-                              <CircularProgress size={24} sx={{ color: '#1a7a9e' }} />
+                              <CircularProgress size={24} sx={{ color: '#3b82f6' }} />
                             </TableCell>
                           </TableRow>
                         )}
@@ -418,7 +705,17 @@ export default function ParentDashboardPage() {
                         <Paper elevation={2} sx={{ mb: 3, overflow: 'hidden', borderRadius: 2, border: '1px solid #e0e0e0' }}>
                           <Box sx={{ height: 500 }}>
                             <CampusMap
-                              studentLocation={location}
+                              studentLocation={(() => {
+                                // Only show student marker if they're on campus (Time-In or Late status)
+                                const today = format(new Date(), 'yyyy-MM-dd');
+                                const todayAttendance = records.find(r => r.date === today);
+                                const isOnCampus = todayAttendance && 
+                                  (todayAttendance.status === 'Time-In' || todayAttendance.status === 'Late') &&
+                                  !todayAttendance.time_out;
+                                
+                                // If student is not on campus, return null to hide marker
+                                return isOnCampus ? location : null;
+                              })()}
                               beacons={beacons}
                               studentName={selected?.name}
                             />
@@ -455,7 +752,7 @@ export default function ParentDashboardPage() {
                                 justifyContent: 'center',
                               }}
                             >
-                              <LocationOn sx={{ fontSize: 28, color: '#1a7a9e' }} />
+                              <LocationOn sx={{ fontSize: 28, color: '#3b82f6' }} />
                             </Box>
                             <Box flex={1}>
                               <Typography variant="body2" color="#666" gutterBottom>
@@ -489,7 +786,7 @@ export default function ParentDashboardPage() {
                                 label={`🏢 ${location.building}`} 
                                 size="small" 
                                 variant="outlined"
-                                sx={{ borderColor: '#1a7a9e', color: '#1a7a9e' }} 
+                                sx={{ borderColor: '#3b82f6', color: '#3b82f6' }} 
                               />
                             )}
                             {location.floor && (
@@ -497,7 +794,7 @@ export default function ParentDashboardPage() {
                                 label={location.floor} 
                                 size="small" 
                                 variant="outlined"
-                                sx={{ borderColor: '#1a7a9e', color: '#1a7a9e' }} 
+                                sx={{ borderColor: '#3b82f6', color: '#3b82f6' }} 
                               />
                             )}
                             {location.coordinates && (
@@ -519,28 +816,28 @@ export default function ParentDashboardPage() {
                       {/* Current Location Card */}
                       <Paper elevation={2} sx={{ p: 3, borderRadius: 2, mb: 3, bgcolor: '#fff', border: '1px solid #e0e0e0' }}>
                         <Box display="flex" alignItems="center" gap={2} mb={3}>
-                          <LocationOn sx={{ fontSize: 48, color: '#1a7a9e' }} />
+                          <LocationOn sx={{ fontSize: 48, color: '#3b82f6' }} />
                           <Box flex={1}>
                             <Typography variant="h6" fontWeight={700} color="#1a1a1a" gutterBottom>
                               Current Location
                             </Typography>
                             {location && location.location_name !== 'Unknown' ? (
                               <>
-                                <Typography variant="h5" fontWeight={800} color="#1a7a9e" gutterBottom>
+                                <Typography variant="h5" fontWeight={800} color="#3b82f6" gutterBottom>
                                   {location.location_name}
                                 </Typography>
                                 <Box display="flex" gap={2} flexWrap="wrap">
                                   <Chip 
                                     label={location.building || 'Main Building'} 
                                     size="small" 
-                                    sx={{ bgcolor: '#e3f2fd', color: '#1976d2' }} 
+                                    sx={{ bgcolor: '#e3f2fd', color: '#3b82f6' }} 
                                   />
                                   {location.floor && (
                                     <Chip 
                                       label={location.floor} 
                                       size="small" 
                                       variant="outlined"
-                                      sx={{ borderColor: '#1a7a9e', color: '#1a7a9e' }} 
+                                      sx={{ borderColor: '#3b82f6', color: '#3b82f6' }} 
                                     />
                                   )}
                                   <Chip 
@@ -574,19 +871,65 @@ export default function ParentDashboardPage() {
                   )}
 
                   {/* Location History */}
-                  {locationHistory.length > 0 && (
+                  {(() => {
+                    // Only show location history if student is currently on campus
+                    const today = format(new Date(), 'yyyy-MM-dd');
+                    const todayAttendance = records.find(r => r.date === today);
+                    const isOnCampus = todayAttendance && 
+                      (todayAttendance.status === 'Time-In' || todayAttendance.status === 'Late') &&
+                      !todayAttendance.time_out;
+                    
+                    // Filter: Only show history if student is on campus
+                    return isOnCampus && locationHistory.length > 0;
+                  })() && (
                     <Paper elevation={2} sx={{ borderRadius: 2, bgcolor: '#fff', border: '1px solid #e0e0e0', mb: 3 }}>
-                      <Box sx={{ p: 2.5, borderBottom: '1px solid #e0e0e0' }}>
-                        <Typography fontWeight={700} color="#1a1a1a">Location History (Last 24 Hours)</Typography>
+                      <Box sx={{ 
+                        p: 2.5, 
+                        background: theme.colors.primary.gradient,
+                        color: '#fff',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                      }}>
+                        <Typography 
+                          fontWeight={theme.typography.fontWeight.bold}
+                          sx={{ fontFamily: theme.typography.fontFamily.display }}
+                        >
+                          Location History (Last 24 Hours)
+                        </Typography>
+                        <Button
+                          variant="outlined"
+                          color="error"
+                          size="small"
+                          startIcon={<Delete />}
+                          sx={{
+                            textTransform: 'none',
+                            fontFamily: theme.typography.fontFamily.primary
+                          }}
+                          onClick={() => {
+                            if (window.confirm(`⚠️ Clear location history for ${selected?.name}?\n\nThis will delete ${locationHistory.length} location records.\nThis action cannot be undone.\n\nNew location data will be tracked when your child's device is detected near a campus beacon.`)) {
+                              api.delete(`/location/student/${selected?.id}/clear`)
+                                .then(() => {
+                                  setLocationHistory([]);
+                                  setLocation(null);
+                                  showSnack('Location history cleared successfully', 'success');
+                                })
+                                .catch(() => showSnack('Failed to clear location history', 'error'));
+                            }
+                          }}
+                          disabled={locationHistory.length === 0}
+                        >
+                          Clear History ({locationHistory.length})
+                        </Button>
                       </Box>
                       <TableContainer sx={{ maxHeight: 400 }}>
                         <Table stickyHeader>
                           <TableHead>
                             <TableRow>
-                              <TableCell sx={{ bgcolor: '#0d5a8f', color: '#fff', fontWeight: 700 }}>Time</TableCell>
-                              <TableCell sx={{ bgcolor: '#0d5a8f', color: '#fff', fontWeight: 700 }}>Location</TableCell>
-                              <TableCell sx={{ bgcolor: '#0d5a8f', color: '#fff', fontWeight: 700 }}>Building</TableCell>
-                              <TableCell sx={{ bgcolor: '#0d5a8f', color: '#fff', fontWeight: 700 }}>Type</TableCell>
+                              <TableCell sx={{ bgcolor: '#3b82f6', color: '#fff', fontWeight: 700 }}>Time</TableCell>
+                              <TableCell sx={{ bgcolor: '#3b82f6', color: '#fff', fontWeight: 700 }}>Location</TableCell>
+                              <TableCell sx={{ bgcolor: '#3b82f6', color: '#fff', fontWeight: 700 }}>Building</TableCell>
+                              <TableCell sx={{ bgcolor: '#3b82f6', color: '#fff', fontWeight: 700 }}>Type</TableCell>
                             </TableRow>
                           </TableHead>
                           <TableBody>
@@ -607,7 +950,7 @@ export default function ParentDashboardPage() {
                                     size="small" 
                                     sx={{ 
                                       bgcolor: loc.location_type === 'gate' ? '#e3f2fd' : '#f5f5f5',
-                                      color: loc.location_type === 'gate' ? '#1976d2' : '#666',
+                                      color: loc.location_type === 'gate' ? '#3b82f6' : '#666',
                                       textTransform: 'capitalize'
                                     }} 
                                   />
@@ -622,7 +965,7 @@ export default function ParentDashboardPage() {
 
                   {/* Info Box */}
                   <Paper elevation={1} sx={{ p: 2, bgcolor: '#e3f2fd', border: '1px solid #90caf9', borderRadius: 2 }}>
-                    <Typography variant="body2" color="#1976d2">
+                    <Typography variant="body2" color="#3b82f6">
                       <strong>📡 BLE Location Tracking:</strong> Student location is detected via Bluetooth Low Energy (BLE) beacons placed throughout campus. Location updates occur when the student's device is near a beacon. The map shows real-time position based on the last detected beacon.
                     </Typography>
                   </Paper>
@@ -632,8 +975,43 @@ export default function ParentDashboardPage() {
               {/* SMS History Tab */}
               {tab === 'sms' && (
                 <Paper elevation={2} sx={{ borderRadius: 2, bgcolor: '#fff', border: '1px solid #e0e0e0' }}>
-                  <Box sx={{ p: 2.5, borderBottom: '1px solid #e0e0e0' }}>
-                    <Typography fontWeight={700} color="#1a1a1a">SMS Notification History</Typography>
+                  <Box sx={{ 
+                    p: 2.5, 
+                    background: theme.colors.primary.gradient,
+                    color: '#fff',
+                    display: 'flex', 
+                    justifyContent: 'space-between', 
+                    alignItems: 'center' 
+                  }}>
+                    <Typography 
+                      fontWeight={theme.typography.fontWeight.bold}
+                      sx={{ fontFamily: theme.typography.fontFamily.display }}
+                    >
+                      SMS Notification History
+                    </Typography>
+                    <Button
+                      variant="outlined"
+                      color="error"
+                      size="small"
+                      startIcon={<Delete />}
+                      sx={{
+                        textTransform: 'none',
+                        fontFamily: theme.typography.fontFamily.primary
+                      }}
+                      onClick={() => {
+                        if (window.confirm(`⚠️ Clear SMS history for ${selected?.name}?\n\nThis will delete ${smsLogs.length} SMS notifications.\nThis action cannot be undone.\n\nNew SMS notifications will be created when your child scans at school.`)) {
+                          api.delete(`/students/${selected?.id}/sms-logs/clear`)
+                            .then(() => {
+                              setSmsLogs([]);
+                              showSnack('SMS history cleared successfully', 'success');
+                            })
+                            .catch(() => showSnack('Failed to clear SMS history', 'error'));
+                        }
+                      }}
+                      disabled={smsLogs.length === 0}
+                    >
+                      Clear History ({smsLogs.length})
+                    </Button>
                   </Box>
                   <List>
                     {smsLogs.length === 0 ? (
@@ -643,7 +1021,7 @@ export default function ParentDashboardPage() {
                     ) : (
                       smsLogs.map((log, i) => (
                         <ListItem key={i} sx={{ borderBottom: i < smsLogs.length - 1 ? '1px solid #e0e0e0' : 'none' }}>
-                          <ListItemIcon><SmsIcon sx={{ color: '#1a7a9e' }} /></ListItemIcon>
+                          <ListItemIcon><SmsIcon sx={{ color: '#3b82f6' }} /></ListItemIcon>
                           <ListItemText
                             primary={log.message}
                             secondary={`${log.date} at ${log.time}`}
@@ -675,6 +1053,17 @@ export default function ParentDashboardPage() {
           {snack.msg}
         </Alert>
       </Snackbar>
+
+      {/* Photo Viewer Dialog */}
+      <AttendancePhotoDialog
+        open={photoDialog.open}
+        onClose={() => setPhotoDialog({ ...photoDialog, open: false })}
+        photoUrl={photoDialog.photoUrl}
+        studentName={photoDialog.studentName}
+        status={photoDialog.status}
+        timestamp={photoDialog.timestamp}
+        method={photoDialog.method}
+      />
     </Box>
   );
 }

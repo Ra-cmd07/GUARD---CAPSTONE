@@ -95,8 +95,8 @@ export default function CampusMap({ studentLocation, beacons = [], studentName }
               center={studentCoords}
               radius={30}
               pathOptions={{
-                color: '#1a7a9e',
-                fillColor: '#1a7a9e',
+                color: '#3b82f6',
+                fillColor: '#3b82f6',
                 fillOpacity: 0.2,
               }}
             />
@@ -106,7 +106,7 @@ export default function CampusMap({ studentLocation, beacons = [], studentName }
               <Popup>
                 <Paper elevation={0} sx={{ p: 1.5, minWidth: 200 }}>
                   <Box display="flex" alignItems="center" gap={1} mb={1}>
-                    <Person sx={{ color: '#1a7a9e' }} />
+                    <Person sx={{ color: '#3b82f6' }} />
                     <Typography fontWeight={700} color="#1a1a1a">
                       {studentName || 'Student'}
                     </Typography>
@@ -129,7 +129,7 @@ export default function CampusMap({ studentLocation, beacons = [], studentName }
                     sx={{
                       mt: 1,
                       bgcolor: studentLocation.location_status === 'active' ? '#e3f2fd' : '#f5f5f5',
-                      color: studentLocation.location_status === 'active' ? '#1976d2' : '#666',
+                      color: studentLocation.location_status === 'active' ? '#3b82f6' : '#666',
                       fontSize: '0.7rem',
                     }}
                   />
@@ -239,7 +239,7 @@ export default function CampusMap({ studentLocation, beacons = [], studentName }
           ))}
           
           <Box display="flex" alignItems="center" gap={1} mt={0.5} pt={0.5} borderTop="1px solid #e0e0e0">
-            <Person sx={{ fontSize: 14, color: '#1a7a9e' }} />
+            <Person sx={{ fontSize: 14, color: '#3b82f6' }} />
             <Typography variant="caption" color="#666" fontSize="0.7rem">
               Student Location
             </Typography>

@@ -877,20 +877,29 @@ export default function KioskPage() {
                 </Box>
 
                 <Button
-                  variant="outlined"
+                  variant="contained"
                   size="large"
                   onClick={resetAll}
                   sx={{
-                    ...theme.components.button.secondary,
-                    color: theme.colors.neutral[200],
-                    borderColor: theme.colors.neutral[500],
+                    bgcolor: theme.colors.status.error.main,
+                    color: '#fff',
                     px: 6,
                     py: 1.5,
-                    fontSize: '1rem',
-                    '&:hover': { borderColor: '#888', bgcolor: 'rgba(255,255,255,0.05)' },
+                    fontSize: '1.1rem',
+                    fontWeight: theme.typography.fontWeight.bold,
+                    fontFamily: theme.typography.fontFamily.primary,
+                    borderRadius: theme.borderRadius.base,
+                    boxShadow: theme.shadows.elevation2,
+                    textTransform: 'none',
+                    '&:hover': { 
+                      bgcolor: theme.colors.status.error.dark,
+                      boxShadow: theme.shadows.elevation3,
+                      transform: 'translateY(-2px)',
+                    },
+                    transition: theme.transitions.button,
                   }}
                 >
-                  Cancel
+                  ✕ Cancel
                 </Button>
               </Box>
             </Slide>
@@ -1130,7 +1139,7 @@ export default function KioskPage() {
                   size="large"
                   onClick={resetAll}
                   sx={{
-                    bgcolor: '#0b4d79',
+                    bgcolor: '#3b82f6',
                     px: 6,
                     py: 2,
                     fontSize: '1.1rem',

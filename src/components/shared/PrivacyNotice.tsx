@@ -9,7 +9,7 @@ export default function PrivacyNotice({ onAccept }: Props) {
   return (
     <Box sx={{
       position: 'fixed', inset: 0,
-      background: '#0b4d79',
+      background: '#3b82f6',
       zIndex: 9999,
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       p: 3,

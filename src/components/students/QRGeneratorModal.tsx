@@ -39,7 +39,7 @@ export default function QRGeneratorModal({ open, onClose, student, teachers }: P
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
-      <DialogTitle sx={{ background: '#0b4d79', color: '#fff', fontWeight: 700 }}>
+      <DialogTitle sx={{ background: '#3b82f6', color: '#fff', fontWeight: 700 }}>
         🪪 Generated QR Codes — {student.name}
         <Button onClick={onClose} sx={{ color: '#fff', ml: 'auto', float: 'right' }}>
           <Close />
@@ -56,7 +56,7 @@ export default function QRGeneratorModal({ open, onClose, student, teachers }: P
             <Grid size={{ xs: 12, sm: 4 }} key={g.role}>
               <Paper elevation={2} sx={{
                 p: 2.5, textAlign: 'center', borderRadius: 2,
-                border: '2px solid #0b4d79',
+                border: '2px solid #3b82f6',
               }}>
                 <Chip label={g.role} color="primary" size="small" sx={{ mb: 2 }} />
 

@@ -9,13 +9,15 @@ import {
 import {
   People, School, Router, Sms, Dashboard, Logout, Add, Edit,
   ToggleOn, ToggleOff, LockReset, Menu, Close, PersonAdd,
-  CheckCircle, Cancel, AccessTime, Assessment,
+  CheckCircle, Cancel, AccessTime, Assessment, PhotoCamera, Delete,
 } from '@mui/icons-material';
 import { format } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../api/client';
 import type { AdminStats, AttendanceRecord, Kiosk } from '../types';
+import AttendancePhotoDialog from '../components/AttendancePhotoDialog';
+import theme from '../theme/professionalTheme';
 
 const NAV = [
   { id: 'dashboard', label: 'Dashboard',  icon: <Dashboard /> },
@@ -69,7 +71,7 @@ function CreateUserDialog({ open, onClose, onCreated }: { open: boolean; onClose
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle sx={{ bgcolor: '#0b4d79', color: '#fff', display: 'flex', justifyContent: 'space-between' }}>
+      <DialogTitle sx={{ bgcolor: '#3b82f6', color: '#fff', display: 'flex', justifyContent: 'space-between' }}>
         <span>Create New User</span>
         <IconButton onClick={onClose} sx={{ color: '#fff' }}><Close /></IconButton>
       </DialogTitle>
@@ -145,7 +147,28 @@ export default function AdminDashboardPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [snack,      setSnack]      = useState({ open: false, msg: '', sev: 'success' as any });
 
+  // Photo viewer state
+  const [photoDialog, setPhotoDialog] = useState({
+    open: false,
+    photoUrl: null as string | null,
+    studentName: '',
+    status: '',
+    timestamp: null as Date | string | null,
+    method: '',
+  });
+
   const showSnack = (msg: string, sev: any = 'success') => setSnack({ open: true, msg, sev });
+
+  const handleViewPhoto = (record: AttendanceRecord) => {
+    setPhotoDialog({
+      open: true,
+      photoUrl: record.photo_path,
+      studentName: record.student_name,
+      status: record.status,
+      timestamp: record.timestamp || record.date,
+      method: record.scan_method || 'N/A',
+    });
+  };
 
   const loadDashboard = useCallback(async () => {
     try {
@@ -171,6 +194,17 @@ export default function AdminDashboardPage() {
   }, []);
 
   useEffect(() => { loadDashboard(); }, [loadDashboard]);
+
+  // Auto-refresh dashboard every 5 seconds when on dashboard tab
+  useEffect(() => {
+    if (tab === 'dashboard') {
+      const interval = setInterval(() => {
+        loadDashboard();
+      }, 5000); // Refresh every 5 seconds
+      
+      return () => clearInterval(interval);
+    }
+  }, [tab, loadDashboard]);
 
   useEffect(() => {
     if (tab === 'users' || tab === 'students') loadUsers();
@@ -205,15 +239,18 @@ export default function AdminDashboardPage() {
   };
 
   return (
-    <Box sx={{ display: 'flex', height: '100vh', bgcolor: '#f5f7fa' }}>
+    <Box sx={{ display: 'flex', height: '100vh', background: '#2563eb', overflow: 'hidden' }}>
       {/* ── Sidebar ── */}
       <Box sx={{
         width: sideOpen ? 240 : 0,
         transition: 'width .25s',
         overflow: 'hidden',
-        bgcolor: '#0b4d79', color: '#fff',
-        display: 'flex', flexDirection: 'column',
+        background: '#3b82f6',
+        color: '#fff',
+        display: 'flex', 
+        flexDirection: 'column',
         flexShrink: 0,
+        borderRight: 'none',  // Remove any border
       }}>
         <Box sx={{ p: 2.5, borderBottom: '1px solid rgba(255,255,255,0.15)' }}>
           <Typography variant="h6" fontWeight={800}>ATTENDBOX</Typography>
@@ -246,10 +283,24 @@ export default function AdminDashboardPage() {
         </Box>
       </Box>
 
-      {/* ── Main ── */}
-      <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      {/* ── Main Content Area ── */}
+      <Box sx={{ 
+        flex: 1, 
+        display: 'flex', 
+        flexDirection: 'column', 
+        overflow: 'hidden',
+      }}>
         {/* Topbar */}
-        <Box sx={{ bgcolor: '#fff', px: 2, py: 1.5, borderBottom: '1px solid #e0e0e0', display: 'flex', alignItems: 'center', gap: 2 }}>
+        <Box sx={{ 
+          bgcolor: '#fff', 
+          px: 2, 
+          py: 1.5, 
+          borderBottom: '1px solid #e0e0e0', 
+          display: 'flex', 
+          alignItems: 'center', 
+          gap: 2,
+          boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+        }}>
           <IconButton onClick={() => setSideOpen(o => !o)}><Menu /></IconButton>
           <Typography variant="h6" fontWeight={700} flex={1}>{NAV.find(n => n.id === tab)?.label}</Typography>
           <Typography variant="body2" color="text.secondary">
@@ -257,8 +308,12 @@ export default function AdminDashboardPage() {
           </Typography>
         </Box>
 
-        {/* Content */}
-        <Box sx={{ flex: 1, overflow: 'auto', p: 3 }}>
+        {/* Content Area */}
+        <Box sx={{ 
+          flex: 1, 
+          overflow: 'auto', 
+          p: 3,
+        }}>
 
           {/* ── Dashboard Tab ── */}
           {tab === 'dashboard' && (
@@ -279,9 +334,40 @@ export default function AdminDashboardPage() {
               </Grid>
 
               <Paper elevation={2} sx={{ borderRadius: 2 }}>
-                <Box sx={{ p: 2, borderBottom: '1px solid #eee', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Typography fontWeight={700}>Recent Attendance Logs</Typography>
-                  <Button size="small" variant="outlined" onClick={loadDashboard}>Refresh</Button>
+                <Box sx={{ 
+                  p: 2.5, 
+                  background: theme.colors.primary.gradient,
+                  color: '#fff',
+                  display: 'flex', 
+                  justifyContent: 'space-between', 
+                  alignItems: 'center' 
+                }}>
+                  <Box display="flex" alignItems="center" gap={1}>
+                    <Typography 
+                      fontWeight={theme.typography.fontWeight.bold}
+                      sx={{ fontFamily: theme.typography.fontFamily.display }}
+                    >
+                      Recent Attendance Logs
+                    </Typography>
+                    <Chip 
+                      label="Live" 
+                      size="small" 
+                      sx={{ 
+                        bgcolor: 'rgba(255,255,255,0.2)',
+                        color: '#fff',
+                        border: '1px solid rgba(255,255,255,0.3)',
+                        fontWeight: theme.typography.fontWeight.semibold,
+                        fontSize: '0.7rem',
+                        height: 20,
+                        animation: 'pulse 2s ease-in-out infinite',
+                        '@keyframes pulse': {
+                          '0%, 100%': { opacity: 1 },
+                          '50%': { opacity: 0.5 },
+                        }
+                      }}
+                    />
+                  </Box>
+                  <Button size="small" variant="outlined" onClick={loadDashboard}>Refresh Now</Button>
                 </Box>
                 <TableContainer sx={{ maxHeight: 380 }}>
                   <Table stickyHeader size="small">
@@ -291,12 +377,13 @@ export default function AdminDashboardPage() {
                         <TableCell>Grade/Section</TableCell>
                         <TableCell>Time</TableCell>
                         <TableCell>Method</TableCell>
+                        <TableCell>Photo</TableCell>
                         <TableCell>Status</TableCell>
                       </TableRow>
                     </TableHead>
                     <TableBody>
                       {logs.length === 0 && (
-                        <TableRow><TableCell colSpan={5} align="center" sx={{ py: 4, color: 'text.secondary' }}>No records today</TableCell></TableRow>
+                        <TableRow><TableCell colSpan={6} align="center" sx={{ py: 4, color: 'text.secondary' }}>No records today</TableCell></TableRow>
                       )}
                       {logs.map(r => (
                         <TableRow key={r.id} hover>
@@ -304,6 +391,21 @@ export default function AdminDashboardPage() {
                           <TableCell>{r.grade} {r.section}</TableCell>
                           <TableCell>{r.timestamp ? format(new Date(r.timestamp), 'hh:mm a') : '—'}</TableCell>
                           <TableCell><Chip label={r.scan_method || 'QR'} size="small" /></TableCell>
+                          <TableCell>
+                            {r.photo_path ? (
+                              <Tooltip title="View Photo">
+                                <IconButton
+                                  size="small"
+                                  onClick={() => handleViewPhoto(r)}
+                                  sx={{ p: 0.5 }}
+                                >
+                                  <PhotoCamera fontSize="small" color="primary" />
+                                </IconButton>
+                              </Tooltip>
+                            ) : (
+                              <Typography variant="caption" color="text.secondary">—</Typography>
+                            )}
+                          </TableCell>
                           <TableCell>
                             <Chip label={r.status} size="small" color={STATUS_COLOR[r.status] || 'default'} />
                           </TableCell>
@@ -410,8 +512,28 @@ export default function AdminDashboardPage() {
           {/* ── SMS Logs Tab ── */}
           {tab === 'sms' && (
             <Paper elevation={2} sx={{ borderRadius: 2 }}>
-              <Box sx={{ p: 2, borderBottom: '1px solid #eee' }}>
+              <Box sx={{ p: 2, borderBottom: '1px solid #eee', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <Typography fontWeight={700}>SMS Notification Logs</Typography>
+                <Button
+                  variant="outlined"
+                  color="error"
+                  size="small"
+                  startIcon={<Delete />}
+                  onClick={() => {
+                    if (window.confirm(`⚠️ Clear all SMS history?\n\nThis will delete ${smsLogs.length} SMS log records.\nThis action cannot be undone.\n\nThe SMS feature will continue to work - new logs will be created when students scan.`)) {
+                      api.delete('/admin/sms-logs/clear')
+                        .then(() => {
+                          setSmsLogs([]);
+                          showSnack('SMS history cleared successfully', 'success');
+                        })
+                        .catch(() => showSnack('Failed to clear SMS history', 'error'));
+                    }
+                  }}
+                  disabled={smsLogs.length === 0}
+                  sx={{ textTransform: 'none' }}
+                >
+                  Clear History ({smsLogs.length})
+                </Button>
               </Box>
               <TableContainer>
                 <Table size="small">
@@ -449,7 +571,7 @@ export default function AdminDashboardPage() {
           {/* ── Reports Tab ── */}
           {tab === 'reports' && (
             <Paper elevation={2} sx={{ p: 4, borderRadius: 2, textAlign: 'center' }}>
-              <Assessment sx={{ fontSize: 64, color: '#0b4d79', mb: 2 }} />
+              <Assessment sx={{ fontSize: 64, color: '#3b82f6', mb: 2 }} />
               <Typography variant="h6" fontWeight={700} gutterBottom>Attendance Reports</Typography>
               <Typography color="text.secondary" mb={3}>
                 Generate attendance summaries and analytics for any date range.
@@ -467,6 +589,17 @@ export default function AdminDashboardPage() {
         open={createOpen}
         onClose={() => setCreateOpen(false)}
         onCreated={() => { showSnack('User created successfully'); loadUsers(); }}
+      />
+
+      {/* Photo Dialog */}
+      <AttendancePhotoDialog
+        open={photoDialog.open}
+        onClose={() => setPhotoDialog({ ...photoDialog, open: false })}
+        photoUrl={photoDialog.photoUrl}
+        studentName={photoDialog.studentName}
+        status={photoDialog.status}
+        timestamp={photoDialog.timestamp}
+        method={photoDialog.method}
       />
 
       <Snackbar open={snack.open} autoHideDuration={3500}
