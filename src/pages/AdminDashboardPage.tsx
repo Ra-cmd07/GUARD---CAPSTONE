@@ -10,6 +10,7 @@ import {
   People, School, Router, Sms, Dashboard, Logout, Add, Edit,
   ToggleOn, ToggleOff, LockReset, Menu, Close, PersonAdd,
   CheckCircle, Cancel, AccessTime, Assessment, PhotoCamera, Delete,
+  SignalCellularAlt,
 } from '@mui/icons-material';
 import { format } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
@@ -17,6 +18,8 @@ import { useAuth } from '../context/AuthContext';
 import api from '../api/client';
 import type { AdminStats, AttendanceRecord, Kiosk } from '../types';
 import AttendancePhotoDialog from '../components/AttendancePhotoDialog';
+import UsersTable from '../components/UsersTable';
+import ChartsPanel from '../components/ChartsPanel';
 import theme from '../theme/professionalTheme';
 
 const NAV = [
@@ -145,6 +148,7 @@ export default function AdminDashboardPage() {
   const [users,      setUsers]      = useState<any[]>([]);
   const [smsLogs,    setSmsLogs]    = useState<any[]>([]);
   const [createOpen, setCreateOpen] = useState(false);
+  const [pingLoading, setPingLoading] = useState<number | null>(null);
   const [snack,      setSnack]      = useState({ open: false, msg: '', sev: 'success' as any });
 
   // Photo viewer state
@@ -229,6 +233,42 @@ export default function AdminDashboardPage() {
   };
 
   const handleLogout = () => { logout(); navigate('/login', { replace: true }); };
+
+  const handlePingKiosk = async (kioskId: number, kioskName: string) => {
+    setPingLoading(kioskId);
+    try {
+      await api.post(`/admin/kiosks/${kioskId}/ping`);
+      showSnack(`${kioskName} is online ✓`, 'success');
+      loadDashboard();
+    } catch (err: any) {
+      showSnack(`${kioskName} is offline or unreachable`, 'error');
+    } finally {
+      setPingLoading(null);
+    }
+  };
+
+  // Helper function to determine kiosk connection status
+  const getKioskStatus = (kiosk: Kiosk) => {
+    if (!kiosk.is_active) {
+      return { label: 'Offline', color: 'error', icon: '⭕', description: 'Not responding' };
+    }
+    
+    if (!kiosk.last_ping) {
+      return { label: 'Unknown', color: 'default', icon: '❓', description: 'No ping data' };
+    }
+
+    const now = new Date();
+    const lastPingTime = new Date(kiosk.last_ping);
+    const minutesAgo = Math.floor((now.getTime() - lastPingTime.getTime()) / 60000);
+
+    if (minutesAgo < 5) {
+      return { label: 'Fresh', color: 'success', icon: '🟢', description: `Pinged ${minutesAgo}m ago` };
+    } else if (minutesAgo < 30) {
+      return { label: 'Stale', color: 'warning', icon: '🟡', description: `Pinged ${minutesAgo}m ago` };
+    } else {
+      return { label: 'Stale', color: 'warning', icon: '🟡', description: `Pinged ${Math.floor(minutesAgo / 60)}h ago` };
+    }
+  };
 
   const filteredUsers = tab === 'students'
     ? users.filter(u => u.role === 'student')
@@ -420,63 +460,12 @@ export default function AdminDashboardPage() {
 
           {/* ── Users / Students Tab ── */}
           {(tab === 'users' || tab === 'students') && (
-            <Paper elevation={2} sx={{ borderRadius: 2 }}>
-              <Box sx={{ p: 2, borderBottom: '1px solid #eee', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <Typography fontWeight={700}>{tab === 'students' ? 'Students' : 'All Users'}</Typography>
-                <Button variant="contained" startIcon={<PersonAdd />} onClick={() => setCreateOpen(true)}>
-                  Add User
-                </Button>
-              </Box>
-              <TableContainer>
-                <Table size="small">
-                  <TableHead>
-                    <TableRow>
-                      <TableCell>Username</TableCell>
-                      <TableCell>Role</TableCell>
-                      <TableCell>Status</TableCell>
-                      <TableCell>Created</TableCell>
-                      <TableCell align="center">Actions</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {filteredUsers.length === 0 && (
-                      <TableRow><TableCell colSpan={5} align="center" sx={{ py: 4, color: 'text.secondary' }}>No users found</TableCell></TableRow>
-                    )}
-                    {filteredUsers.map(u => (
-                      <TableRow key={u.id} hover>
-                        <TableCell><b>{u.username}</b></TableCell>
-                        <TableCell>
-                          <Chip label={u.role} size="small"
-                            color={u.role === 'admin' ? 'error' : u.role === 'teacher' ? 'primary' : u.role === 'parent' ? 'warning' : 'default'} />
-                        </TableCell>
-                        <TableCell>
-                          <Chip
-                            label={u.is_active ? 'Active' : 'Inactive'}
-                            size="small"
-                            color={u.is_active ? 'success' : 'default'}
-                            icon={u.is_active ? <CheckCircle sx={{ fontSize: 14 }} /> : <Cancel sx={{ fontSize: 14 }} />}
-                          />
-                        </TableCell>
-                        <TableCell>{u.created_at ? format(new Date(u.created_at), 'MM/dd/yyyy') : '—'}</TableCell>
-                        <TableCell align="center">
-                          <Tooltip title={u.is_active ? 'Deactivate' : 'Activate'}>
-                            <IconButton size="small" color={u.is_active ? 'error' : 'success'}
-                              onClick={() => handleToggleStatus(u.id)}>
-                              {u.is_active ? <ToggleOff /> : <ToggleOn />}
-                            </IconButton>
-                          </Tooltip>
-                          <Tooltip title="Reset Password">
-                            <IconButton size="small" color="warning" onClick={() => handleResetPassword(u.id)}>
-                              <LockReset />
-                            </IconButton>
-                          </Tooltip>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </TableContainer>
-            </Paper>
+            <UsersTable
+              users={filteredUsers}
+              onAddUser={() => setCreateOpen(true)}
+              onToggleStatus={handleToggleStatus}
+              onResetPassword={handleResetPassword}
+            />
           )}
 
           {/* ── Kiosks Tab ── */}
@@ -487,25 +476,48 @@ export default function AdminDashboardPage() {
                   <Typography color="text.secondary" textAlign="center" p={4}>No active kiosks</Typography>
                 </Grid>
               )}
-              {kiosks.map(k => (
-                <Grid size={{ xs: 12, sm: 6, md: 4 }} key={k.id}>
-                  <Paper elevation={2} sx={{ p: 2.5, borderRadius: 2, borderTop: `4px solid ${k.is_active ? '#2e7d32' : '#bdbdbd'}` }}>
-                    <Box display="flex" justifyContent="space-between" alignItems="flex-start">
-                      <Box>
-                        <Typography fontWeight={700}>{k.name}</Typography>
-                        <Typography variant="body2" color="text.secondary">{k.location}</Typography>
-                        <Typography variant="caption" color="text.secondary">{k.gate}</Typography>
+              {kiosks.map(k => {
+                const status = getKioskStatus(k);
+                return (
+                  <Grid size={{ xs: 12, sm: 6, md: 4 }} key={k.id}>
+                    <Paper elevation={2} sx={{ p: 2.5, borderRadius: 2, borderTop: `4px solid ${k.is_active ? '#2e7d32' : '#bdbdbd'}` }}>
+                      <Box display="flex" justifyContent="space-between" alignItems="flex-start" mb={1}>
+                        <Box>
+                          <Typography fontWeight={700}>{k.name}</Typography>
+                          <Typography variant="body2" color="text.secondary">{k.location}</Typography>
+                          <Typography variant="caption" color="text.secondary">{k.gate}</Typography>
+                        </Box>
+                        <Tooltip title={status.description}>
+                          <Chip
+                            label={`${status.icon} ${status.label}`}
+                            size="small"
+                            color={status.color}
+                            variant="filled"
+                            sx={{ fontWeight: 600 }}
+                          />
+                        </Tooltip>
                       </Box>
-                      <Chip label={k.is_active ? 'Online' : 'Offline'} size="small" color={k.is_active ? 'success' : 'default'} />
-                    </Box>
-                    {k.last_ping && (
-                      <Typography variant="caption" color="text.secondary" display="block" mt={1}>
-                        Last ping: {format(new Date(k.last_ping), 'MM/dd hh:mm a')}
-                      </Typography>
-                    )}
-                  </Paper>
-                </Grid>
-              ))}
+                      {k.last_ping && (
+                        <Typography variant="caption" color="text.secondary" display="block" mb={1.5}>
+                          Last ping: {format(new Date(k.last_ping), 'MM/dd hh:mm a')}
+                        </Typography>
+                      )}
+                      <Tooltip title="Check if kiosk is still connected">
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          startIcon={pingLoading === k.id ? <CircularProgress size={16} /> : <SignalCellularAlt />}
+                          onClick={() => handlePingKiosk(k.id, k.name)}
+                          disabled={pingLoading === k.id}
+                          sx={{ textTransform: 'none' }}
+                        >
+                          {pingLoading === k.id ? 'Pinging...' : 'Ping'}
+                        </Button>
+                      </Tooltip>
+                    </Paper>
+                  </Grid>
+                );
+              })}
             </Grid>
           )}
 
@@ -570,16 +582,7 @@ export default function AdminDashboardPage() {
 
           {/* ── Reports Tab ── */}
           {tab === 'reports' && (
-            <Paper elevation={2} sx={{ p: 4, borderRadius: 2, textAlign: 'center' }}>
-              <Assessment sx={{ fontSize: 64, color: '#3b82f6', mb: 2 }} />
-              <Typography variant="h6" fontWeight={700} gutterBottom>Attendance Reports</Typography>
-              <Typography color="text.secondary" mb={3}>
-                Generate attendance summaries and analytics for any date range.
-              </Typography>
-              <Button variant="contained" onClick={() => navigate('/attendance')}>
-                View Attendance Records
-              </Button>
-            </Paper>
+            <ChartsPanel trend={stats?.attendance_trend} />
           )}
 
         </Box>
