@@ -100,6 +100,8 @@ export interface StudentForm {
   gender:  string;
   grade?:  string;
   section?: string;
+  mac_address?: string;
+  rfid_uid?: string;
 }
 
 export interface GuardianEntry {

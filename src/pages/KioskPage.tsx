@@ -92,7 +92,7 @@ export default function KioskPage() {
   // Auto-reset after success/error
   useEffect(() => {
     if (scanState === 'success' || scanState === 'error') {
-      setCountdown(5);
+      setCountdown(1);
       const interval = setInterval(() => {
         setCountdown(c => {
           if (c <= 1) { clearInterval(interval); resetAll(); return 0; }

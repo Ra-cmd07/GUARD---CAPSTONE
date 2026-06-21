@@ -10,6 +10,7 @@ import {
   People, School, Router, Sms, Dashboard, Logout, Add, Edit,
   ToggleOn, ToggleOff, LockReset, Menu, Close, PersonAdd,
   CheckCircle, Cancel, AccessTime, Assessment, PhotoCamera, Delete,
+  QrCode2, Bluetooth, CreditCard,
 } from '@mui/icons-material';
 import { format } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
@@ -423,9 +424,21 @@ export default function AdminDashboardPage() {
             <Paper elevation={2} sx={{ borderRadius: 2 }}>
               <Box sx={{ p: 2, borderBottom: '1px solid #eee', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <Typography fontWeight={700}>{tab === 'students' ? 'Students' : 'All Users'}</Typography>
-                <Button variant="contained" startIcon={<PersonAdd />} onClick={() => setCreateOpen(true)}>
-                  Add User
-                </Button>
+                <Box display="flex" gap={2}>
+                  {tab === 'students' && (
+                    <Button 
+                      variant="contained" 
+                      startIcon={<School />} 
+                      onClick={() => navigate('/admin/students/register')}
+                      sx={{ bgcolor: '#2e7d32', '&:hover': { bgcolor: '#1b5e20' } }}
+                    >
+                      Register Student
+                    </Button>
+                  )}
+                  <Button variant="contained" startIcon={<PersonAdd />} onClick={() => setCreateOpen(true)}>
+                    Add User
+                  </Button>
+                </Box>
               </Box>
               <TableContainer>
                 <Table size="small">
@@ -433,6 +446,7 @@ export default function AdminDashboardPage() {
                     <TableRow>
                       <TableCell>Username</TableCell>
                       <TableCell>Role</TableCell>
+                      {tab === 'students' && <TableCell>Preferred Method</TableCell>}
                       <TableCell>Status</TableCell>
                       <TableCell>Created</TableCell>
                       <TableCell align="center">Actions</TableCell>
@@ -440,7 +454,7 @@ export default function AdminDashboardPage() {
                   </TableHead>
                   <TableBody>
                     {filteredUsers.length === 0 && (
-                      <TableRow><TableCell colSpan={5} align="center" sx={{ py: 4, color: 'text.secondary' }}>No users found</TableCell></TableRow>
+                      <TableRow><TableCell colSpan={tab === 'students' ? 6 : 5} align="center" sx={{ py: 4, color: 'text.secondary' }}>No users found</TableCell></TableRow>
                     )}
                     {filteredUsers.map(u => (
                       <TableRow key={u.id} hover>
@@ -449,6 +463,25 @@ export default function AdminDashboardPage() {
                           <Chip label={u.role} size="small"
                             color={u.role === 'admin' ? 'error' : u.role === 'teacher' ? 'primary' : u.role === 'parent' ? 'warning' : 'default'} />
                         </TableCell>
+                        {tab === 'students' && (
+                          <TableCell>
+                            <Chip 
+                              label={u.preferred_method || 'QR'} 
+                              size="small"
+                              icon={
+                                u.preferred_method === 'BLE' ? <Bluetooth sx={{ fontSize: 14 }} /> :
+                                u.preferred_method === 'RFID' ? <CreditCard sx={{ fontSize: 14 }} /> :
+                                <QrCode2 sx={{ fontSize: 14 }} />
+                              }
+                              sx={{ 
+                                bgcolor: u.preferred_method === 'BLE' ? '#e3f2fd' : 
+                                        u.preferred_method === 'RFID' ? '#fff3e0' : '#e8f5e9',
+                                color: u.preferred_method === 'BLE' ? '#1976d2' : 
+                                       u.preferred_method === 'RFID' ? '#f57c00' : '#2e7d32',
+                              }}
+                            />
+                          </TableCell>
+                        )}
                         <TableCell>
                           <Chip
                             label={u.is_active ? 'Active' : 'Inactive'}
