@@ -83,37 +83,38 @@ export async function kioskScan(req: Request, res: Response): Promise<void> {
     const localHour = hour24;
     const session = hour24 < 12 ? 'AM' : 'PM';
 
-    // Check if Time-In already exists today → this is a Time-Out
-    const [existingIn] = await pool.execute(
-      `SELECT id FROM attendance
-       WHERE student_id = ? AND date = ? AND status IN ('Time-In','Late')`,
+    // AUTO-TOGGLE: Check last attendance record to determine next status
+    const [lastRecord] = await pool.execute(
+      `SELECT status FROM attendance
+       WHERE student_id = ? AND date = ?
+       ORDER BY timestamp DESC
+       LIMIT 1`,
       [student.id, today]
     ) as any[];
 
     let status: string;
-    if ((existingIn as any[]).length > 0) {
-      status = 'Time-Out';
+    
+    if ((lastRecord as any[]).length > 0) {
+      const lastStatus = (lastRecord as any[])[0].status;
+      
+      // Toggle based on last status
+      if (lastStatus === 'Time-Out') {
+        // Last was Time-Out, so next is Time-In (check if late)
+        const hour = phTime.getUTCHours();
+        const min  = phTime.getUTCMinutes();
+        status = (hour > 8 || (hour === 8 && min > 0)) ? 'Late' : 'Time-In';
+      } else {
+        // Last was Time-In or Late, so next is Time-Out
+        status = 'Time-Out';
+      }
     } else {
-      // Late check: after 8:00 AM Philippines time
+      // No record today, first scan is Time-In (check if late)
       const hour = phTime.getUTCHours();
       const min  = phTime.getUTCMinutes();
       status = (hour > 8 || (hour === 8 && min > 0)) ? 'Late' : 'Time-In';
     }
 
-    // Prevent duplicate same status
-    const [dupCheck] = await pool.execute(
-      'SELECT id FROM attendance WHERE student_id = ? AND date = ? AND status = ?',
-      [student.id, today, status]
-    ) as any[];
-    if ((dupCheck as any[]).length > 0) {
-      res.status(409).json({
-        error: 'Already recorded',
-        already_exists: true,
-        student_name: student.name,
-        status,
-      });
-      return;
-    }
+    // REMOVED: Duplicate check - now allows unlimited check-ins/outs per day
 
     // ── Save photo to Cloudinary ─────────────────────────────────────
     let photoPath: string | null = null;

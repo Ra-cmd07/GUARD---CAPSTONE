@@ -104,15 +104,7 @@ export async function createAttendance(req: AuthRequest, res: Response): Promise
       resolvedTeacherName = (tRows as any[])[0]?.name || null;
     }
 
-    // Prevent duplicate same-status record on the same day
-    const [existing] = await pool.execute(
-      `SELECT id FROM attendance WHERE student_name = ? AND date = ? AND status = ?`,
-      [student_name, date, status]
-    ) as any[];
-    if ((existing as any[]).length > 0) {
-      res.status(409).json({ error: 'Already recorded', already_exists: true });
-      return;
-    }
+    // REMOVED: Duplicate check - now allows unlimited attendance records per day
 
     const session_ = session || (new Date().getHours() < 12 ? 'AM' : 'PM');
     const scanMethod = scan_method || 'QR';

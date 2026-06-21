@@ -32,7 +32,7 @@ async function getStudents(req, res) {
             const studentId = parentRows[0].student_id;
             console.log(`[getStudents] Student ID:`, studentId);
             // Get student details
-            const [students] = await db_1.default.execute(`SELECT id, lrn, name, gender, grade, section, mac_address, rfid_uid, is_active, created_at
+            const [students] = await db_1.default.execute(`SELECT id, lrn, name, gender, grade, section, mac_address, rfid_uid, preferred_method, is_active, created_at
          FROM students WHERE id = ?`, [studentId]);
             console.log(`[getStudents] Found ${students.length} student(s)`);
             res.json(students);
@@ -42,7 +42,7 @@ async function getStudents(req, res) {
         let query = `
       SELECT
         s.id, s.lrn, s.name, s.gender, s.grade, s.section,
-        s.mac_address, s.rfid_uid, s.is_active, s.created_at
+        s.mac_address, s.rfid_uid, s.preferred_method, s.is_active, s.created_at
       FROM students s
     `;
         const params = [];
@@ -86,15 +86,16 @@ async function createStudent(req, res) {
     const conn = await db_1.default.getConnection();
     try {
         await conn.beginTransaction();
-        const { lrn, name, gender, grade, section, mac_address, rfid_uid, parents_guardians } = req.body;
+        const { lrn, name, gender, grade, section, mac_address, rfid_uid, preferred_method, parents_guardians } = req.body;
         if (!lrn || !name || !gender) {
             res.status(400).json({ error: 'lrn, name, and gender are required' });
             return;
         }
-        const [result] = await conn.execute(`INSERT INTO students (lrn, name, gender, grade, section, mac_address, rfid_uid, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, [lrn, name,
+        const [result] = await conn.execute(`INSERT INTO students (lrn, name, gender, grade, section, mac_address, rfid_uid, preferred_method, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, [lrn, name,
             gender === 'Male' ? 'M' : gender === 'Female' ? 'F' : gender,
             grade || null, section || null, mac_address || null, rfid_uid || null,
+            preferred_method || 'QR',
             req.user?.id || null]);
         const studentId = result.insertId;
         if (Array.isArray(parents_guardians)) {
@@ -141,11 +142,12 @@ async function getStudentById(req, res) {
 async function updateStudent(req, res) {
     try {
         const { id } = req.params;
-        const { name, gender, grade, section, mac_address, rfid_uid } = req.body;
-        await db_1.default.execute(`UPDATE students SET name=?, gender=?, grade=?, section=?, mac_address=?, rfid_uid=?, updated_by=?
+        const { name, gender, grade, section, mac_address, rfid_uid, preferred_method } = req.body;
+        await db_1.default.execute(`UPDATE students SET name=?, gender=?, grade=?, section=?, mac_address=?, rfid_uid=?, preferred_method=?, updated_by=?
        WHERE id=?`, [name,
             gender === 'Male' ? 'M' : gender === 'Female' ? 'F' : (gender || null),
             grade || null, section || null, mac_address || null, rfid_uid || null,
+            preferred_method || 'QR',
             req.user.id, id]);
         res.json({ message: 'Student updated' });
     }
