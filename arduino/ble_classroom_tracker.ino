@@ -1,10 +1,10 @@
 // ============================================================================
-// ESP32 BLE LOCATION TRACKER - AttendBox Integration
+// ESP32 BLE LOCATION TRACKER - Grade 7 Classroom
 // ============================================================================
-// Purpose: Detect student BLE devices and update their campus location
+// Purpose: Detect student BLE devices in Grade 7 Classroom (Room 201)
 // Integration: Sends location updates to /api/location/ble-update
-// Map Display: Updates automatically appear on parent dashboard map in real-time
-// Distance: Fixed at 1 meter for all detections (not calculated from RSSI)
+// Detection Range: 5 meters (classroom-wide coverage)
+// Function: Location tracking ONLY (no attendance recording)
 // ============================================================================
 
 #include <WiFi.h>
@@ -29,72 +29,19 @@ const char* SERVER_HOST = "10.170.131.63";        // Your backend IP address
 const uint16_t SERVER_PORT = 5000;                // Backend port
 const char* API_ENDPOINT = "/api/location/ble-update";  // Location tracking endpoint
 
-// ─── OPTIONAL: API AUTHENTICATION ──────────────────────────────────────
-// Uncomment and set if your backend requires API key authentication
-// const char* API_KEY = "your-api-key-here";
-
-// ─── BEACON CONFIGURATION ──────────────────────────────────────────────
-// Each ESP32 acts as a virtual beacon at a specific campus location
-// Deploy multiple ESP32 devices and change these settings for each one
-
-const char* BEACON_ID = "BEACON_GATE1";           // Must match database ble_beacons.beacon_id
-const char* LOCATION_NAME = "Gate 1 - Main Entrance";
-const char* LOCATION_TYPE = "gate";               // gate, classroom, cafeteria, library, gym
-const char* BUILDING = "Main Building";
-const char* FLOOR = "Ground";
-
-// ─── OTHER BEACON PRESETS (Comment/Uncomment as needed) ───────────────
-/*
-// Gate 2
-const char* BEACON_ID = "BEACON_GATE2"; 
-const char* LOCATION_NAME = "Gate 2 - Back Entrance"; 
-const char* LOCATION_TYPE = "gate";
-const char* BUILDING = "Main Building"; 
-const char* FLOOR = "Ground";
-*/
-
-/*
-// Classroom
-const char* BEACON_ID = "BEACON_ROOM201"; 
-const char* LOCATION_NAME = "Room 201"; 
-const char* LOCATION_TYPE = "classroom";
-const char* BUILDING = "Academic Building"; 
+// ─── BEACON CONFIGURATION - GRADE 7 CLASSROOM ──────────────────────────
+const char* BEACON_ID = "BEACON_ROOM201";         // Must match database ble_beacons.beacon_id
+const char* LOCATION_NAME = "Room 201";
+const char* LOCATION_TYPE = "classroom";          // IMPORTANT: "classroom" = location tracking only
+const char* BUILDING = "Academic Building";
 const char* FLOOR = "2nd Floor";
-*/
 
-/*
-// Cafeteria
-const char* BEACON_ID = "BEACON_CAFETERIA"; 
-const char* LOCATION_NAME = "Cafeteria"; 
-const char* LOCATION_TYPE = "cafeteria";
-const char* BUILDING = "Main Building"; 
-const char* FLOOR = "1st Floor";
-*/
-
-/*
-// Library
-const char* BEACON_ID = "BEACON_LIBRARY"; 
-const char* LOCATION_NAME = "Library"; 
-const char* LOCATION_TYPE = "library";
-const char* BUILDING = "Learning Commons"; 
-const char* FLOOR = "2nd Floor";
-*/
-
-/*
-// Gymnasium
-const char* BEACON_ID = "BEACON_GYM"; 
-const char* LOCATION_NAME = "Gymnasium"; 
-const char* LOCATION_TYPE = "gym";
-const char* BUILDING = "Sports Complex"; 
-const char* FLOOR = "Ground";
-*/
-
-// ─── DETECTION CONFIGURATION ───────────────────────────────────────────
-const int RSSI_THRESHOLD = -30;                   // EXTREMELY close detection (~1 cm or touching)
-                                                  // -30 = touching/1cm, -35 = 2-3cm, -40 = 5cm
+// ─── DETECTION CONFIGURATION - 5 METER RANGE ───────────────────────────
+const int RSSI_THRESHOLD = -75;                   // 5-meter detection range
+                                                  // -60 = ~1m, -70 = ~3m, -75 = ~5m, -80 = ~10m
 const int SCAN_DURATION = 5;                      // Seconds per BLE scan
 const int SCAN_INTERVAL = 0;                      // No delay - continuous scanning
-const float FIXED_DISTANCE = 0.01;                // Always report 1 centimeter (0.01 meters)
+const float FIXED_DISTANCE = 5.0;                 // Always report 5 meters
 const int WIFI_CONNECT_TIMEOUT = 20000;           // 20 seconds timeout for WiFi
 
 // ─── NTP & TIMEZONE ────────────────────────────────────────────────────
@@ -210,12 +157,6 @@ bool sendLocationUpdate(String macAddress, int rssi) {
   // Set headers
   http.addHeader("Content-Type", "application/json");
   http.addHeader("Connection", "close");
-  
-  // Optional: Add API key authentication if configured
-  #ifdef API_KEY
-  http.addHeader("Authorization", String("Bearer ") + API_KEY);
-  #endif
-  
   http.setTimeout(10000);
 
   // Send POST request
@@ -235,7 +176,6 @@ bool sendLocationUpdate(String macAddress, int rssi) {
       const char* studentName = responseDoc["student_name"];
       const char* location = responseDoc["location"];
       bool attendanceMarked = responseDoc["attendance_marked"] | false;
-      const char* attendanceStatus = responseDoc["attendance_status"];
 
       if (httpCode == 201) {
         // Successfully updated location
@@ -244,16 +184,9 @@ bool sendLocationUpdate(String macAddress, int rssi) {
         Serial.print(" → ");
         Serial.println(location ? location : "Location updated");
         
-        // Show attendance status if marked
-        if (attendanceMarked && attendanceStatus) {
-          Serial.print("      📋 Attendance: ");
-          if (strcmp(attendanceStatus, "checked_in") == 0) {
-            Serial.println("✅ CHECKED IN");
-          } else if (strcmp(attendanceStatus, "checked_out") == 0) {
-            Serial.println("✅ CHECKED OUT");
-          }
-        } else if (attendanceStatus && strcmp(attendanceStatus, "already_marked") == 0) {
-          Serial.println("      ℹ️  Attendance already marked today");
+        // Note: Classrooms don't mark attendance, only location
+        if (attendanceMarked) {
+          Serial.println("      ⚠️  Warning: Classroom should not mark attendance!");
         }
         
         success = true;
@@ -313,7 +246,7 @@ bool sendLocationUpdate(String macAddress, int rssi) {
  */
 bool isWithinRange(int rssi) {
   // Stronger signal (higher RSSI) = closer device
-  // -70 dBm is roughly 1 meter for most BLE devices
+  // -75 dBm is roughly 5 meters for most BLE devices
   return rssi >= RSSI_THRESHOLD;
 }
 
@@ -326,7 +259,7 @@ void setup() {
   delay(1000);
 
   Serial.println("\n\n╔════════════════════════════════════════════════════════════╗");
-  Serial.println("║     AttendBox BLE Location Tracker - ESP32 v2.0          ║");
+  Serial.println("║  AttendBox BLE Classroom Tracker - ESP32 v2.0 (5m range) ║");
   Serial.println("╚════════════════════════════════════════════════════════════╝");
   
   Serial.println("\n📍 Beacon Configuration:");
@@ -335,17 +268,18 @@ void setup() {
   Serial.print("   Location: ");
   Serial.println(LOCATION_NAME);
   Serial.print("   Type: ");
-  Serial.println(LOCATION_TYPE);
+  Serial.print(LOCATION_TYPE);
+  Serial.println(" (LOCATION TRACKING ONLY - NO ATTENDANCE)");
   Serial.print("   Building: ");
   Serial.println(BUILDING);
   Serial.print("   Floor: ");
   Serial.println(FLOOR);
   Serial.print("   Detection Range: ");
-  Serial.print(FIXED_DISTANCE * 100);  // Show in centimeters
-  Serial.println(" cm (MUST BE TOUCHING or within 1cm)");
+  Serial.print(FIXED_DISTANCE);
+  Serial.println(" meters (classroom-wide coverage)");
   Serial.print("   RSSI Threshold: ");
   Serial.print(RSSI_THRESHOLD);
-  Serial.println(" dBm (device must touch ESP32)");
+  Serial.println(" dBm (approx 5 meters)");
 
   // Connect to WiFi
   connectWiFi();
@@ -382,7 +316,8 @@ void setup() {
   Serial.println(" ✅");
 
   Serial.println("\n╔════════════════════════════════════════════════════════════╗");
-  Serial.println("║   Ready! Scanning for students and updating live map...  ║");
+  Serial.println("║   Ready! Tracking students in Grade 7 Classroom...       ║");
+  Serial.println("║   Location updates only - NO attendance recording         ║");
   Serial.println("╚════════════════════════════════════════════════════════════╝\n");
   
   delay(2000);  // Give time to read startup messages
@@ -438,12 +373,6 @@ void loop() {
         sprintf(line, "│ %-19s │ %5d │ %5.2fm   │", mac.c_str(), rssi, FIXED_DISTANCE);
         Serial.print(line);
 
-        // Send BLE detection to kiosk via serial (for USB connection)
-        Serial.print("BLE_DETECT:");
-        Serial.print(mac);
-        Serial.print(":");
-        Serial.println(rssi);
-
         // Send location update to backend via WiFi
         bool updated = sendLocationUpdate(mac, rssi);
         
@@ -486,6 +415,11 @@ void loop() {
   // Clean up and wait
   bleScan->clearResults();
   
-  Serial.printf("⏳ Waiting %d seconds until next scan...\n\n", SCAN_INTERVAL / 1000);
-  delay(SCAN_INTERVAL);
+  if (SCAN_INTERVAL > 0) {
+    Serial.printf("⏳ Waiting %d seconds until next scan...\n\n", SCAN_INTERVAL / 1000);
+    delay(SCAN_INTERVAL);
+  } else {
+    Serial.println("🔄 Starting next scan immediately...\n");
+    // No delay - continuous scanning
+  }
 }

@@ -140,53 +140,34 @@ async function approveRFID(req, res) {
         const timeStr = `${hour12}:${minutes}:${seconds} ${ampm}`;
         const localHour = hour24;
         const session = hour24 < 12 ? 'AM' : 'PM';
-        // Check if Time-In already exists today
-        const [existingIn] = await db_1.default.execute(`SELECT id FROM attendance
-       WHERE student_id = ? AND date = ? AND status IN ('Time-In','Late')`, [student.id, today]);
+        // AUTO-TOGGLE: Check last attendance record to determine next status
+        const [lastRecord] = await db_1.default.execute(`SELECT status FROM attendance
+       WHERE student_id = ? AND date = ?
+       ORDER BY timestamp DESC
+       LIMIT 1`, [student.id, today]);
         let status;
-        if (existingIn.length > 0) {
-            status = 'Time-Out';
+        if (lastRecord.length > 0) {
+            const lastStatus = lastRecord[0].status;
+            // Toggle based on last status
+            if (lastStatus === 'Time-Out') {
+                // Last was Time-Out, so next is Time-In (check if late)
+                const hour = phTime.getUTCHours();
+                const min = phTime.getUTCMinutes();
+                status = (hour > 8 || (hour === 8 && min > 0)) ? 'Late' : 'Time-In';
+            }
+            else {
+                // Last was Time-In or Late, so next is Time-Out
+                status = 'Time-Out';
+            }
         }
         else {
-            // Late check: after 8:00 AM Philippines time
+            // No record today, first scan is Time-In (check if late)
             const hour = phTime.getUTCHours();
             const min = phTime.getUTCMinutes();
             status = (hour > 8 || (hour === 8 && min > 0)) ? 'Late' : 'Time-In';
         }
-        // Prevent duplicate same status
-        const [dupCheck] = await db_1.default.execute('SELECT id FROM attendance WHERE student_id = ? AND date = ? AND status = ?', [student.id, today, status]);
-        if (dupCheck.length > 0) {
-            // Mark as approved but don't record again
-            await db_1.default.execute('UPDATE rfid_detections SET status = \'APPROVED\', approved_at = NOW(), approved_by = ? WHERE id = ?', [approved_by, id]);
-            res.status(409).json({
-                error: 'Already recorded',
-                already_exists: true,
-                student_name: student.name,
-                status,
-            });
-            return;
-        }
-        // Save photo to Cloudinary
-        let photoPath = null;
-        if (photo_base64) {
-            try {
-                const base64Data = photo_base64.replace(/^data:image\/\w+;base64,/, '');
-                const filename = `rfid_${Date.now()}_${student.name.replace(/\s+/g, '_')}`;
-                // Upload to Cloudinary
-                const uploadResult = await cloudinary_1.cloudinary.uploader.upload(`data:image/jpeg;base64,${base64Data}`, {
-                    folder: 'attendbox/scans',
-                    public_id: filename,
-                    resource_type: 'image',
-                    transformation: [{ width: 800, height: 800, crop: 'limit' }]
-                });
-                photoPath = uploadResult.secure_url;
-                console.log('📸 RFID photo uploaded to Cloudinary:', photoPath);
-            }
-            catch (err) {
-                console.error('Failed to upload RFID photo to Cloudinary:', err);
-            }
-        }
-        // Insert attendance
+        // REMOVED: Duplicate check - now allows unlimited attendance records per day
+        // Insert attendance IMMEDIATELY (don't wait for photo)
         const [attResult] = await db_1.default.execute(`INSERT INTO attendance
        (student_id, student_name, lrn, gender, grade, section,
         kiosk_id, scan_method, status, session, date, time_in, time_out,
@@ -197,12 +178,33 @@ async function approveRFID(req, res) {
             detection.kiosk_id || null, 'RFID', status, session, today,
             status === 'Time-In' || status === 'Late' ? timeStr : null,
             status === 'Time-Out' ? timeStr : null,
-            photoPath,
+            null, // Photo path will be updated later
         ]);
         const attendanceId = attResult.insertId;
-        // Log photo
-        if (photoPath) {
-            await db_1.default.execute('INSERT INTO scan_photos (attendance_id, student_name, status, photo_path) VALUES (?, ?, ?, ?)', [attendanceId, student.name, status, photoPath]);
+        // Upload photo to Cloudinary in BACKGROUND (async)
+        if (photo_base64) {
+            (async () => {
+                try {
+                    const base64Data = photo_base64.replace(/^data:image\/\w+;base64,/, '');
+                    const filename = `rfid_${Date.now()}_${student.name.replace(/\s+/g, '_')}`;
+                    const uploadResult = await cloudinary_1.cloudinary.uploader.upload(`data:image/jpeg;base64,${base64Data}`, {
+                        folder: 'attendbox/scans',
+                        public_id: filename,
+                        resource_type: 'image',
+                        transformation: [{ width: 800, height: 800, crop: 'limit' }]
+                    });
+                    const photoPath = uploadResult.secure_url;
+                    console.log('📸 RFID photo uploaded to Cloudinary:', photoPath);
+                    // Update attendance record with photo path
+                    await db_1.default.execute('UPDATE attendance SET photo_path = ? WHERE id = ?', [photoPath, attendanceId]);
+                    // Log photo
+                    // Log photo
+                    await db_1.default.execute('INSERT INTO scan_photos (attendance_id, student_name, status, photo_path) VALUES (?, ?, ?, ?)', [attendanceId, student.name, status, photoPath]);
+                }
+                catch (err) {
+                    console.error('Background RFID photo upload failed:', err);
+                }
+            })();
         }
         // Update detection status
         await db_1.default.execute('UPDATE rfid_detections SET status = \'APPROVED\', approved_at = NOW(), approved_by = ? WHERE id = ?', [approved_by, id]);
@@ -228,7 +230,7 @@ async function approveRFID(req, res) {
             session,
             date: today,
             time: timeStr,
-            photo_path: photoPath,
+            photo_path: null, // Photo uploaded in background
         });
     }
     catch (err) {

@@ -178,13 +178,13 @@ export async function approveRFID(req: Request, res: Response): Promise<void> {
     const localHour = hour24;
     const session = hour24 < 12 ? 'AM' : 'PM';
 
-    // AUTO-TOGGLE: Check last attendance record to determine next status
+    // AUTO-TOGGLE: Check last attendance record for THIS SESSION (AM/PM) to determine next status
     const [lastRecord] = await pool.execute(
       `SELECT status FROM attendance
-       WHERE student_id = ? AND date = ?
+       WHERE student_id = ? AND date = ? AND session = ?
        ORDER BY timestamp DESC
        LIMIT 1`,
-      [student.id, today]
+      [student.id, today, session]
     ) as any[];
 
     let status: string;
@@ -192,7 +192,7 @@ export async function approveRFID(req: Request, res: Response): Promise<void> {
     if ((lastRecord as any[]).length > 0) {
       const lastStatus = (lastRecord as any[])[0].status;
       
-      // Toggle based on last status
+      // Toggle based on last status IN THIS SESSION
       if (lastStatus === 'Time-Out') {
         // Last was Time-Out, so next is Time-In (check if late)
         const hour = phTime.getUTCHours();
@@ -203,7 +203,7 @@ export async function approveRFID(req: Request, res: Response): Promise<void> {
         status = 'Time-Out';
       }
     } else {
-      // No record today, first scan is Time-In (check if late)
+      // No record for this session yet, first scan is Time-In (check if late)
       const hour = phTime.getUTCHours();
       const min = phTime.getUTCMinutes();
       status = (hour > 8 || (hour === 8 && min > 0)) ? 'Late' : 'Time-In';
@@ -211,32 +211,7 @@ export async function approveRFID(req: Request, res: Response): Promise<void> {
 
     // REMOVED: Duplicate check - now allows unlimited attendance records per day
 
-    // Save photo to Cloudinary
-    let photoPath: string | null = null;
-    if (photo_base64) {
-      try {
-        const base64Data = photo_base64.replace(/^data:image\/\w+;base64,/, '');
-        const filename = `rfid_${Date.now()}_${student.name.replace(/\s+/g, '_')}`;
-        
-        // Upload to Cloudinary
-        const uploadResult = await cloudinary.uploader.upload(
-          `data:image/jpeg;base64,${base64Data}`,
-          {
-            folder: 'attendbox/scans',
-            public_id: filename,
-            resource_type: 'image',
-            transformation: [{ width: 800, height: 800, crop: 'limit' }]
-          }
-        );
-        
-        photoPath = uploadResult.secure_url;
-        console.log('📸 RFID photo uploaded to Cloudinary:', photoPath);
-      } catch (err) {
-        console.error('Failed to upload RFID photo to Cloudinary:', err);
-      }
-    }
-
-    // Insert attendance
+    // Insert attendance IMMEDIATELY (don't wait for photo)
     const [attResult] = await pool.execute(
       `INSERT INTO attendance
        (student_id, student_name, lrn, gender, grade, section,
@@ -249,18 +224,48 @@ export async function approveRFID(req: Request, res: Response): Promise<void> {
         detection.kiosk_id || null, 'RFID', status, session, today,
         status === 'Time-In' || status === 'Late' ? timeStr : null,
         status === 'Time-Out' ? timeStr : null,
-        photoPath,
+        null, // Photo path will be updated later
       ]
     ) as any[];
 
     const attendanceId = (attResult as any).insertId;
 
-    // Log photo
-    if (photoPath) {
-      await pool.execute(
-        'INSERT INTO scan_photos (attendance_id, student_name, status, photo_path) VALUES (?, ?, ?, ?)',
-        [attendanceId, student.name, status, photoPath]
-      );
+    // Upload photo to Cloudinary in BACKGROUND (async)
+    if (photo_base64) {
+      (async () => {
+        try {
+          const base64Data = photo_base64.replace(/^data:image\/\w+;base64,/, '');
+          const filename = `rfid_${Date.now()}_${student.name.replace(/\s+/g, '_')}`;
+          
+          const uploadResult = await cloudinary.uploader.upload(
+            `data:image/jpeg;base64,${base64Data}`,
+            {
+              folder: 'attendbox/scans',
+              public_id: filename,
+              resource_type: 'image',
+              transformation: [{ width: 800, height: 800, crop: 'limit' }]
+            }
+          );
+          
+          const photoPath = uploadResult.secure_url;
+          console.log('📸 RFID photo uploaded to Cloudinary:', photoPath);
+
+          // Update attendance record with photo path
+          await pool.execute(
+            'UPDATE attendance SET photo_path = ? WHERE id = ?',
+            [photoPath, attendanceId]
+          );
+
+          // Log photo
+          // Log photo
+          await pool.execute(
+            'INSERT INTO scan_photos (attendance_id, student_name, status, photo_path) VALUES (?, ?, ?, ?)',
+            [attendanceId, student.name, status, photoPath]
+          );
+        } catch (err) {
+          console.error('Background RFID photo upload failed:', err);
+        }
+      })();
     }
 
     // Update detection status
@@ -301,7 +306,7 @@ export async function approveRFID(req: Request, res: Response): Promise<void> {
       session,
       date: today,
       time: timeStr,
-      photo_path: photoPath,
+      photo_path: null, // Photo uploaded in background
     });
   } catch (err) {
     console.error('approveRFID error:', err);

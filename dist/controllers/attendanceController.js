@@ -102,12 +102,7 @@ async function createAttendance(req, res) {
             const [tRows] = await db_1.default.execute('SELECT name FROM teachers WHERE id = ?', [profileId]);
             resolvedTeacherName = tRows[0]?.name || null;
         }
-        // Prevent duplicate same-status record on the same day
-        const [existing] = await db_1.default.execute(`SELECT id FROM attendance WHERE student_name = ? AND date = ? AND status = ?`, [student_name, date, status]);
-        if (existing.length > 0) {
-            res.status(409).json({ error: 'Already recorded', already_exists: true });
-            return;
-        }
+        // REMOVED: Duplicate check - now allows unlimited attendance records per day
         const session_ = session || (new Date().getHours() < 12 ? 'AM' : 'PM');
         const scanMethod = scan_method || 'QR';
         const [result] = await db_1.default.execute(`INSERT INTO attendance
