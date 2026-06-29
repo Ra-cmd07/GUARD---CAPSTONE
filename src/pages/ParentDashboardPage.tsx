@@ -325,6 +325,47 @@ export default function ParentDashboardPage() {
         <Box sx={{ p: 3 }}>
           {selected ? (
             <>
+              {/* Child Selector - Show if parent has multiple children */}
+              {children.length > 1 && (
+                <Paper sx={{
+                  ...theme.components.card.default,
+                  p: 2, mb: 2,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 2,
+                }}>
+                  <School sx={{ color: theme.colors.primary.main, fontSize: 28 }} />
+                  <Box flex={1}>
+                    <Typography 
+                      variant="body2" 
+                      sx={{ 
+                        color: theme.colors.neutral[600],
+                        fontFamily: theme.typography.fontFamily.primary,
+                        mb: 0.5,
+                      }}
+                    >
+                      Select Child ({children.length} children)
+                    </Typography>
+                    <Box display="flex" gap={1} flexWrap="wrap">
+                      {children.map((child) => (
+                        <Button
+                          key={child.id}
+                          variant={selected.id === child.id ? 'contained' : 'outlined'}
+                          onClick={() => setSelected(child)}
+                          sx={{
+                            textTransform: 'none',
+                            fontFamily: theme.typography.fontFamily.primary,
+                            fontWeight: selected.id === child.id ? theme.typography.fontWeight.bold : theme.typography.fontWeight.normal,
+                          }}
+                        >
+                          {child.name}
+                        </Button>
+                      ))}
+                    </Box>
+                  </Box>
+                </Paper>
+              )}
+
               {/* Overview Tab */}
               {tab === 'overview' && (
                 <>
