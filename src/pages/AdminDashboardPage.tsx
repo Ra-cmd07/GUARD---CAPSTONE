@@ -19,6 +19,8 @@ import api from '../api/client';
 import type { AdminStats, AttendanceRecord, Kiosk } from '../types';
 import AttendancePhotoDialog from '../components/AttendancePhotoDialog';
 import theme from '../theme/professionalTheme';
+import ReportsPage from './ReportsPage';
+import KiosksPage from './KiosksPage';
 
 const NAV = [
   { id: 'dashboard', label: 'Dashboard',  icon: <Dashboard /> },
@@ -45,24 +47,190 @@ function StatCard({ label, value, icon, color }: { label: string; value: any; ic
   );
 }
 
+function AddParentDialog({ open, onClose, student, onCreated }: { 
+  open: boolean; 
+  onClose: () => void; 
+  student: any;
+  onCreated: () => void;
+}) {
+  const [form, setForm] = useState({
+    username: '',
+    password: '',
+    name: '',
+    relationship: 'Father',
+    contact: '',
+    address: '',
+  });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }));
+
+  const handleSubmit = async () => {
+    if (!form.username || !form.password || !form.name) {
+      setError('Username, password, and name are required');
+      return;
+    }
+
+    if (!student?.profileId) {
+      setError('Student profile ID not found');
+      return;
+    }
+
+    setError('');
+    setLoading(true);
+    try {
+      await api.post(`/admin/students/${student.profileId}/add-parent`, form);
+      onCreated();
+      onClose();
+      setForm({
+        username: '',
+        password: '',
+        name: '',
+        relationship: 'Father',
+        contact: '',
+        address: '',
+      });
+    } catch (e: any) {
+      setError(e.response?.data?.error || 'Failed to create parent account');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!student) return null;
+
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+      <DialogTitle sx={{ bgcolor: '#3b82f6', color: '#fff', display: 'flex', justifyContent: 'space-between' }}>
+        <Box>
+          <Typography variant="h6">Add Parent/Guardian</Typography>
+          <Typography variant="caption" sx={{ opacity: 0.9 }}>
+            For student: {student.username} {student.name && `(${student.name})`}
+          </Typography>
+        </Box>
+        <IconButton onClick={onClose} sx={{ color: '#fff' }}>
+          <Close />
+        </IconButton>
+      </DialogTitle>
+      <DialogContent sx={{ pt: 3 }}>
+        {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+        <Grid container spacing={2}>
+          <Grid size={{ xs: 12, sm: 6 }}>
+            <TextField
+              label="Username *"
+              fullWidth
+              value={form.username}
+              onChange={e => set('username', e.target.value)}
+              placeholder="parent_username"
+            />
+          </Grid>
+          <Grid size={{ xs: 12, sm: 6 }}>
+            <TextField
+              label="Password *"
+              type="password"
+              fullWidth
+              value={form.password}
+              onChange={e => set('password', e.target.value)}
+              placeholder="Password"
+            />
+          </Grid>
+          <Grid size={{ xs: 12, sm: 6 }}>
+            <TextField
+              label="Full Name *"
+              fullWidth
+              value={form.name}
+              onChange={e => set('name', e.target.value)}
+              placeholder="John Doe"
+            />
+          </Grid>
+          <Grid size={{ xs: 12, sm: 6 }}>
+            <FormControl fullWidth>
+              <InputLabel>Relationship *</InputLabel>
+              <Select
+                value={form.relationship}
+                label="Relationship *"
+                onChange={e => set('relationship', e.target.value)}
+              >
+                <MenuItem value="Father">Father</MenuItem>
+                <MenuItem value="Mother">Mother</MenuItem>
+                <MenuItem value="Guardian">Guardian</MenuItem>
+                <MenuItem value="Grandfather">Grandfather</MenuItem>
+                <MenuItem value="Grandmother">Grandmother</MenuItem>
+                <MenuItem value="Uncle">Uncle</MenuItem>
+                <MenuItem value="Aunt">Aunt</MenuItem>
+                <MenuItem value="Sibling">Sibling</MenuItem>
+              </Select>
+            </FormControl>
+          </Grid>
+          <Grid size={{ xs: 12, sm: 6 }}>
+            <TextField
+              label="Contact"
+              fullWidth
+              value={form.contact}
+              onChange={e => set('contact', e.target.value)}
+              placeholder="09XXXXXXXXX"
+            />
+          </Grid>
+          <Grid size={{ xs: 12, sm: 6 }}>
+            <TextField
+              label="Address"
+              fullWidth
+              value={form.address}
+              onChange={e => set('address', e.target.value)}
+              placeholder="City, Province"
+            />
+          </Grid>
+        </Grid>
+      </DialogContent>
+      <DialogActions sx={{ px: 3, pb: 2 }}>
+        <Button onClick={onClose} variant="outlined">
+          Cancel
+        </Button>
+        <Button onClick={handleSubmit} variant="contained" disabled={loading}>
+          {loading ? <CircularProgress size={20} /> : 'Create Parent Account'}
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+}
+
 function CreateUserDialog({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: () => void }) {
   const [form, setForm] = useState({
     username: '', password: '', role: 'teacher', name: '',
     gender: '', section: '', contact: '', address: '', lrn: '', grade: '',
     subject: '', room: '', schedule: '', relationship: '', employee_id: '',
   });
+  const [parents, setParents] = useState([
+    { username: '', password: '', name: '', relationship: 'Father', contact: '' },
+    { username: '', password: '', name: '', relationship: 'Mother', contact: '' },
+    { username: '', password: '', name: '', relationship: 'Guardian', contact: '' },
+  ]);
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState('');
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }));
+  const setParent = (index: number, k: string, v: string) => {
+    setParents(p => p.map((parent, i) => i === index ? { ...parent, [k]: v } : parent));
+  };
 
   const handleSubmit = async () => {
     setError('');
     setLoading(true);
     try {
-      await api.post('/admin/users', form);
+      // If student role, include parent accounts
+      const payload = form.role === 'student' 
+        ? { ...form, parents: parents.filter(p => p.username && p.name) }
+        : form;
+      
+      await api.post('/admin/users', payload);
       onCreated();
       onClose();
       setForm({ username:'', password:'', role:'teacher', name:'', gender:'', section:'', contact:'', address:'', lrn:'', grade:'', subject:'', room:'', schedule:'', relationship:'', employee_id:'' });
+      setParents([
+        { username: '', password: '', name: '', relationship: 'Father', contact: '' },
+        { username: '', password: '', name: '', relationship: 'Mother', contact: '' },
+        { username: '', password: '', name: '', relationship: 'Guardian', contact: '' },
+      ]);
     } catch (e: any) {
       setError(e.response?.data?.error || 'Failed to create user');
     } finally {
@@ -71,7 +239,7 @@ function CreateUserDialog({ open, onClose, onCreated }: { open: boolean; onClose
   };
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+    <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
       <DialogTitle sx={{ bgcolor: '#3b82f6', color: '#fff', display: 'flex', justifyContent: 'space-between' }}>
         <span>Create New User</span>
         <IconButton onClick={onClose} sx={{ color: '#fff' }}><Close /></IconButton>
@@ -118,6 +286,87 @@ function CreateUserDialog({ open, onClose, onCreated }: { open: boolean; onClose
             <Grid size={{ xs: 12, sm: 6 }}><TextField label="LRN *" fullWidth value={form.lrn} onChange={e => set('lrn', e.target.value)} /></Grid>
             <Grid size={{ xs: 12, sm: 6 }}><TextField label="Grade" fullWidth value={form.grade} onChange={e => set('grade', e.target.value)} /></Grid>
             <Grid size={{ xs: 12, sm: 6 }}><TextField label="Section" fullWidth value={form.section} onChange={e => set('section', e.target.value)} /></Grid>
+            
+            {/* Parent Accounts Section */}
+            <Grid size={{ xs: 12 }}>
+              <Typography variant="subtitle1" sx={{ fontWeight: 700, mt: 2, mb: 1, color: '#3b82f6' }}>
+                👨‍👩‍👦 Parent/Guardian Accounts (Optional)
+              </Typography>
+              <Typography variant="caption" sx={{ color: '#6b7280', display: 'block', mb: 2 }}>
+                Add up to 3 parent/guardian accounts. At least one parent account is recommended.
+              </Typography>
+            </Grid>
+
+            {parents.map((parent, index) => (
+              <Grid size={{ xs: 12 }} key={index}>
+                <Paper sx={{ p: 2, bgcolor: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 2, mb: 2 }}>
+                  <Typography variant="body2" sx={{ fontWeight: 600, mb: 1.5, color: '#374151' }}>
+                    {index === 0 ? '👨 Parent 1' : index === 1 ? '👩 Parent 2' : '👤 Guardian (Optional)'}
+                  </Typography>
+                  <Grid container spacing={1.5}>
+                    <Grid size={{ xs: 12, sm: 6 }}>
+                      <TextField 
+                        label="Username" 
+                        size="small"
+                        fullWidth 
+                        value={parent.username} 
+                        onChange={e => setParent(index, 'username', e.target.value)}
+                        placeholder={index === 2 ? 'Optional' : ''}
+                      />
+                    </Grid>
+                    <Grid size={{ xs: 12, sm: 6 }}>
+                      <TextField 
+                        label="Password" 
+                        size="small"
+                        type="password"
+                        fullWidth 
+                        value={parent.password} 
+                        onChange={e => setParent(index, 'password', e.target.value)}
+                        placeholder={index === 2 ? 'Optional' : ''}
+                      />
+                    </Grid>
+                    <Grid size={{ xs: 12, sm: 6 }}>
+                      <TextField 
+                        label="Full Name" 
+                        size="small"
+                        fullWidth 
+                        value={parent.name} 
+                        onChange={e => setParent(index, 'name', e.target.value)}
+                        placeholder={index === 2 ? 'Optional' : ''}
+                      />
+                    </Grid>
+                    <Grid size={{ xs: 12, sm: 3 }}>
+                      <FormControl fullWidth size="small">
+                        <InputLabel>Relationship</InputLabel>
+                        <Select 
+                          value={parent.relationship} 
+                          label="Relationship"
+                          onChange={e => setParent(index, 'relationship', e.target.value)}
+                        >
+                          <MenuItem value="Father">Father</MenuItem>
+                          <MenuItem value="Mother">Mother</MenuItem>
+                          <MenuItem value="Guardian">Guardian</MenuItem>
+                          <MenuItem value="Grandfather">Grandfather</MenuItem>
+                          <MenuItem value="Grandmother">Grandmother</MenuItem>
+                          <MenuItem value="Uncle">Uncle</MenuItem>
+                          <MenuItem value="Aunt">Aunt</MenuItem>
+                        </Select>
+                      </FormControl>
+                    </Grid>
+                    <Grid size={{ xs: 12, sm: 3 }}>
+                      <TextField 
+                        label="Contact" 
+                        size="small"
+                        fullWidth 
+                        value={parent.contact} 
+                        onChange={e => setParent(index, 'contact', e.target.value)}
+                        placeholder="09xxxxxxxxx"
+                      />
+                    </Grid>
+                  </Grid>
+                </Paper>
+              </Grid>
+            ))}
           </>}
           {form.role === 'parent' && <>
             <Grid size={{ xs: 12, sm: 6 }}><TextField label="Relationship" fullWidth value={form.relationship} onChange={e => set('relationship', e.target.value)} /></Grid>
@@ -147,6 +396,8 @@ export default function AdminDashboardPage() {
   const [smsLogs,    setSmsLogs]    = useState<any[]>([]);
   const [createOpen, setCreateOpen] = useState(false);
   const [snack,      setSnack]      = useState({ open: false, msg: '', sev: 'success' as any });
+  const [addParentOpen, setAddParentOpen] = useState(false);
+  const [selectedStudent, setSelectedStudent] = useState<any>(null);
 
   // Photo viewer state
   const [photoDialog, setPhotoDialog] = useState({
@@ -458,7 +709,42 @@ export default function AdminDashboardPage() {
                     )}
                     {filteredUsers.map(u => (
                       <TableRow key={u.id} hover>
-                        <TableCell><b>{u.username}</b></TableCell>
+                        <TableCell>
+                          {tab === 'students' && u.role === 'student' ? (
+                            <Tooltip title="Click to add parent/guardian">
+                              <Box
+                                component="span"
+                                onClick={async () => {
+                                  try {
+                                    // Fetch full user details including profile ID
+                                    const { data } = await api.get(`/admin/users/${u.id}`);
+                                    setSelectedStudent({
+                                      ...u,
+                                      profileId: data.profile?.id,
+                                      name: data.profile?.name,
+                                      lrn: data.profile?.lrn,
+                                    });
+                                    setAddParentOpen(true);
+                                  } catch (err) {
+                                    showSnack('Failed to load student details', 'error');
+                                  }
+                                }}
+                                sx={{
+                                  cursor: 'pointer',
+                                  fontWeight: 700,
+                                  color: '#3b82f6',
+                                  '&:hover': {
+                                    textDecoration: 'underline',
+                                  },
+                                }}
+                              >
+                                {u.username}
+                              </Box>
+                            </Tooltip>
+                          ) : (
+                            <b>{u.username}</b>
+                          )}
+                        </TableCell>
                         <TableCell>
                           <Chip label={u.role} size="small"
                             color={u.role === 'admin' ? 'error' : u.role === 'teacher' ? 'primary' : u.role === 'parent' ? 'warning' : 'default'} />
@@ -514,32 +800,7 @@ export default function AdminDashboardPage() {
 
           {/* ── Kiosks Tab ── */}
           {tab === 'kiosks' && (
-            <Grid container spacing={2}>
-              {kiosks.length === 0 && (
-                <Grid size={{ xs: 12 }}>
-                  <Typography color="text.secondary" textAlign="center" p={4}>No active kiosks</Typography>
-                </Grid>
-              )}
-              {kiosks.map(k => (
-                <Grid size={{ xs: 12, sm: 6, md: 4 }} key={k.id}>
-                  <Paper elevation={2} sx={{ p: 2.5, borderRadius: 2, borderTop: `4px solid ${k.is_active ? '#2e7d32' : '#bdbdbd'}` }}>
-                    <Box display="flex" justifyContent="space-between" alignItems="flex-start">
-                      <Box>
-                        <Typography fontWeight={700}>{k.name}</Typography>
-                        <Typography variant="body2" color="text.secondary">{k.location}</Typography>
-                        <Typography variant="caption" color="text.secondary">{k.gate}</Typography>
-                      </Box>
-                      <Chip label={k.is_active ? 'Online' : 'Offline'} size="small" color={k.is_active ? 'success' : 'default'} />
-                    </Box>
-                    {k.last_ping && (
-                      <Typography variant="caption" color="text.secondary" display="block" mt={1}>
-                        Last ping: {format(new Date(k.last_ping), 'MM/dd hh:mm a')}
-                      </Typography>
-                    )}
-                  </Paper>
-                </Grid>
-              ))}
-            </Grid>
+            <KiosksPage />
           )}
 
           {/* ── SMS Logs Tab ── */}
@@ -603,16 +864,7 @@ export default function AdminDashboardPage() {
 
           {/* ── Reports Tab ── */}
           {tab === 'reports' && (
-            <Paper elevation={2} sx={{ p: 4, borderRadius: 2, textAlign: 'center' }}>
-              <Assessment sx={{ fontSize: 64, color: '#3b82f6', mb: 2 }} />
-              <Typography variant="h6" fontWeight={700} gutterBottom>Attendance Reports</Typography>
-              <Typography color="text.secondary" mb={3}>
-                Generate attendance summaries and analytics for any date range.
-              </Typography>
-              <Button variant="contained" onClick={() => navigate('/attendance')}>
-                View Attendance Records
-              </Button>
-            </Paper>
+            <ReportsPage />
           )}
 
         </Box>
@@ -622,6 +874,20 @@ export default function AdminDashboardPage() {
         open={createOpen}
         onClose={() => setCreateOpen(false)}
         onCreated={() => { showSnack('User created successfully'); loadUsers(); }}
+      />
+
+      <AddParentDialog
+        open={addParentOpen}
+        onClose={() => {
+          setAddParentOpen(false);
+          setSelectedStudent(null);
+        }}
+        student={selectedStudent}
+        onCreated={() => {
+          showSnack('Parent account created and linked successfully');
+          setAddParentOpen(false);
+          setSelectedStudent(null);
+        }}
       />
 
       {/* Photo Dialog */}
