@@ -22,6 +22,8 @@ import kioskRoutes      from './routes/kioskRoutes';
 import locationRoutes   from './routes/locationRoutes';
 import bleApprovalRoutes from './routes/bleApprovalRoutes';
 import rfidApprovalRoutes from './routes/rfidApprovalRoutes';
+import reportsRoutes    from './routes/reportsRoutes';
+import kiosksRoutes     from './routes/kiosksRoutes';
 
 import { errorHandler } from './middleware/errorMiddleware';
 
@@ -65,6 +67,8 @@ app.use('/api/rfid',        rfidApprovalRoutes); // RFID approval routes FIRST (
 app.use('/api/rfid',        rfidRoutes);         // Old RFID routes second (/logs, /dashboard)
 app.use('/api/kiosk',       kioskRoutes);
 app.use('/api/location',    locationRoutes);
+app.use('/api/reports',     reportsRoutes);
+app.use('/api/kiosks',      kiosksRoutes);
 
 // ─── Health Check ─────────────────────────────────────────────────────
 app.get('/api/health', (_req, res) => {

@@ -14,6 +14,7 @@ import {
   getSmsLogs,
   getLoginLogs,
   clearSmsLogs,
+  addParentToStudent,
 } from '../controllers/adminController';
 
 const router = Router();
@@ -26,6 +27,7 @@ router.post('/users',              ...admin, createUser);
 router.put('/users/:id',           ...admin, updateUser);
 router.post('/users/:id/reset-password', ...admin, resetPassword);
 router.patch('/users/:id/toggle-status', ...admin, toggleUserStatus);
+router.post('/students/:id/add-parent', ...admin, addParentToStudent);
 
 router.get('/kiosks',              ...admin, getKiosks);
 router.post('/kiosks',             ...admin, createKiosk);

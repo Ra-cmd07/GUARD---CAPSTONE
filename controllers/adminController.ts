@@ -98,6 +98,7 @@ export async function createUser(req: AuthRequest, res: Response): Promise<void>
       name, age, gender, section, contact, address,
       subject, room, schedule, relationship, employee_id,
       lrn, grade, mac_address, rfid_uid,
+      parents, // Array of parent accounts for students
     } = req.body;
 
     if (!username || !password || !role || !name) {
@@ -149,6 +150,65 @@ export async function createUser(req: AuthRequest, res: Response): Promise<void>
          grade || null, section || null, mac_address || null, rfid_uid || null, req.user!.id]
       ) as any[];
       profileId = (sr as any).insertId;
+
+      // Create parent accounts if provided
+      const createdParents = [];
+      if (Array.isArray(parents) && parents.length > 0) {
+        const [parentRoleRows] = await conn.execute('SELECT id FROM roles WHERE name = ?', ['parent']) as any[];
+        const parentRoleId = (parentRoleRows as any[])[0]?.id;
+
+        for (const parent of parents) {
+          if (!parent.username || !parent.name || !parent.password) continue;
+
+          // Check if parent username already exists
+          const [parentExistCheck] = await conn.execute(
+            'SELECT id FROM users WHERE username = ?',
+            [parent.username]
+          ) as any[];
+          
+          if ((parentExistCheck as any[]).length > 0) {
+            console.log(`Skipping parent ${parent.username} - username already exists`);
+            continue;
+          }
+
+          // Create parent user account
+          const parentHashed = await bcrypt.hash(parent.password, 10);
+          const [parentUserResult] = await conn.execute(
+            'INSERT INTO users (username, password, role_id, created_by) VALUES (?, ?, ?, ?)',
+            [parent.username, parentHashed, parentRoleId, req.user!.id]
+          ) as any[];
+          const parentUserId = (parentUserResult as any).insertId;
+
+          // Create parent profile
+          const [parentProfileResult] = await conn.execute(
+            'INSERT INTO parents (user_id, name, contact, address, created_by) VALUES (?, ?, ?, ?, ?)',
+            [parentUserId, parent.name, parent.contact || null, address || null, req.user!.id]
+          ) as any[];
+          const parentId = (parentProfileResult as any).insertId;
+
+          // Link parent to student
+          await conn.execute(
+            'INSERT INTO parent_student (parent_id, student_id, relationship) VALUES (?, ?, ?)',
+            [parentId, profileId, parent.relationship || 'Parent']
+          );
+
+          createdParents.push({
+            username: parent.username,
+            name: parent.name,
+            relationship: parent.relationship,
+          });
+        }
+      }
+
+      await conn.commit();
+      res.status(201).json({ 
+        message: 'Student and parent accounts created successfully', 
+        userId, 
+        profileId,
+        parentsCreated: createdParents.length,
+        parents: createdParents,
+      });
+      return;
     }
 
     await conn.commit();
@@ -326,6 +386,89 @@ export async function getLoginLogs(_req: AuthRequest, res: Response): Promise<vo
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
+  }
+}
+
+// ─── POST /api/admin/students/:id/add-parent ─────────────────────────
+export async function addParentToStudent(req: AuthRequest, res: Response): Promise<void> {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const { id: studentId } = req.params;
+    const { username, password, name, relationship, contact, address } = req.body;
+
+    if (!username || !password || !name) {
+      res.status(400).json({ error: 'username, password, and name are required' });
+      return;
+    }
+
+    // Verify student exists
+    const [studentCheck] = await conn.execute(
+      'SELECT id, name FROM students WHERE id = ?',
+      [studentId]
+    ) as any[];
+
+    if ((studentCheck as any[]).length === 0) {
+      res.status(404).json({ error: 'Student not found' });
+      return;
+    }
+
+    // Check if username already exists
+    const [existCheck] = await conn.execute(
+      'SELECT id FROM users WHERE username = ?',
+      [username]
+    ) as any[];
+
+    if ((existCheck as any[]).length > 0) {
+      res.status(400).json({ error: 'Username already taken' });
+      return;
+    }
+
+    // Get parent role ID
+    const [roleRows] = await conn.execute(
+      'SELECT id FROM roles WHERE name = ?',
+      ['parent']
+    ) as any[];
+    const parentRoleId = (roleRows as any[])[0]?.id;
+
+    // Create user account
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const [userResult] = await conn.execute(
+      'INSERT INTO users (username, password, role_id, created_by) VALUES (?, ?, ?, ?)',
+      [username, hashedPassword, parentRoleId, req.user!.id]
+    ) as any[];
+    const userId = (userResult as any).insertId;
+
+    // Create parent profile
+    const [parentResult] = await conn.execute(
+      'INSERT INTO parents (user_id, name, contact, address, created_by) VALUES (?, ?, ?, ?, ?)',
+      [userId, name, contact || null, address || null, req.user!.id]
+    ) as any[];
+    const parentId = (parentResult as any).insertId;
+
+    // Link parent to student
+    await conn.execute(
+      'INSERT INTO parent_student (parent_id, student_id, relationship) VALUES (?, ?, ?)',
+      [parentId, studentId, relationship || 'Parent']
+    );
+
+    await conn.commit();
+    res.status(201).json({
+      message: 'Parent account created and linked successfully',
+      parentId,
+      parentUsername: username,
+      linkedToStudent: (studentCheck as any[])[0].name,
+    });
+  } catch (err: any) {
+    await conn.rollback();
+    if (err.code === 'ER_DUP_ENTRY') {
+      res.status(400).json({ error: 'Username already exists' });
+      return;
+    }
+    console.error('addParentToStudent error:', err);
+    res.status(500).json({ error: 'Server error' });
+  } finally {
+    conn.release();
   }
 }
 
