@@ -11,35 +11,22 @@ export async function getStudents(req: AuthRequest, res: Response): Promise<void
     const { role, profileId } = req.user!;
     console.log(`[getStudents] Role: ${role}, ProfileId: ${profileId}`);
     
-    // For parent role, directly query without complex joins
+    // For parent role, get students linked via parent_student table
     if (role === 'parent' && profileId) {
       console.log(`[getStudents] Querying for parent ${profileId}`);
       
-      // Get student linked to this parent (using parents_teachers.student_id)
-      const [parentRows] = await pool.execute(
-        'SELECT student_id FROM parents_teachers WHERE id = ? AND student_id IS NOT NULL',
+      // Get students linked to this parent from parent_student junction table
+      const [studentLinks] = await pool.execute(
+        `SELECT s.id, s.lrn, s.name, s.gender, s.grade, s.section, 
+                s.mac_address, s.rfid_uid, s.preferred_method, s.is_active, s.created_at
+         FROM parent_student ps
+         INNER JOIN students s ON ps.student_id = s.id
+         WHERE ps.parent_id = ? AND s.is_active = 1`,
         [profileId]
       ) as any[];
-      console.log(`[getStudents] Parent record:`, parentRows);
+      console.log(`[getStudents] Found ${(studentLinks as any[]).length} student(s) for parent ${profileId}`);
       
-      if ((parentRows as any[]).length === 0 || !(parentRows as any[])[0].student_id) {
-        console.log('[getStudents] No children found for this parent');
-        res.json([]);
-        return;
-      }
-      
-      const studentId = (parentRows as any[])[0].student_id;
-      console.log(`[getStudents] Student ID:`, studentId);
-      
-      // Get student details
-      const [students] = await pool.execute(
-        `SELECT id, lrn, name, gender, grade, section, mac_address, rfid_uid, preferred_method, is_active, created_at
-         FROM students WHERE id = ?`,
-        [studentId]
-      ) as any[];
-      console.log(`[getStudents] Found ${(students as any[]).length} student(s)`);
-      
-      res.json(students);
+      res.json(studentLinks);
       return;
     }
     
@@ -66,11 +53,14 @@ export async function getStudents(req: AuthRequest, res: Response): Promise<void
     query += ' ORDER BY s.name';
     const [rows] = await pool.execute(query, params) as any[];
     
-    // For each student, fetch their guardian contacts from parents_teachers table
+    // For each student, fetch their guardian contacts from parent_student table
     const students = rows as any[];
     for (const student of students) {
       const [guardians] = await pool.execute(
-        'SELECT role, name, contact_number FROM parents_teachers WHERE student_id = ?',
+        `SELECT p.name, p.contact, ps.relationship 
+         FROM parent_student ps
+         INNER JOIN parents p ON ps.parent_id = p.id
+         WHERE ps.student_id = ?`,
         [student.id]
       ) as any[];
       student.parents_guardians = guardians;
