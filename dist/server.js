@@ -26,6 +26,8 @@ const kioskRoutes_1 = __importDefault(require("./routes/kioskRoutes"));
 const locationRoutes_1 = __importDefault(require("./routes/locationRoutes"));
 const bleApprovalRoutes_1 = __importDefault(require("./routes/bleApprovalRoutes"));
 const rfidApprovalRoutes_1 = __importDefault(require("./routes/rfidApprovalRoutes"));
+const reportsRoutes_1 = __importDefault(require("./routes/reportsRoutes"));
+const kiosksRoutes_1 = __importDefault(require("./routes/kiosksRoutes"));
 const errorMiddleware_1 = require("./middleware/errorMiddleware");
 const app = (0, express_1.default)();
 const PORT = parseInt(process.env.PORT || '5000');
@@ -63,6 +65,8 @@ app.use('/api/rfid', rfidApprovalRoutes_1.default); // RFID approval routes FIRS
 app.use('/api/rfid', rfidRoutes_1.default); // Old RFID routes second (/logs, /dashboard)
 app.use('/api/kiosk', kioskRoutes_1.default);
 app.use('/api/location', locationRoutes_1.default);
+app.use('/api/reports', reportsRoutes_1.default);
+app.use('/api/kiosks', kiosksRoutes_1.default);
 // ─── Health Check ─────────────────────────────────────────────────────
 app.get('/api/health', (_req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });

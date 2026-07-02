@@ -5,13 +5,44 @@ import pool from '../lib/db';
 import { emitAttendanceEvent } from '../src/websocket/socketHandler';
 import { cloudinary } from '../config/cloudinary';
 
-// Lightweight SMS helper — replace body with real provider (Semaphore, Vonage, etc.)
-async function sendSms(phone: string, message: string): Promise<boolean> {
+/**
+ * Queue SMS for GSM module to send
+ * Converts phone numbers to international format (+63...)
+ */
+async function queueSmsForGSM(
+  phone: string,
+  message: string,
+  studentId: number,
+  attendanceId: number
+): Promise<boolean> {
   try {
-    // TODO: integrate real SMS gateway
-    console.log(`📱 SMS → ${phone}: ${message}`);
+    // Convert phone number to international format for GSM
+    // 0917... → +63917...
+    // 0953 681 2353 → +639536812353
+    let internationalPhone = phone.trim().replace(/\s+/g, ''); // Remove spaces
+    
+    if (internationalPhone.startsWith('0')) {
+      // Local format: replace leading 0 with +63
+      internationalPhone = '+63' + internationalPhone.substring(1);
+    } else if (internationalPhone.startsWith('63') && !internationalPhone.startsWith('+')) {
+      // Missing + prefix
+      internationalPhone = '+' + internationalPhone;
+    } else if (!internationalPhone.startsWith('+63')) {
+      // Invalid format, try to fix
+      console.warn(`⚠️  Invalid phone format: ${phone}, attempting to fix...`);
+      internationalPhone = '+63' + internationalPhone.replace(/^0+/, '');
+    }
+    
+    await pool.execute(
+      `INSERT INTO sms_queue 
+       (phone_number, message, student_id, attendance_id, priority, status, created_at) 
+       VALUES (?, ?, ?, ?, 'normal', 'pending', NOW())`,
+      [internationalPhone, message, studentId, attendanceId]
+    );
+    console.log(`📩 SMS queued for GSM module → ${internationalPhone}: ${message.substring(0, 50)}...`);
     return true;
-  } catch {
+  } catch (error) {
+    console.error('❌ Failed to queue SMS:', error);
     return false;
   }
 }
@@ -175,7 +206,11 @@ export async function kioskScan(req: Request, res: Response): Promise<void> {
 
     // ── SMS to parents ────────────────────────────────────────────────
     const [guardians] = await pool.execute(
-      'SELECT * FROM parents_teachers WHERE student_id = ?', [student.id]
+      `SELECT p.name, p.contact, ps.relationship
+       FROM parent_student ps
+       JOIN parents p ON ps.parent_id = p.id
+       WHERE ps.student_id = ?`,
+      [student.id]
     ) as any[];
 
     const statusEmoji = status === 'Time-In' ? '✅' : status === 'Late' ? '⏰' : '🔔';
@@ -184,15 +219,18 @@ export async function kioskScan(req: Request, res: Response): Promise<void> {
 
     const smsResults: any[] = [];
     for (const g of guardians as any[]) {
-      if (g.contact_number) {
-        const sent = await sendSms(g.contact_number, message);
+      if (g.contact) {
+        // Queue SMS for GSM module (ESP32 will poll and send)
+        const queued = await queueSmsForGSM(g.contact, message, student.id, attendanceId);
+        
+        // Log to sms_logs table for tracking
         await pool.execute(
           `INSERT INTO sms_logs (attendance_id, student_name, parent_name, phone_number, message, status, sent_at)
            VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          [attendanceId, student.name, g.name, g.contact_number, message,
-           sent ? 'sent' : 'failed', sent ? new Date() : null]
+          [attendanceId, student.name, g.name, g.contact, message,
+           queued ? 'queued' : 'failed', queued ? new Date() : null]
         );
-        smsResults.push({ name: g.name, phone: g.contact_number, sent });
+        smsResults.push({ name: g.name, phone: g.contact, queued });
       }
     }
 

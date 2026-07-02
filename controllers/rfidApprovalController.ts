@@ -274,9 +274,12 @@ export async function approveRFID(req: Request, res: Response): Promise<void> {
       [approved_by, id]
     );
 
-    // Send SMS to parents
+    // Send SMS to parents using parent_student junction table
     const [guardians] = await pool.execute(
-      'SELECT * FROM parents_teachers WHERE student_id = ?',
+      `SELECT p.name, p.contact, ps.relationship
+       FROM parent_student ps
+       JOIN parents p ON ps.parent_id = p.id
+       WHERE ps.student_id = ?`,
       [student.id]
     ) as any[];
 
@@ -285,12 +288,12 @@ export async function approveRFID(req: Request, res: Response): Promise<void> {
     const message = `${statusEmoji} ATTENDBOX: ${student.name} has ${status === 'Time-In' ? 'arrived at school' : status === 'Time-Out' ? 'left school' : 'arrived LATE'} at ${timeDisplay}. Date: ${today}.`;
 
     for (const g of guardians as any[]) {
-      if (g.contact_number) {
-        const sent = await sendSms(g.contact_number, message);
+      if (g.contact) {  // Changed from g.contact_number to g.contact
+        const sent = await sendSms(g.contact, message);
         await pool.execute(
           `INSERT INTO sms_logs (attendance_id, student_name, parent_name, phone_number, message, status, sent_at)
            VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          [attendanceId, student.name, g.name, g.contact_number, message,
+          [attendanceId, student.name, g.name, g.contact, message,
            sent ? 'sent' : 'failed', sent ? new Date() : null]
         );
       }

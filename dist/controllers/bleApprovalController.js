@@ -108,61 +108,57 @@ async function approveDetection(req, res) {
         const localHour = hour24;
         const localMinute = phTime.getUTCMinutes();
         const session = hour24 < 12 ? 'AM' : 'PM';
-        // Check if attendance already exists for today
-        const [existingAttendance] = await db_1.default.execute(`SELECT id, status, date, time_in, time_out 
-       FROM attendance 
-       WHERE student_id = ? AND date = ?`, [student.id, localDate]);
+        // AUTO-TOGGLE: Check last attendance record for THIS SESSION (AM/PM) to determine next status
+        const [lastRecord] = await db_1.default.execute(`SELECT status FROM attendance
+       WHERE student_id = ? AND date = ? AND session = ?
+       ORDER BY timestamp DESC
+       LIMIT 1`, [student.id, localDate, session]);
+        let status;
         let attendanceId;
         let attendanceStatus;
-        let status;
-        if (existingAttendance.length === 0) {
-            // No attendance today - this is their FIRST scan
-            // Determine if Time-In or Late based on time
-            if (localHour > 8 || (localHour === 8 && localMinute > 0)) {
-                status = 'Late';
+        if (lastRecord.length > 0) {
+            const lastStatus = lastRecord[0].status;
+            // Toggle based on last status IN THIS SESSION
+            if (lastStatus === 'Time-Out') {
+                // Last was Time-Out, so next is Time-In (check if late)
+                status = (localHour > 8 || (localHour === 8 && localMinute > 0)) ? 'Late' : 'Time-In';
             }
             else {
-                status = 'Time-In';
+                // Last was Time-In or Late, so next is Time-Out
+                status = 'Time-Out';
             }
-            console.log('🔍 DEBUG: Inserting attendance with values:', {
-                student_id: student.id,
-                student_name: student.name,
-                lrn: student.lrn,
-                gender: student.gender,
-                grade: student.grade,
-                section: student.section,
-                kiosk_id: detection.kiosk_id || null,
-                scan_method: 'BLE',
-                status: status
-            });
-            const [insertResult] = await db_1.default.execute(`INSERT INTO attendance 
-         (student_id, student_name, lrn, gender, grade, section, kiosk_id, 
-          scan_method, status, session, date, time_in, photo_path) 
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'BLE', ?, ?, ?, ?, ?)`, [
-                student.id, student.name, student.lrn, student.gender,
-                student.grade, student.section, detection.kiosk_id || null,
-                status, session, localDate, localTime, photoPath
-            ]);
-            attendanceId = insertResult.insertId;
-            attendanceStatus = status;
-            console.log(`✅ Attendance APPROVED: ${student.name} ${status === 'Late' ? 'LATE' : 'checked IN'}`);
         }
         else {
-            const existing = existingAttendance[0];
-            // If already checked in, mark CHECK OUT
-            if (existing.time_in && !existing.time_out) {
-                await db_1.default.execute(`UPDATE attendance 
-           SET time_out = ?, status = 'Time-Out'${photoPath ? ', photo_path = ?' : ''} 
-           WHERE id = ?`, photoPath ? [localTime, photoPath, existing.id] : [localTime, existing.id]);
-                attendanceId = existing.id;
-                attendanceStatus = 'Time-Out';
-                console.log(`✅ Attendance APPROVED: ${student.name} checked OUT`);
-            }
-            else {
-                attendanceId = existing.id;
-                attendanceStatus = existing.status;
-            }
+            // No record for this session yet, first scan is Time-In (check if late)
+            status = (localHour > 8 || (localHour === 8 && localMinute > 0)) ? 'Late' : 'Time-In';
         }
+        console.log('🔍 DEBUG: Inserting attendance with values:', {
+            student_id: student.id,
+            student_name: student.name,
+            lrn: student.lrn,
+            gender: student.gender,
+            grade: student.grade,
+            section: student.section,
+            kiosk_id: detection.kiosk_id || null,
+            scan_method: 'BLE',
+            status: status,
+            session: session
+        });
+        // Insert new attendance record (session-based)
+        const [insertResult] = await db_1.default.execute(`INSERT INTO attendance 
+       (student_id, student_name, lrn, gender, grade, section, kiosk_id, 
+        scan_method, status, session, date, time_in, time_out, photo_path) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'BLE', ?, ?, ?, ?, ?, ?)`, [
+            student.id, student.name, student.lrn, student.gender,
+            student.grade, student.section, detection.kiosk_id || null,
+            status, session, localDate,
+            status === 'Time-In' || status === 'Late' ? localTime : null,
+            status === 'Time-Out' ? localTime : null,
+            photoPath
+        ]);
+        attendanceId = insertResult.insertId;
+        attendanceStatus = status;
+        console.log(`✅ Attendance APPROVED (${session}): ${student.name} ${status === 'Late' ? 'LATE' : status}`);
         // Send SMS notification to parents/guardians
         const [guardians] = await db_1.default.execute('SELECT * FROM parents_teachers WHERE student_id = ?', [student.id]);
         const statusEmoji = attendanceStatus === 'Time-In' ? '✅' : attendanceStatus === 'Late' ? '⏰' : '🔔';

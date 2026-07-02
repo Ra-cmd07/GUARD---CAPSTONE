@@ -9,11 +9,25 @@ export async function getDashboardStats(_req: AuthRequest, res: Response): Promi
     const [[stats]] = await pool.execute('SELECT * FROM v_dashboard_stats') as any[];
 
     const [recentLogs] = await pool.execute(
-      `SELECT a.id, a.student_name, a.grade, a.section, a.timestamp,
-              a.scan_method, a.status, a.photo_path
+      `SELECT 
+        a.id, 
+        a.student_name, 
+        a.grade, 
+        a.section, 
+        a.timestamp,
+        a.scan_method, 
+        a.status, 
+        a.photo_path,
+        a.student_id
        FROM attendance a
+       INNER JOIN (
+         SELECT student_id, MAX(timestamp) as max_timestamp
+         FROM attendance
+         GROUP BY student_id
+       ) latest ON a.student_id = latest.student_id 
+                AND a.timestamp = latest.max_timestamp
        ORDER BY a.timestamp DESC
-       LIMIT 20`
+       LIMIT 200`
     ) as any[];
 
     const [activeKiosks] = await pool.execute(

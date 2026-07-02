@@ -9,35 +9,34 @@ const mysql = require('mysql2/promise');
   });
 
   try {
-    const [rows] = await pool.execute(
-      `SELECT id, student_name, photo_path, date, status, timestamp 
-       FROM attendance 
-       WHERE student_name = 'Bernie' 
-       ORDER BY id DESC 
-       LIMIT 5`
-    );
-
-    console.log('Bernie\'s Recent Attendance Records:');
-    console.log(JSON.stringify(rows, null, 2));
-
-    // Check if photo files exist
-    const fs = require('fs');
-    const path = require('path');
+    const [rows] = await pool.execute(`
+      SELECT id, student_name, photo_path, status,
+             DATE_FORMAT(timestamp, '%Y-%m-%d %H:%i:%s') as time 
+      FROM attendance 
+      WHERE student_name = 'Bernie'
+      ORDER BY id DESC 
+      LIMIT 10
+    `);
     
-    console.log('\n--- Checking Photo Files ---');
-    for (const row of rows) {
-      if (row.photo_path) {
-        const fullPath = path.join(__dirname, '..', row.photo_path);
-        const exists = fs.existsSync(fullPath);
-        console.log(`\nRecord ${row.id}:`);
-        console.log(`  Photo Path: ${row.photo_path}`);
-        console.log(`  Full Path: ${fullPath}`);
-        console.log(`  File Exists: ${exists ? 'YES ✓' : 'NO ✗'}`);
+    console.log('\n📸 Bernie\'s recent attendance photos:\n');
+    rows.forEach((r, i) => {
+      console.log(`${i + 1}. ID: ${r.id} | ${r.status} | ${r.time}`);
+      if (r.photo_path) {
+        console.log(`   Photo: ${r.photo_path}`);
+        // Check URL format
+        if (r.photo_path.includes('attendbox/scans')) {
+          console.log('   ✅ Has correct folder structure');
+        } else {
+          console.log('   ⚠️  Missing folder structure!');
+        }
+      } else {
+        console.log('   ❌ No photo');
       }
-    }
-
+      console.log('');
+    });
+    
   } catch (err) {
-    console.error('Error:', err);
+    console.error('Error:', err.message);
   } finally {
     await pool.end();
   }

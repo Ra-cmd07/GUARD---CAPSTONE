@@ -12,6 +12,7 @@ router.post('/users', ...admin, adminController_1.createUser);
 router.put('/users/:id', ...admin, adminController_1.updateUser);
 router.post('/users/:id/reset-password', ...admin, adminController_1.resetPassword);
 router.patch('/users/:id/toggle-status', ...admin, adminController_1.toggleUserStatus);
+router.post('/students/:id/add-parent', ...admin, adminController_1.addParentToStudent);
 router.get('/kiosks', ...admin, adminController_1.getKiosks);
 router.post('/kiosks', ...admin, adminController_1.createKiosk);
 router.put('/kiosks/:id', ...admin, adminController_1.updateKiosk);

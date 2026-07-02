@@ -72,15 +72,15 @@ async function kioskScan(req, res) {
         const timeStr = `${hour12}:${minutes}:${seconds} ${ampm}`;
         const localHour = hour24;
         const session = hour24 < 12 ? 'AM' : 'PM';
-        // AUTO-TOGGLE: Check last attendance record to determine next status
+        // AUTO-TOGGLE: Check last attendance record for THIS SESSION (AM/PM) to determine next status
         const [lastRecord] = await db_1.default.execute(`SELECT status FROM attendance
-       WHERE student_id = ? AND date = ?
+       WHERE student_id = ? AND date = ? AND session = ?
        ORDER BY timestamp DESC
-       LIMIT 1`, [student.id, today]);
+       LIMIT 1`, [student.id, today, session]);
         let status;
         if (lastRecord.length > 0) {
             const lastStatus = lastRecord[0].status;
-            // Toggle based on last status
+            // Toggle based on last status IN THIS SESSION
             if (lastStatus === 'Time-Out') {
                 // Last was Time-Out, so next is Time-In (check if late)
                 const hour = phTime.getUTCHours();
@@ -93,7 +93,7 @@ async function kioskScan(req, res) {
             }
         }
         else {
-            // No record today, first scan is Time-In (check if late)
+            // No record for this session yet, first scan is Time-In (check if late)
             const hour = phTime.getUTCHours();
             const min = phTime.getUTCMinutes();
             status = (hour > 8 || (hour === 8 && min > 0)) ? 'Late' : 'Time-In';

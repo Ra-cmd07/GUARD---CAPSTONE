@@ -140,15 +140,15 @@ async function approveRFID(req, res) {
         const timeStr = `${hour12}:${minutes}:${seconds} ${ampm}`;
         const localHour = hour24;
         const session = hour24 < 12 ? 'AM' : 'PM';
-        // AUTO-TOGGLE: Check last attendance record to determine next status
+        // AUTO-TOGGLE: Check last attendance record for THIS SESSION (AM/PM) to determine next status
         const [lastRecord] = await db_1.default.execute(`SELECT status FROM attendance
-       WHERE student_id = ? AND date = ?
+       WHERE student_id = ? AND date = ? AND session = ?
        ORDER BY timestamp DESC
-       LIMIT 1`, [student.id, today]);
+       LIMIT 1`, [student.id, today, session]);
         let status;
         if (lastRecord.length > 0) {
             const lastStatus = lastRecord[0].status;
-            // Toggle based on last status
+            // Toggle based on last status IN THIS SESSION
             if (lastStatus === 'Time-Out') {
                 // Last was Time-Out, so next is Time-In (check if late)
                 const hour = phTime.getUTCHours();
@@ -161,7 +161,7 @@ async function approveRFID(req, res) {
             }
         }
         else {
-            // No record today, first scan is Time-In (check if late)
+            // No record for this session yet, first scan is Time-In (check if late)
             const hour = phTime.getUTCHours();
             const min = phTime.getUTCMinutes();
             status = (hour > 8 || (hour === 8 && min > 0)) ? 'Late' : 'Time-In';
@@ -208,19 +208,36 @@ async function approveRFID(req, res) {
         }
         // Update detection status
         await db_1.default.execute('UPDATE rfid_detections SET status = \'APPROVED\', approved_at = NOW(), approved_by = ? WHERE id = ?', [approved_by, id]);
-        // Send SMS to parents
-        const [guardians] = await db_1.default.execute('SELECT * FROM parents_teachers WHERE student_id = ?', [student.id]);
+        // Send SMS to parents using parent_student junction table
+        console.log('🔍 [RFID] Looking up parents for student ID:', student.id);
+        const [guardians] = await db_1.default.execute(`SELECT p.name, p.contact, ps.relationship
+       FROM parent_student ps
+       JOIN parents p ON ps.parent_id = p.id
+       WHERE ps.student_id = ?`, [student.id]);
+        console.log(`📋 [RFID] Found ${guardians.length} parent(s) for ${student.name}`);
+        guardians.forEach((g) => {
+            console.log(`   - ${g.name} (${g.relationship}) - Contact: ${g.contact || 'NO CONTACT'}`);
+        });
         const statusEmoji = status === 'Time-In' ? '✅' : status === 'Late' ? '⏰' : '🔔';
         const timeDisplay = now.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit', hour12: true });
         const message = `${statusEmoji} ATTENDBOX: ${student.name} has ${status === 'Time-In' ? 'arrived at school' : status === 'Time-Out' ? 'left school' : 'arrived LATE'} at ${timeDisplay}. Date: ${today}.`;
+        console.log('📱 [RFID] Preparing to send SMS...');
+        let smsCount = 0;
         for (const g of guardians) {
-            if (g.contact_number) {
-                const sent = await sendSms(g.contact_number, message);
+            if (g.contact) { // Changed from g.contact_number to g.contact
+                console.log(`   Sending SMS to ${g.name} at ${g.contact}...`);
+                const sent = await sendSms(g.contact, message);
                 await db_1.default.execute(`INSERT INTO sms_logs (attendance_id, student_name, parent_name, phone_number, message, status, sent_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`, [attendanceId, student.name, g.name, g.contact_number, message,
+           VALUES (?, ?, ?, ?, ?, ?, ?)`, [attendanceId, student.name, g.name, g.contact, message,
                     sent ? 'sent' : 'failed', sent ? new Date() : null]);
+                console.log(`   ✅ SMS logged for ${g.name}`);
+                smsCount++;
+            }
+            else {
+                console.log(`   ⚠️  No contact number for ${g.name}, skipping SMS`);
             }
         }
+        console.log(`📱 [RFID] Total SMS sent: ${smsCount}`);
         console.log(`✅ RFID approved → Attendance recorded (ID: ${attendanceId})`);
         res.status(201).json({
             message: 'Attendance approved and recorded',

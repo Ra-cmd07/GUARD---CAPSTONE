@@ -18,24 +18,17 @@ async function getStudents(req, res) {
     try {
         const { role, profileId } = req.user;
         console.log(`[getStudents] Role: ${role}, ProfileId: ${profileId}`);
-        // For parent role, directly query without complex joins
+        // For parent role, get students linked via parent_student table
         if (role === 'parent' && profileId) {
             console.log(`[getStudents] Querying for parent ${profileId}`);
-            // Get student linked to this parent (using parents_teachers.student_id)
-            const [parentRows] = await db_1.default.execute('SELECT student_id FROM parents_teachers WHERE id = ? AND student_id IS NOT NULL', [profileId]);
-            console.log(`[getStudents] Parent record:`, parentRows);
-            if (parentRows.length === 0 || !parentRows[0].student_id) {
-                console.log('[getStudents] No children found for this parent');
-                res.json([]);
-                return;
-            }
-            const studentId = parentRows[0].student_id;
-            console.log(`[getStudents] Student ID:`, studentId);
-            // Get student details
-            const [students] = await db_1.default.execute(`SELECT id, lrn, name, gender, grade, section, mac_address, rfid_uid, preferred_method, is_active, created_at
-         FROM students WHERE id = ?`, [studentId]);
-            console.log(`[getStudents] Found ${students.length} student(s)`);
-            res.json(students);
+            // Get students linked to this parent from parent_student junction table
+            const [studentLinks] = await db_1.default.execute(`SELECT s.id, s.lrn, s.name, s.gender, s.grade, s.section, 
+                s.mac_address, s.rfid_uid, s.preferred_method, s.is_active, s.created_at
+         FROM parent_student ps
+         INNER JOIN students s ON ps.student_id = s.id
+         WHERE ps.parent_id = ? AND s.is_active = 1`, [profileId]);
+            console.log(`[getStudents] Found ${studentLinks.length} student(s) for parent ${profileId}`);
+            res.json(studentLinks);
             return;
         }
         // Original logic for other roles
@@ -60,10 +53,13 @@ async function getStudents(req, res) {
         }
         query += ' ORDER BY s.name';
         const [rows] = await db_1.default.execute(query, params);
-        // For each student, fetch their guardian contacts from parents_teachers table
+        // For each student, fetch their guardian contacts from parent_student table
         const students = rows;
         for (const student of students) {
-            const [guardians] = await db_1.default.execute('SELECT role, name, contact_number FROM parents_teachers WHERE student_id = ?', [student.id]);
+            const [guardians] = await db_1.default.execute(`SELECT p.name, p.contact, ps.relationship 
+         FROM parent_student ps
+         INNER JOIN parents p ON ps.parent_id = p.id
+         WHERE ps.student_id = ?`, [student.id]);
             student.parents_guardians = guardians;
         }
         res.json(students);

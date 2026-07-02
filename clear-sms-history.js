@@ -1,54 +1,62 @@
 const mysql = require('mysql2/promise');
 
-(async () => {
-  const pool = mysql.createPool({
+async function clearSmsHistory() {
+  const connection = await mysql.createConnection({
     host: 'localhost',
     user: 'root',
     password: '',
     database: 'attendbox_db'
   });
 
+  console.log('🗑️  Clearing SMS History...\n');
+  console.log('═'.repeat(60));
+
   try {
-    console.log('🗑️  Clearing SMS history...\n');
-    
-    // Count current records
-    const [countBefore] = await pool.execute('SELECT COUNT(*) as total FROM sms_logs');
+    // Count SMS logs before deletion
+    const [countBefore] = await connection.execute(
+      'SELECT COUNT(*) as total FROM sms_logs'
+    );
     const totalBefore = countBefore[0].total;
-    
+
     console.log(`📊 Current SMS logs: ${totalBefore} records\n`);
-    
+
     if (totalBefore === 0) {
       console.log('✅ SMS history is already empty!');
+      await connection.end();
       return;
     }
-    
-    // Show sample of what will be deleted
-    console.log('📋 Sample records to be deleted:');
-    const [samples] = await pool.execute(
-      'SELECT id, student_name, parent_name, message, created_at FROM sms_logs ORDER BY created_at DESC LIMIT 5'
-    );
-    console.table(samples);
-    
+
     // Delete all SMS logs
-    console.log('\n🗑️  Deleting all SMS logs...');
-    const [result] = await pool.execute('DELETE FROM sms_logs');
-    
-    console.log(`✅ Deleted ${result.affectedRows} SMS log records\n`);
-    
-    // Verify deletion
-    const [countAfter] = await pool.execute('SELECT COUNT(*) as total FROM sms_logs');
-    const totalAfter = countAfter[0].total;
-    
-    console.log(`📊 SMS logs remaining: ${totalAfter} records\n`);
-    
-    console.log('✅ SMS history cleared!');
-    console.log('✅ System will continue logging new SMS');
-    console.log('✅ New attendance scans will create new SMS logs');
-    console.log('\n📝 Note: This only deletes old logs, the SMS feature still works!');
-    
-  } catch (err) {
-    console.error('Error:', err);
-  } finally {
-    await pool.end();
+    const [result] = await connection.execute('DELETE FROM sms_logs');
+    const deletedCount = result.affectedRows;
+
+    console.log(`✅ Deleted ${deletedCount} SMS log records\n`);
+
+    // Also clear SMS queue (pending/failed SMS)
+    const [queueCount] = await connection.execute(
+      'SELECT COUNT(*) as total FROM sms_queue'
+    );
+    const totalQueue = queueCount[0].total;
+
+    if (totalQueue > 0) {
+      console.log(`📊 Current SMS queue: ${totalQueue} pending messages\n`);
+      const [queueResult] = await connection.execute('DELETE FROM sms_queue');
+      console.log(`✅ Cleared ${queueResult.affectedRows} pending SMS from queue\n`);
+    }
+
+    console.log('═'.repeat(60));
+    console.log('✅ SMS history cleared successfully!');
+    console.log('═'.repeat(60));
+    console.log('\n📊 Summary:');
+    console.log(`   - SMS logs deleted: ${deletedCount}`);
+    console.log(`   - SMS queue cleared: ${totalQueue}`);
+    console.log(`   - Total cleaned: ${deletedCount + totalQueue}\n`);
+
+  } catch (error) {
+    console.error('❌ Error:', error.message);
   }
-})();
+
+  await connection.end();
+}
+
+clearSmsHistory().catch(console.error);
