@@ -10,8 +10,9 @@ import {
   People, School, Router, Sms, Dashboard, Logout, Add, Edit,
   ToggleOn, ToggleOff, LockReset, Menu, Close, PersonAdd,
   CheckCircle, Cancel, AccessTime, Assessment, PhotoCamera, Delete,
-  QrCode2, Bluetooth, CreditCard,
+  QrCode2, Bluetooth, CreditCard, Download,
 } from '@mui/icons-material';
+import { QRCodeCanvas } from 'qrcode.react';
 import { format } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -480,6 +481,60 @@ export default function AdminDashboardPage() {
     } catch { showSnack('Failed to reset password', 'error'); }
   };
 
+  // QR Code Download Handler
+  const handleDownloadQR = async (student: any) => {
+    try {
+      // Fetch full student details if needed
+      if (!student.lrn) {
+        const { data } = await api.get(`/admin/users/${student.id}`);
+        student = { ...student, ...data.profile };
+      }
+
+      // Create QR payload (same format as student portal)
+      const qrPayload = JSON.stringify({
+        lrn: student.lrn,
+        name: student.name,
+        grade: student.grade,
+        section: student.section,
+      });
+
+      // Create a temporary container for the QR canvas
+      const container = document.createElement('div');
+      container.style.position = 'absolute';
+      container.style.left = '-9999px';
+      document.body.appendChild(container);
+
+      // Create canvas element
+      const canvas = document.createElement('canvas');
+      container.appendChild(canvas);
+
+      // Generate QR code using qrcode library
+      const QRCode = await import('qrcode');
+      await QRCode.toCanvas(canvas, qrPayload, {
+        width: 512,
+        margin: 2,
+        color: {
+          dark: '#000000',
+          light: '#FFFFFF',
+        },
+      });
+
+      // Download the QR code
+      const url = canvas.toDataURL('image/png');
+      const link = document.createElement('a');
+      link.download = `QR_${student.username || student.lrn}_${student.name.replace(/\s+/g, '_')}.png`;
+      link.href = url;
+      link.click();
+
+      // Cleanup
+      document.body.removeChild(container);
+      showSnack(`✅ QR code downloaded for ${student.name}`, 'success');
+    } catch (error) {
+      console.error('QR generation error:', error);
+      showSnack('Failed to generate QR code', 'error');
+    }
+  };
+
   const handleLogout = () => { logout(); navigate('/login', { replace: true }); };
 
   const filteredUsers = tab === 'students'
@@ -778,6 +833,17 @@ export default function AdminDashboardPage() {
                         </TableCell>
                         <TableCell>{u.created_at ? format(new Date(u.created_at), 'MM/dd/yyyy') : '—'}</TableCell>
                         <TableCell align="center">
+                          {tab === 'students' && (
+                            <Tooltip title="Download QR Code">
+                              <IconButton 
+                                size="small" 
+                                color="primary"
+                                onClick={() => handleDownloadQR(u)}
+                              >
+                                <Download />
+                              </IconButton>
+                            </Tooltip>
+                          )}
                           <Tooltip title={u.is_active ? 'Deactivate' : 'Activate'}>
                             <IconButton size="small" color={u.is_active ? 'error' : 'success'}
                               onClick={() => handleToggleStatus(u.id)}>

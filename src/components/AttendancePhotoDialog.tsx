@@ -25,6 +25,16 @@ export default function AttendancePhotoDialog({
 }: AttendancePhotoDialogProps) {
   const [zoom, setZoom] = useState(100);
 
+  // Debug logging
+  console.log('🎭 AttendancePhotoDialog props:', {
+    open,
+    photoUrl,
+    studentName,
+    status,
+    timestamp,
+    method
+  });
+
   const handleDownload = () => {
     if (!photoUrl) return;
     const link = document.createElement('a');
@@ -45,6 +55,10 @@ export default function AttendancePhotoDialog({
   const fullPhotoUrl = (photoUrl && photoUrl.startsWith('http')) 
     ? photoUrl  // Use Cloudinary URL as-is
     : `${baseUrl}${photoUrl}`; // Legacy local URL
+
+  console.log('🔗 Final photo URL being used in <img>:', fullPhotoUrl);
+  console.log('🔗 Original photoUrl prop:', photoUrl);
+  console.log('🔗 Starts with http?:', photoUrl?.startsWith('http'));
 
   return (
     <Dialog 

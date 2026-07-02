@@ -50,6 +50,10 @@ export default function ParentDashboardPage() {
   const showSnack = (msg: string, sev: any = 'info') => setSnack({ open: true, msg, sev });
 
   const handleViewPhoto = (record: AttendanceRecord) => {
+    console.log('🖼️ Parent viewing photo for:', record.student_name);
+    console.log('📸 Photo path:', record.photo_path);
+    console.log('📋 Full record:', record);
+    
     setPhotoDialog({
       open: true,
       photoUrl: record.photo_path,
@@ -79,6 +83,8 @@ export default function ParentDashboardPage() {
       const from = format(new Date(), 'yyyy-MM-dd'); // Today
       const to   = format(new Date(new Date().setDate(new Date().getDate() + 6)), 'yyyy-MM-dd'); // +6 days
       const { data } = await api.get(`/students/${selected.id}/attendance?from=${from}&to=${to}`);
+      console.log('📊 Fetched attendance records for parent:', data);
+      console.log(`📸 Records with photos: ${(data || []).filter((r: any) => r.photo_path).length} of ${(data || []).length}`);
       setRecords(data || []);
     } catch (err) {
       console.error('Failed to load attendance:', err);
@@ -474,19 +480,12 @@ export default function ParentDashboardPage() {
                             }}>
                               Status
                             </TableCell>
-                            <TableCell sx={{ 
-                              color: '#fff', 
-                              fontFamily: theme.typography.fontFamily.primary,
-                              fontWeight: theme.typography.fontWeight.bold,
-                            }}>
-                              Photo
-                            </TableCell>
                           </TableRow>
                         </TableHead>
                         <TableBody>
                           {loading ? (
                             <TableRow>
-                              <TableCell colSpan={5} align="center" sx={{ py: 3 }}>
+                              <TableCell colSpan={4} align="center" sx={{ py: 3 }}>
                                 <CircularProgress size={24} sx={{ color: theme.colors.primary.main }} />
                               </TableCell>
                             </TableRow>
@@ -525,19 +524,61 @@ export default function ParentDashboardPage() {
                                     />
                                   )}
                                 </TableCell>
-                                <TableCell sx={{ 
-                                  color: theme.colors.neutral[600], 
-                                  fontFamily: theme.typography.fontFamily.primary,
-                                  fontSize: '0.9rem',
-                                }}>
-                                  {rec?.time_in || (rec?.timestamp ? format(new Date(rec.timestamp), 'h:mm aa') : '—')}
+                                <TableCell>
+                                  <Box display="flex" alignItems="center" gap={1}>
+                                    <Typography
+                                      sx={{
+                                        color: theme.colors.neutral[600],
+                                        fontFamily: theme.typography.fontFamily.primary,
+                                        fontSize: '0.9rem',
+                                      }}
+                                    >
+                                      {rec?.time_in || (rec?.timestamp ? format(new Date(rec.timestamp), 'h:mm aa') : '—')}
+                                    </Typography>
+                                    {rec?.photo_path && (
+                                      <IconButton
+                                        size="small"
+                                        onClick={() => handleViewPhoto(rec)}
+                                        sx={{
+                                          color: theme.colors.primary.main,
+                                          '&:hover': {
+                                            bgcolor: theme.colors.primary[50],
+                                          },
+                                          p: 0.5,
+                                        }}
+                                      >
+                                        <PhotoCamera fontSize="small" />
+                                      </IconButton>
+                                    )}
+                                  </Box>
                                 </TableCell>
-                                <TableCell sx={{ 
-                                  color: theme.colors.neutral[600], 
-                                  fontFamily: theme.typography.fontFamily.primary,
-                                  fontSize: '0.9rem',
-                                }}>
-                                  {tout?.time_out || (tout?.timestamp ? format(new Date(tout.timestamp), 'h:mm aa') : '—')}
+                                <TableCell>
+                                  <Box display="flex" alignItems="center" gap={1}>
+                                    <Typography
+                                      sx={{
+                                        color: theme.colors.neutral[600],
+                                        fontFamily: theme.typography.fontFamily.primary,
+                                        fontSize: '0.9rem',
+                                      }}
+                                    >
+                                      {tout?.time_out || (tout?.timestamp ? format(new Date(tout.timestamp), 'h:mm aa') : '—')}
+                                    </Typography>
+                                    {tout?.photo_path && (
+                                      <IconButton
+                                        size="small"
+                                        onClick={() => handleViewPhoto(tout)}
+                                        sx={{
+                                          color: theme.colors.secondary.main,
+                                          '&:hover': {
+                                            bgcolor: theme.colors.secondary[50],
+                                          },
+                                          p: 0.5,
+                                        }}
+                                      >
+                                        <PhotoCamera fontSize="small" />
+                                      </IconButton>
+                                    )}
+                                  </Box>
                                 </TableCell>
                                 <TableCell>
                                   {rec ? (
@@ -557,32 +598,6 @@ export default function ParentDashboardPage() {
                                       size="small" 
                                       sx={{ ...theme.components.badge.error }} 
                                     />
-                                  )}
-                                </TableCell>
-                                <TableCell>
-                                  {rec?.photo_path ? (
-                                    <IconButton
-                                      size="small"
-                                      onClick={() => handleViewPhoto(rec)}
-                                      sx={{
-                                        color: theme.colors.primary.main,
-                                        '&:hover': {
-                                          bgcolor: theme.colors.primary[50],
-                                        }
-                                      }}
-                                    >
-                                      <PhotoCamera fontSize="small" />
-                                    </IconButton>
-                                  ) : (
-                                    <Typography
-                                      variant="caption"
-                                      sx={{
-                                        color: theme.colors.neutral[400],
-                                        fontFamily: theme.typography.fontFamily.primary,
-                                      }}
-                                    >
-                                      —
-                                    </Typography>
                                   )}
                                 </TableCell>
                               </TableRow>
@@ -753,6 +768,14 @@ export default function ParentDashboardPage() {
                                 const isOnCampus = todayAttendance && 
                                   (todayAttendance.status === 'Time-In' || todayAttendance.status === 'Late') &&
                                   !todayAttendance.time_out;
+                                
+                                console.log('🗺️ Map Debug:', {
+                                  today,
+                                  todayAttendance,
+                                  isOnCampus,
+                                  location,
+                                  hasCoordinates: location?.coordinates
+                                });
                                 
                                 // If student is not on campus, return null to hide marker
                                 return isOnCampus ? location : null;
