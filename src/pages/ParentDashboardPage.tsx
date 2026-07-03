@@ -145,7 +145,7 @@ export default function ParentDashboardPage() {
       
       // Get all beacons for map display
       api.get('/location/beacons')
-        .then(r => setBeacons(r.data || []))
+        .then(r => setBeacons(r.data.beacons || []))
         .catch(() => setBeacons([]));
     }
   }, [tab, selected]);
@@ -993,6 +993,7 @@ export default function ParentDashboardPage() {
                               <TableCell sx={{ bgcolor: '#3b82f6', color: '#fff', fontWeight: 700 }}>Time</TableCell>
                               <TableCell sx={{ bgcolor: '#3b82f6', color: '#fff', fontWeight: 700 }}>Location</TableCell>
                               <TableCell sx={{ bgcolor: '#3b82f6', color: '#fff', fontWeight: 700 }}>Building</TableCell>
+                              <TableCell sx={{ bgcolor: '#3b82f6', color: '#fff', fontWeight: 700 }}>Distance</TableCell>
                               <TableCell sx={{ bgcolor: '#3b82f6', color: '#fff', fontWeight: 700 }}>Type</TableCell>
                             </TableRow>
                           </TableHead>
@@ -1007,6 +1008,9 @@ export default function ParentDashboardPage() {
                                 </TableCell>
                                 <TableCell sx={{ color: '#666' }}>
                                   {loc.building || '—'}
+                                </TableCell>
+                                <TableCell sx={{ color: '#1a1a1a', fontWeight: 600 }}>
+                                  {loc.distance ? `~${loc.distance}m` : '—'}
                                 </TableCell>
                                 <TableCell>
                                   <Chip 

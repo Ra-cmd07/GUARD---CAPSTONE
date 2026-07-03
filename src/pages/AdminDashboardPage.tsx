@@ -10,7 +10,7 @@ import {
   People, School, Router, Sms, Dashboard, Logout, Add, Edit,
   ToggleOn, ToggleOff, LockReset, Menu, Close, PersonAdd,
   CheckCircle, Cancel, AccessTime, Assessment, PhotoCamera, Delete,
-  QrCode2, Bluetooth, CreditCard, Download,
+  QrCode2, Bluetooth, CreditCard, Download, LocationOn,
 } from '@mui/icons-material';
 import { QRCodeCanvas } from 'qrcode.react';
 import { format } from 'date-fns';
@@ -30,9 +30,10 @@ const NAV = [
   { id: 'kiosks',    label: 'Kiosks',     icon: <Router /> },
   { id: 'sms',       label: 'SMS Logs',   icon: <Sms /> },
   { id: 'reports',   label: 'Reports',    icon: <Assessment /> },
+  { id: 'location',  label: 'Live Map',   icon: <LocationOn /> },
 ];
 
-type Tab = 'dashboard' | 'users' | 'students' | 'kiosks' | 'sms' | 'reports';
+type Tab = 'dashboard' | 'users' | 'students' | 'kiosks' | 'sms' | 'reports' | 'location';
 
 function StatCard({ label, value, icon, color }: { label: string; value: any; icon: React.ReactNode; color: string }) {
   return (
@@ -931,6 +932,24 @@ export default function AdminDashboardPage() {
           {/* ── Reports Tab ── */}
           {tab === 'reports' && (
             <ReportsPage />
+          )}
+
+          {/* ── Location Tracking Tab ── */}
+          {tab === 'location' && (
+            <Box>
+              <Button
+                variant="contained"
+                color="primary"
+                onClick={() => navigate('/location-tracking')}
+                startIcon={<LocationOn />}
+                sx={{ mb: 2 }}
+              >
+                Open Live Map in Full Screen
+              </Button>
+              <Typography variant="body2" color="text.secondary">
+                Click above to open the real-time student location tracking map with BLE-based positioning.
+              </Typography>
+            </Box>
           )}
 
         </Box>

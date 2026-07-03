@@ -9,6 +9,7 @@ import StudentPortalPage   from './pages/StudentPortalPage';
 import DashboardPage       from './pages/DashboardPage';   // legacy teacher QR dashboard
 import StudentsPage        from './pages/StudentPage';
 import StudentRegistrationPage from './pages/StudentRegistrationPage';
+import LocationTrackingPage from './pages/LocationTrackingPage';
 import KioskPage           from './pages/KioskPage';
 
 // ─── Route guard — redirects to login if not authed ───────────────────
@@ -77,6 +78,11 @@ export default function App() {
       {/* Admin student registration */}
       <Route path="/admin/students/register" element={
         <RoleRoute role="admin"><StudentRegistrationPage /></RoleRoute>
+      } />
+
+      {/* Location Tracking (Admin & Teacher) */}
+      <Route path="/location-tracking" element={
+        <RoleRoute role={['admin', 'teacher']}><LocationTrackingPage /></RoleRoute>
       } />
 
       {/* Root redirect */}
