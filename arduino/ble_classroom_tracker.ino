@@ -1,10 +1,18 @@
 // ============================================================================
-// ESP32 BLE LOCATION TRACKER - Grade 7 Classroom
+// ESP32 BLE LOCATION TRACKER - Grade 7 Classroom - v3.0 (REAL-TIME)
 // ============================================================================
 // Purpose: Detect student BLE devices in Grade 7 Classroom (Room 201)
 // Integration: Sends location updates to /api/location/ble-update
 // Detection Range: 5 meters (classroom-wide coverage)
-// Function: Location tracking ONLY (no attendance recording)
+// Function: Real-time location tracking with MOVING DOTS on live map
+// 
+// ✨ NEW in v3.0:
+// - Updated API payload format (macAddress, beaconId, rssi)
+// - RSSI-based distance calculation on backend
+// - Position updates broadcast via WebSocket to all connected clients
+// - Students appear as moving dots on admin/teacher live map
+// - Smooth position transitions with exponential smoothing
+// - Color-coded by grade level on map
 // ============================================================================
 
 #include <WiFi.h>
@@ -126,7 +134,8 @@ void connectWiFi() {
 }
 
 /**
- * Send location update to backend API
+ * Send location update to backend API for REAL-TIME MAP TRACKING
+ * Updated for new /api/location/ble-update endpoint (v3.0)
  */
 bool sendLocationUpdate(String macAddress, int rssi) {
   if (WiFi.status() != WL_CONNECTED) {
@@ -145,11 +154,12 @@ bool sendLocationUpdate(String macAddress, int rssi) {
     return false;
   }
 
-  // Build JSON payload
+  // Build JSON payload - NEW FORMAT for real-time location tracking
+  // Note: Backend will lookup studentId from MAC address
   DynamicJsonDocument doc(512);
-  doc["mac_address"] = macAddress;
-  doc["beacon_id"] = BEACON_ID;
-  doc["signal_strength"] = rssi;
+  doc["macAddress"] = macAddress;     // Changed from "mac_address" to "macAddress"
+  doc["beaconId"] = BEACON_ID;        // Changed from "beacon_id" to "beaconId"
+  doc["rssi"] = rssi;                 // Changed from "signal_strength" to "rssi"
   
   String payload;
   serializeJson(doc, payload);
@@ -167,40 +177,62 @@ bool sendLocationUpdate(String macAddress, int rssi) {
   if (httpCode > 0) {
     String response = http.getString();
 
-    // Parse JSON response
+    // Parse JSON response - NEW FORMAT from real-time location API
     DynamicJsonDocument responseDoc(1024);
     DeserializationError error = deserializeJson(responseDoc, response);
 
     if (!error) {
-      const char* message = responseDoc["message"];
-      const char* studentName = responseDoc["student_name"];
-      const char* location = responseDoc["location"];
-      bool attendanceMarked = responseDoc["attendance_marked"] | false;
+      bool apiSuccess = responseDoc["success"] | false;
+      
+      // Extract student info
+      JsonObject studentObj = responseDoc["student"];
+      const char* studentName = studentObj["name"];
+      int studentId = studentObj["id"] | 0;
+      
+      // Extract position info
+      JsonObject positionObj = responseDoc["position"];
+      float lat = positionObj["lat"] | 0.0;
+      float lng = positionObj["lng"] | 0.0;
+      int accuracy = positionObj["accuracy"] | 0;
+      
+      const char* beaconName = responseDoc["beacon"];
+      int distance = responseDoc["distance"] | 0;
+      int responseRssi = responseDoc["rssi"] | rssi;
 
-      if (httpCode == 201) {
+      if (httpCode == 200 && apiSuccess) {
         // Successfully updated location
         Serial.print("   ✅ ");
         Serial.print(studentName ? studentName : "Student");
-        Serial.print(" → ");
-        Serial.println(location ? location : "Location updated");
+        Serial.print(" (ID:");
+        Serial.print(studentId);
+        Serial.print(") @ ");
+        Serial.print(beaconName ? beaconName : LOCATION_NAME);
+        Serial.print(" ~");
+        Serial.print(distance);
+        Serial.println("m");
         
-        // Note: Classrooms don't mark attendance, only location
-        if (attendanceMarked) {
-          Serial.println("      ⚠️  Warning: Classroom should not mark attendance!");
-        }
+        // Show position on map
+        Serial.print("      📍 Map: (");
+        Serial.print(lat, 6);
+        Serial.print(", ");
+        Serial.print(lng, 6);
+        Serial.print(") ±");
+        Serial.print(accuracy);
+        Serial.println("m");
+        
+        // Note: Real-time tracking updates live map via WebSocket
+        Serial.println("      🗺️  Live map updated via WebSocket");
         
         success = true;
         stats.successful_updates++;
       } else if (httpCode == 404) {
-        Serial.println("   ⚠️  Student not registered");
-      } else if (httpCode == 409) {
-        // Duplicate - already recorded (not an error)
-        Serial.print("   ℹ️  ");
-        Serial.println(studentName ? studentName : "Already recorded");
-        success = true;
-      } else {
+        const char* error = responseDoc["error"];
         Serial.print("   ⚠️  ");
-        Serial.println(message ? message : response.c_str());
+        Serial.println(error ? error : "Student not found");
+      } else {
+        const char* error = responseDoc["error"];
+        Serial.print("   ⚠️  ");
+        Serial.println(error ? error : response.c_str());
       }
     } else {
       // JSON parse failed - show raw response
@@ -211,6 +243,7 @@ bool sendLocationUpdate(String macAddress, int rssi) {
       
       if (httpCode >= 200 && httpCode < 300) {
         success = true;
+        stats.successful_updates++;
       }
     }
   } else {
@@ -250,6 +283,22 @@ bool isWithinRange(int rssi) {
   return rssi >= RSSI_THRESHOLD;
 }
 
+/**
+ * Calculate distance from RSSI (same formula as backend)
+ * Formula: distance = 10 ^ ((TxPower - RSSI) / (10 * N))
+ * TxPower: -59 dBm (signal strength at 1 meter)
+ * N: 2.5 (path loss exponent)
+ */
+float calculateDistance(int rssi, int txPower = -59, float n = 2.5) {
+  if (rssi == 0) return -1.0; // Invalid
+  
+  float ratio = (txPower - rssi) / (10.0 * n);
+  float distance = pow(10.0, ratio);
+  
+  // Clamp to reasonable range (0.5m - 50m)
+  return max(0.5f, min(distance, 50.0f));
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // SETUP
 // ═══════════════════════════════════════════════════════════════════════
@@ -259,7 +308,8 @@ void setup() {
   delay(1000);
 
   Serial.println("\n\n╔════════════════════════════════════════════════════════════╗");
-  Serial.println("║  AttendBox BLE Classroom Tracker - ESP32 v2.0 (5m range) ║");
+  Serial.println("║  AttendBox BLE Classroom Tracker - ESP32 v3.0            ║");
+  Serial.println("║  Real-Time Location Tracking with Moving Dots on Map     ║");
   Serial.println("╚════════════════════════════════════════════════════════════╝");
   
   Serial.println("\n📍 Beacon Configuration:");
@@ -316,8 +366,9 @@ void setup() {
   Serial.println(" ✅");
 
   Serial.println("\n╔════════════════════════════════════════════════════════════╗");
-  Serial.println("║   Ready! Tracking students in Grade 7 Classroom...       ║");
-  Serial.println("║   Location updates only - NO attendance recording         ║");
+  Serial.println("║   Ready! Real-Time Location Tracking Active              ║");
+  Serial.println("║   Students will appear as MOVING DOTS on live map        ║");
+  Serial.println("║   Updates broadcast via WebSocket every few seconds      ║");
   Serial.println("╚════════════════════════════════════════════════════════════╝\n");
   
   delay(2000);  // Give time to read startup messages
@@ -369,8 +420,11 @@ void loop() {
 
       // Check if device is within range
       if (isWithinRange(rssi)) {
+        // Calculate actual distance from RSSI
+        float distance = calculateDistance(rssi);
+        
         char line[80];
-        sprintf(line, "│ %-19s │ %5d │ %5.2fm   │", mac.c_str(), rssi, FIXED_DISTANCE);
+        sprintf(line, "│ %-19s │ %5d │ %5.1fm   │", mac.c_str(), rssi, distance);
         Serial.print(line);
 
         // Send location update to backend via WiFi

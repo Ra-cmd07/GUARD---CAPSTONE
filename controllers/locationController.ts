@@ -1,262 +1,462 @@
 import { Request, Response } from 'express';
 import pool from '../lib/db';
-import { AuthRequest } from '../middleware/authMiddleware';
+import { calculatePosition, calculateOffsetPosition, rssiToDistance, smoothPosition } from '../utils/blePositioning';
+import { getIO } from '../src/websocket/socketHandler';
 
-// ─── POST /api/location/ble-update ───────────────────────────────────
-// Receives BLE beacon detection from student's device or BLE gateway
-// Auto-marks attendance at gate beacons (Hybrid mode with photo support)
+// Store last known positions for smoothing
+const lastPositions = new Map<number, { lat: number; lng: number; accuracy: number }>();
+
+/**
+ * POST /api/location/ble-update
+ * Receive BLE RSSI readings and calculate/broadcast real-time position
+ */
 export async function updateBleLocation(req: Request, res: Response): Promise<void> {
   try {
-    const {
-      mac_address,      // Student's device MAC
-      beacon_id,        // Detected beacon ID
-      signal_strength,  // RSSI value (optional)
-      photo_base64,     // Optional photo for attendance (base64 string)
-    } = req.body;
+    const { studentId, beaconId, rssi, macAddress } = req.body;
 
-    if (!mac_address || !beacon_id) {
-      res.status(400).json({ error: 'mac_address and beacon_id are required' });
+    // Allow either studentId OR macAddress
+    if ((!studentId && !macAddress) || !beaconId || rssi === undefined) {
+      res.status(400).json({ error: 'studentId (or macAddress), beaconId, and rssi are required' });
       return;
     }
 
-    // Find student by MAC address
+    let finalStudentId = studentId;
+
+    // If macAddress provided but no studentId, lookup student by MAC
+    if (!studentId && macAddress) {
+      const [macLookup] = await pool.execute(
+        `SELECT id FROM students WHERE mac_address = ? OR rfid_uid = ?`,
+        [macAddress, macAddress]
+      ) as any[];
+
+      if ((macLookup as any[]).length === 0) {
+        res.status(404).json({ error: 'Student not found with MAC address: ' + macAddress });
+        return;
+      }
+
+      finalStudentId = (macLookup as any[])[0].id;
+    }
+
+    // Get student info
     const [studentRows] = await pool.execute(
-      'SELECT id, name FROM students WHERE REPLACE(REPLACE(LOWER(mac_address), ":", ""), "-", "") = ? AND is_active = 1',
-      [mac_address.toLowerCase().replace(/[:\-]/g, '')]
+      `SELECT s.id, s.name, s.grade, s.section, s.lrn
+       FROM students s WHERE s.id = ?`,
+      [finalStudentId]
     ) as any[];
 
     const student = (studentRows as any[])[0];
     if (!student) {
-      res.status(404).json({ error: 'Student not found with this MAC address' });
+      res.status(404).json({ error: 'Student not found' });
       return;
     }
 
-    // Get beacon information
+    // Get beacon info and coordinates
     const [beaconRows] = await pool.execute(
-      'SELECT * FROM ble_beacons WHERE beacon_id = ? AND is_active = 1',
-      [beacon_id]
+      `SELECT beacon_id, name, location_name, coordinates, location_type
+       FROM ble_beacons WHERE beacon_id = ?`,
+      [beaconId]
     ) as any[];
 
     const beacon = (beaconRows as any[])[0];
-    if (!beacon) {
-      res.status(404).json({ error: 'Beacon not found or inactive' });
+    if (!beacon || !beacon.coordinates) {
+      res.status(404).json({ error: 'Beacon not found or has no coordinates' });
       return;
     }
 
-    // Mark previous locations as inactive
-    await pool.execute(
-      'UPDATE student_locations SET is_active = 0 WHERE student_id = ? AND is_active = 1',
-      [student.id]
-    );
+    // Calculate distance from RSSI
+    const distance = rssiToDistance(rssi);
 
-    // Insert new location record
-    const [result] = await pool.execute(
+    // Get beacon coordinates
+    const [beaconLat, beaconLng] = beacon.coordinates.split(',').map(Number);
+
+    // Calculate new position with offset based on distance
+    const lastPos = lastPositions.get(studentId);
+    const newPosition = calculateOffsetPosition(beaconLat, beaconLng, rssi, lastPos);
+
+    // Smooth the position to prevent jitter
+    const smoothedPosition = smoothPosition(newPosition, lastPos || null, 0.4);
+
+    // Store last position
+    lastPositions.set(studentId, smoothedPosition);
+
+    // Store in database
+    await pool.execute(
       `INSERT INTO student_locations 
-       (student_id, student_name, mac_address, beacon_id, location_name, location_type, coordinates, signal_strength)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+       (student_id, location_name, location_type, coordinates, signal_strength, is_active)
+       VALUES (?, ?, ?, ?, ?, 1)
+       ON DUPLICATE KEY UPDATE
+         location_name = VALUES(location_name),
+         location_type = VALUES(location_type),
+         coordinates = VALUES(coordinates),
+         signal_strength = VALUES(signal_strength),
+         timestamp = CURRENT_TIMESTAMP,
+         is_active = 1`,
       [
-        student.id,
-        student.name,
-        mac_address,
-        beacon_id,
+        finalStudentId,
         beacon.location_name,
         beacon.location_type,
-        beacon.coordinates,
-        signal_strength || null,
+        `${smoothedPosition.lat},${smoothedPosition.lng}`,
+        rssi
       ]
-    ) as any[];
-
-    // Update beacon last_ping
-    await pool.execute(
-      'UPDATE ble_beacons SET last_ping = NOW() WHERE beacon_id = ?',
-      [beacon_id]
     );
 
-    // ═══════════════════════════════════════════════════════════════════
-    // PENDING APPROVAL MODE: Store detection, don't record attendance yet
-    // Kiosk will show pending detection and guard must approve
-    // ═══════════════════════════════════════════════════════════════════
-    let detectionId = null;
-    let detectionStored = false;
-
-    if (beacon.location_type === 'gate') {
-      try {
-        // Store as pending detection (not attendance yet!)
-        const [insertResult] = await pool.execute(
-          `INSERT INTO ble_detections 
-           (student_id, student_name, mac_address, beacon_id, location_name, rssi, status)
-           VALUES (?, ?, ?, ?, ?, ?, 'pending')`,
-          [student.id, student.name, mac_address, beacon_id, beacon.location_name, signal_strength || null]
-        ) as any[];
-        
-        detectionId = (insertResult as any).insertId;
-        detectionStored = true;
-        
-        console.log(`📡 BLE Detection stored (PENDING): ${student.name} at ${beacon.location_name}`);
-        console.log(`   Detection ID: ${detectionId} - Waiting for kiosk approval...`);
-        
-      } catch (detectionErr) {
-        console.error('Error storing BLE detection:', detectionErr);
-      }
+    // Broadcast real-time location via WebSocket
+    const io = getIO();
+    if (io) {
+      io.to('admin').to('teacher').emit('location:update', {
+        type: 'student_location',
+        student: {
+          id: student.id,
+          name: student.name,
+          section: student.section,
+          grade: student.grade,
+          lrn: student.lrn,
+        },
+        location: {
+          position: smoothedPosition,
+          beacon: {
+            beaconId: beacon.beacon_id,
+            name: beacon.name,
+            locationName: beacon.location_name,
+            locationType: beacon.location_type,
+          },
+          rssi,
+          distance: Math.round(distance),
+          timestamp: new Date(),
+        },
+      });
     }
 
-    res.status(201).json({
-      message: 'BLE detection stored - awaiting approval',
-      locationId: (result as any).insertId,
-      student_name: student.name,
-      location: beacon.location_name,
-      building: beacon.building,
-      floor: beacon.floor,
-      detection_stored: detectionStored,
-      detection_id: detectionId,
-      status: 'pending_approval',
+    res.json({
+      success: true,
+      student: {
+        id: student.id,
+        name: student.name,
+      },
+      position: smoothedPosition,
+      beacon: beacon.name,
+      distance: Math.round(distance),
+      rssi,
     });
+
   } catch (err) {
-    console.error('updateBleLocation error:', err);
+    console.error('BLE location update error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
 
-// ─── GET /api/location/student/:studentId ────────────────────────────
-// Get current and historical location for a specific student
-export async function getStudentLocation(req: AuthRequest, res: Response): Promise<void> {
+/**
+ * POST /api/location/ble-batch
+ * Batch update for multiple BLE readings (more efficient)
+ */
+export async function updateBleLocationBatch(req: Request, res: Response): Promise<void> {
   try {
-    const { studentId } = req.params;
-    const { history } = req.query; // ?history=true to get full history
+    const { readings } = req.body; // Array of { studentId, beaconId, rssi, macAddress }
 
-    // Check permission: parents can only view their own children
-    if (req.user?.role === 'parent' && req.user?.profileId) {
-      const [linkCheck] = await pool.execute(
-        'SELECT 1 FROM parent_student WHERE parent_id = ? AND student_id = ?',
-        [req.user.profileId, studentId]
-      ) as any[];
-      if ((linkCheck as any[]).length === 0) {
-        res.status(403).json({ error: 'Access denied' });
-        return;
-      }
-    }
-
-    if (history === 'true') {
-      // Get location history (last 24 hours)
-      const [rows] = await pool.execute(
-        `SELECT 
-          sl.id, sl.location_name, sl.location_type, sl.coordinates,
-          sl.timestamp, sl.signal_strength,
-          bb.building, bb.floor
-         FROM student_locations sl
-         LEFT JOIN ble_beacons bb ON sl.beacon_id = bb.beacon_id
-         WHERE sl.student_id = ? AND sl.timestamp >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
-         ORDER BY sl.timestamp DESC
-         LIMIT 100`,
-        [studentId]
-      ) as any[];
-      res.json(rows);
-    } else {
-      // Get current location only
-      const [rows] = await pool.execute(
-        'SELECT * FROM v_student_current_location WHERE student_id = ?',
-        [studentId]
-      ) as any[];
-      
-      if ((rows as any[]).length === 0) {
-        res.json({
-          student_id: studentId,
-          location_name: 'Unknown',
-          location_status: 'offline',
-          message: 'No recent location data',
-        });
-      } else {
-        res.json((rows as any[])[0]);
-      }
-    }
-  } catch (err) {
-    console.error('getStudentLocation error:', err);
-    res.status(500).json({ error: 'Server error' });
-  }
-}
-
-// ─── GET /api/location/beacons ───────────────────────────────────────
-// Get all active BLE beacons (for admin/map display)
-export async function getBeacons(req: AuthRequest, res: Response): Promise<void> {
-  try {
-    const [rows] = await pool.execute(
-      'SELECT * FROM ble_beacons WHERE is_active = 1 ORDER BY building, floor, name'
-    ) as any[];
-    res.json(rows);
-  } catch (err) {
-    res.status(500).json({ error: 'Server error' });
-  }
-}
-
-// ─── GET /api/location/campus-map ────────────────────────────────────
-// Get all students' current locations (for admin dashboard)
-export async function getCampusMap(req: AuthRequest, res: Response): Promise<void> {
-  try {
-    // Only admin and teachers can view campus map
-    if (req.user?.role !== 'admin' && req.user?.role !== 'teacher') {
-      res.status(403).json({ error: 'Access denied' });
+    if (!Array.isArray(readings) || readings.length === 0) {
+      res.status(400).json({ error: 'readings array is required' });
       return;
     }
 
-    const [students] = await pool.execute(
-      `SELECT * FROM v_student_current_location 
-       WHERE location_status IN ('active', 'recent')
-       ORDER BY last_seen DESC`
-    ) as any[];
+    const updates: any[] = [];
 
-    const [beacons] = await pool.execute(
-      'SELECT * FROM ble_beacons WHERE is_active = 1'
-    ) as any[];
+    for (const reading of readings) {
+      const { studentId, beaconId, rssi } = reading;
+      if (!studentId || !beaconId || rssi === undefined) continue;
+
+      // Get student and beacon info
+      const [studentRows] = await pool.execute(
+        'SELECT id, name, grade, section, lrn FROM students WHERE id = ?',
+        [studentId]
+      ) as any[];
+
+      const [beaconRows] = await pool.execute(
+        'SELECT beacon_id, name, location_name, coordinates, location_type FROM ble_beacons WHERE beacon_id = ?',
+        [beaconId]
+      ) as any[];
+
+      const student = (studentRows as any[])[0];
+      const beacon = (beaconRows as any[])[0];
+
+      if (!student || !beacon || !beacon.coordinates) continue;
+
+      const distance = rssiToDistance(rssi);
+      const [beaconLat, beaconLng] = beacon.coordinates.split(',').map(Number);
+      const lastPos = lastPositions.get(studentId);
+      const newPosition = calculateOffsetPosition(beaconLat, beaconLng, rssi, lastPos);
+      const smoothedPosition = smoothPosition(newPosition, lastPos || null, 0.4);
+
+      lastPositions.set(studentId, smoothedPosition);
+
+      // Store in database
+      await pool.execute(
+        `INSERT INTO student_locations 
+         (student_id, location_name, location_type, coordinates, signal_strength, is_active)
+         VALUES (?, ?, ?, ?, ?, 1)
+         ON DUPLICATE KEY UPDATE
+           location_name = VALUES(location_name),
+           location_type = VALUES(location_type),
+           coordinates = VALUES(coordinates),
+           signal_strength = VALUES(signal_strength),
+           timestamp = CURRENT_TIMESTAMP,
+           is_active = 1`,
+        [
+          studentId,
+          beacon.location_name,
+          beacon.location_type,
+          `${smoothedPosition.lat},${smoothedPosition.lng}`,
+          rssi
+        ]
+      );
+
+      updates.push({
+        studentId: student.id,
+        studentName: student.name,
+        section: student.section,
+        grade: student.grade,
+        position: smoothedPosition,
+        beaconName: beacon.name,
+        distance: Math.round(distance),
+        timestamp: new Date(),
+      });
+    }
+
+    // Broadcast batch update via WebSocket
+    const io = getIO();
+    if (io && updates.length > 0) {
+      io.to('admin').to('teacher').emit('location:batch', {
+        type: 'batch_update',
+        students: updates,
+      });
+    }
 
     res.json({
-      students,
-      beacons,
-      timestamp: new Date(),
+      success: true,
+      processed: updates.length,
+      failed: readings.length - updates.length,
     });
+
   } catch (err) {
-    console.error('getCampusMap error:', err);
+    console.error('BLE batch location update error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
 
-// ─── DELETE /api/location/student/:studentId/clear ──────────────────
-// Clear location history for a specific student (parent/admin)
-export async function clearStudentLocationHistory(req: AuthRequest, res: Response): Promise<void> {
+/**
+ * GET /api/location/students-live
+ * Get current real-time positions of all active students
+ */
+export async function getLiveStudentLocations(req: Request, res: Response): Promise<void> {
+  try {
+    const [rows] = await pool.execute(
+      `SELECT 
+         sl.student_id,
+         s.name AS student_name,
+         s.grade,
+         s.section,
+         sl.location_name,
+         sl.location_type,
+         sl.coordinates,
+         sl.signal_strength AS rssi,
+         TIMESTAMPDIFF(SECOND, sl.timestamp, NOW()) AS seconds_ago,
+         sl.is_active
+       FROM student_locations sl
+       JOIN students s ON s.id = sl.student_id
+       WHERE sl.is_active = 1
+         AND TIMESTAMPDIFF(MINUTE, sl.timestamp, NOW()) <= 5
+       ORDER BY sl.timestamp DESC`
+    ) as any[];
+
+    const locations = (rows as any[]).map(row => {
+      const [lat, lng] = (row.coordinates || '0,0').split(',').map(Number);
+      const distance = row.rssi ? Math.round(rssiToDistance(row.rssi)) : null;
+
+      return {
+        studentId: row.student_id,
+        name: row.student_name,
+        grade: row.grade,
+        section: row.section,
+        location: {
+          name: row.location_name,
+          type: row.location_type,
+          position: { lat, lng },
+          accuracy: distance,
+        },
+        rssi: row.rssi,
+        secondsAgo: row.seconds_ago,
+        isActive: row.is_active === 1,
+      };
+    });
+
+    res.json({
+      count: locations.length,
+      locations,
+    });
+
+  } catch (err) {
+    console.error('Get live locations error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+
+/**
+ * GET /api/location/student/:id
+ * Get current location for a specific student (for parent dashboard)
+ * Query param: ?history=true to get location history
+ */
+export async function getStudentLocation(req: Request, res: Response): Promise<void> {
+  try {
+    const { id } = req.params;
+    const { history } = req.query;
+
+    // If history requested, return all locations from last 24 hours
+    if (history === 'true') {
+      const [rows] = await pool.execute(
+        `SELECT 
+           sl.student_id,
+           s.name AS student_name,
+           sl.location_name,
+           sl.location_type,
+           sl.coordinates,
+           sl.signal_strength AS rssi,
+           sl.timestamp,
+           bb.building,
+           bb.floor
+         FROM student_locations sl
+         JOIN students s ON s.id = sl.student_id
+         LEFT JOIN ble_beacons bb ON bb.location_name = sl.location_name
+         WHERE sl.student_id = ?
+           AND sl.timestamp >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+         ORDER BY sl.timestamp DESC
+         LIMIT 50`,
+        [id]
+      ) as any[];
+
+      const historyData = (rows as any[]).map(row => {
+        const distance = row.rssi ? Math.round(rssiToDistance(row.rssi)) : null;
+        return {
+          student_id: row.student_id,
+          student_name: row.student_name,
+          location_name: row.location_name,
+          location_type: row.location_type,
+          building: row.building,
+          floor: row.floor,
+          rssi: row.rssi,
+          distance: distance,
+          timestamp: row.timestamp,
+        };
+      });
+
+      res.json(historyData);
+      return;
+    }
+
+    // Otherwise return current location only
+    const [rows] = await pool.execute(
+      `SELECT 
+         sl.student_id,
+         s.name AS student_name,
+         s.grade,
+         s.section,
+         sl.location_name,
+         sl.location_type,
+         sl.coordinates,
+         sl.signal_strength AS rssi,
+         TIMESTAMPDIFF(MINUTE, sl.timestamp, NOW()) AS minutes_ago,
+         sl.is_active,
+         sl.timestamp
+       FROM student_locations sl
+       JOIN students s ON s.id = sl.student_id
+       WHERE sl.student_id = ?
+       ORDER BY sl.timestamp DESC
+       LIMIT 1`,
+      [id]
+    ) as any[];
+
+    if ((rows as any[]).length === 0) {
+      res.json(null); // No location data
+      return;
+    }
+
+    const row = (rows as any[])[0];
+    const [lat, lng] = (row.coordinates || '0,0').split(',').map(Number);
+    const distance = row.rssi ? Math.round(rssiToDistance(row.rssi)) : null;
+
+    res.json({
+      student_id: row.student_id,
+      student_name: row.student_name,
+      grade: row.grade,
+      section: row.section,
+      location_name: row.location_name,
+      location_type: row.location_type,
+      coordinates: row.coordinates,
+      position: { lat, lng },
+      accuracy: distance,
+      minutes_ago: row.minutes_ago,
+      location_status: row.minutes_ago <= 5 ? 'active' : 'recent',
+      is_active: row.is_active === 1,
+      timestamp: row.timestamp,
+    });
+
+  } catch (err) {
+    console.error('Get student location error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+
+/**
+ * GET /api/location/beacons
+ * Get all active BLE beacons for map display
+ */
+export async function getBeacons(req: Request, res: Response): Promise<void> {
+  try {
+    const [rows] = await pool.execute(
+      `SELECT beacon_id, name, location_name, location_type, coordinates, building, floor, is_active
+       FROM ble_beacons
+       WHERE is_active = 1
+       ORDER BY location_name`
+    ) as any[];
+
+    // Return array directly for parent dashboard compatibility
+    res.json({
+      beacons: rows,
+    });
+
+  } catch (err) {
+    console.error('Get beacons error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+
+/**
+ * POST /api/location/deactivate/:studentId
+ * Mark student as inactive (left school/area)
+ */
+export async function deactivateStudentLocation(req: Request, res: Response): Promise<void> {
   try {
     const { studentId } = req.params;
 
-    // Check permission: parents can only clear their own children's history
-    if (req.user?.role === 'parent' && req.user?.profileId) {
-      const [linkCheck] = await pool.execute(
-        'SELECT 1 FROM parent_student WHERE parent_id = ? AND student_id = ?',
-        [req.user.profileId, studentId]
-      ) as any[];
-      if ((linkCheck as any[]).length === 0) {
-        res.status(403).json({ error: 'Access denied' });
-        return;
-      }
+    await pool.execute(
+      'UPDATE student_locations SET is_active = 0 WHERE student_id = ?',
+      [studentId]
+    );
+
+    // Remove from position cache
+    lastPositions.delete(Number(studentId));
+
+    // Broadcast removal via WebSocket
+    const io = getIO();
+    if (io) {
+      io.to('admin').to('teacher').emit('location:removed', {
+        type: 'student_left',
+        studentId: Number(studentId),
+      });
     }
 
-    // Delete location history for this student
-    await pool.execute(
-      'DELETE FROM student_locations WHERE student_id = ?',
-      [studentId]
-    );
+    res.json({ success: true, message: 'Student location deactivated' });
 
-    // Delete BLE detections for this student
-    await pool.execute(
-      'DELETE FROM ble_detections WHERE student_id = ?',
-      [studentId]
-    );
-
-    console.log(`🗑️  Location history cleared for student ID: ${studentId}`);
-
-    res.json({
-      message: 'Location history cleared successfully',
-      student_id: studentId,
-    });
   } catch (err) {
-    console.error('clearStudentLocationHistory error:', err);
+    console.error('Deactivate location error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }

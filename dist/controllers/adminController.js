@@ -23,11 +23,25 @@ const db_1 = __importDefault(require("../lib/db"));
 async function getDashboardStats(_req, res) {
     try {
         const [[stats]] = await db_1.default.execute('SELECT * FROM v_dashboard_stats');
-        const [recentLogs] = await db_1.default.execute(`SELECT a.id, a.student_name, a.grade, a.section, a.timestamp,
-              a.scan_method, a.status, a.photo_path
+        const [recentLogs] = await db_1.default.execute(`SELECT 
+        a.id, 
+        a.student_name, 
+        a.grade, 
+        a.section, 
+        a.timestamp,
+        a.scan_method, 
+        a.status, 
+        a.photo_path,
+        a.student_id
        FROM attendance a
+       INNER JOIN (
+         SELECT student_id, MAX(timestamp) as max_timestamp
+         FROM attendance
+         GROUP BY student_id
+       ) latest ON a.student_id = latest.student_id 
+                AND a.timestamp = latest.max_timestamp
        ORDER BY a.timestamp DESC
-       LIMIT 20`);
+       LIMIT 200`);
         const [activeKiosks] = await db_1.default.execute(`SELECT id, name, location, gate, is_active, last_ping
        FROM kiosks WHERE is_active = 1`);
         res.json({ stats, recentLogs, activeKiosks });

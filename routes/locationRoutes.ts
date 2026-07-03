@@ -1,28 +1,30 @@
 import { Router } from 'express';
-import { protect, requireRole } from '../middleware/authMiddleware';
 import {
   updateBleLocation,
+  updateBleLocationBatch,
+  getLiveStudentLocations,
   getStudentLocation,
   getBeacons,
-  getCampusMap,
-  clearStudentLocationHistory,
+  deactivateStudentLocation,
 } from '../controllers/locationController';
+import { protect } from '../middleware/authMiddleware';
 
 const router = Router();
 
-// BLE location update (from student device or BLE gateway)
+// Real-time BLE location updates
 router.post('/ble-update', updateBleLocation);
+router.post('/ble-batch', updateBleLocationBatch);
 
-// Get student location (parents/teachers/admin)
-router.get('/student/:studentId', protect, getStudentLocation);
+// Get live student positions
+router.get('/students-live', protect, getLiveStudentLocations);
 
-// Clear student location history (parents/admin)
-router.delete('/student/:studentId/clear', protect, clearStudentLocationHistory);
+// Get specific student location (for parent dashboard)
+router.get('/student/:id', getStudentLocation);
 
-// Get all beacons (for map display)
-router.get('/beacons', protect, getBeacons);
+// Get all beacons
+router.get('/beacons', getBeacons);
 
-// Get campus-wide location map (admin/teacher only)
-router.get('/campus-map', protect, requireRole('admin', 'teacher'), getCampusMap);
+// Deactivate student location
+router.post('/deactivate/:studentId', protect, deactivateStudentLocation);
 
 export default router;

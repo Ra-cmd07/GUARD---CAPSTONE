@@ -10,14 +10,37 @@ exports.getRecentScans = getRecentScans;
 const db_1 = __importDefault(require("../lib/db"));
 const socketHandler_1 = require("../src/websocket/socketHandler");
 const cloudinary_1 = require("../config/cloudinary");
-// Lightweight SMS helper — replace body with real provider (Semaphore, Vonage, etc.)
-async function sendSms(phone, message) {
+/**
+ * Queue SMS for GSM module to send
+ * Converts phone numbers to international format (+63...)
+ */
+async function queueSmsForGSM(phone, message, studentId, attendanceId) {
     try {
-        // TODO: integrate real SMS gateway
-        console.log(`📱 SMS → ${phone}: ${message}`);
+        // Convert phone number to international format for GSM
+        // 0917... → +63917...
+        // 0953 681 2353 → +639536812353
+        let internationalPhone = phone.trim().replace(/\s+/g, ''); // Remove spaces
+        if (internationalPhone.startsWith('0')) {
+            // Local format: replace leading 0 with +63
+            internationalPhone = '+63' + internationalPhone.substring(1);
+        }
+        else if (internationalPhone.startsWith('63') && !internationalPhone.startsWith('+')) {
+            // Missing + prefix
+            internationalPhone = '+' + internationalPhone;
+        }
+        else if (!internationalPhone.startsWith('+63')) {
+            // Invalid format, try to fix
+            console.warn(`⚠️  Invalid phone format: ${phone}, attempting to fix...`);
+            internationalPhone = '+63' + internationalPhone.replace(/^0+/, '');
+        }
+        await db_1.default.execute(`INSERT INTO sms_queue 
+       (phone_number, message, student_id, attendance_id, priority, status, created_at) 
+       VALUES (?, ?, ?, ?, 'normal', 'pending', NOW())`, [internationalPhone, message, studentId, attendanceId]);
+        console.log(`📩 SMS queued for GSM module → ${internationalPhone}: ${message.substring(0, 50)}...`);
         return true;
     }
-    catch {
+    catch (error) {
+        console.error('❌ Failed to queue SMS:', error);
         return false;
     }
 }
@@ -140,18 +163,23 @@ async function kioskScan(req, res) {
             })();
         }
         // ── SMS to parents ────────────────────────────────────────────────
-        const [guardians] = await db_1.default.execute('SELECT * FROM parents_teachers WHERE student_id = ?', [student.id]);
+        const [guardians] = await db_1.default.execute(`SELECT p.name, p.contact, ps.relationship
+       FROM parent_student ps
+       JOIN parents p ON ps.parent_id = p.id
+       WHERE ps.student_id = ?`, [student.id]);
         const statusEmoji = status === 'Time-In' ? '✅' : status === 'Late' ? '⏰' : '🔔';
         const timeDisplay = now.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit', hour12: true });
         const message = `${statusEmoji} ATTENDBOX: ${student.name} has ${status === 'Time-In' ? 'arrived at school' : status === 'Time-Out' ? 'left school' : 'arrived LATE'} at ${timeDisplay}. Date: ${today}.`;
         const smsResults = [];
         for (const g of guardians) {
-            if (g.contact_number) {
-                const sent = await sendSms(g.contact_number, message);
+            if (g.contact) {
+                // Queue SMS for GSM module (ESP32 will poll and send)
+                const queued = await queueSmsForGSM(g.contact, message, student.id, attendanceId);
+                // Log to sms_logs table for tracking
                 await db_1.default.execute(`INSERT INTO sms_logs (attendance_id, student_name, parent_name, phone_number, message, status, sent_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`, [attendanceId, student.name, g.name, g.contact_number, message,
-                    sent ? 'sent' : 'failed', sent ? new Date() : null]);
-                smsResults.push({ name: g.name, phone: g.contact_number, sent });
+           VALUES (?, ?, ?, ?, ?, ?, ?)`, [attendanceId, student.name, g.name, g.contact, message,
+                    queued ? 'queued' : 'failed', queued ? new Date() : null]);
+                smsResults.push({ name: g.name, phone: g.contact, queued });
             }
         }
         // ── Update kiosk last_ping ────────────────────────────────────────

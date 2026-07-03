@@ -8,13 +8,37 @@ exports.approveDetection = approveDetection;
 exports.rejectDetection = rejectDetection;
 const db_1 = __importDefault(require("../lib/db"));
 const cloudinary_1 = require("../config/cloudinary");
-// Lightweight SMS helper
-async function sendSms(phone, message) {
+/**
+ * Queue SMS for GSM module to send
+ * Converts phone numbers to international format (+63...)
+ */
+async function queueSmsForGSM(phone, message, studentId, attendanceId) {
     try {
-        console.log(`📱 SMS → ${phone}: ${message}`);
+        // Convert phone number to international format for GSM
+        // 0917... → +63917...
+        // 0953 681 2353 → +639536812353
+        let internationalPhone = phone.trim().replace(/\s+/g, ''); // Remove spaces
+        if (internationalPhone.startsWith('0')) {
+            // Local format: replace leading 0 with +63
+            internationalPhone = '+63' + internationalPhone.substring(1);
+        }
+        else if (internationalPhone.startsWith('63') && !internationalPhone.startsWith('+')) {
+            // Missing + prefix
+            internationalPhone = '+' + internationalPhone;
+        }
+        else if (!internationalPhone.startsWith('+63')) {
+            // Invalid format, try to fix
+            console.warn(`⚠️  Invalid phone format: ${phone}, attempting to fix...`);
+            internationalPhone = '+63' + internationalPhone.replace(/^0+/, '');
+        }
+        await db_1.default.execute(`INSERT INTO sms_queue 
+       (phone_number, message, student_id, attendance_id, priority, status, created_at) 
+       VALUES (?, ?, ?, ?, 'normal', 'pending', NOW())`, [internationalPhone, message, studentId, attendanceId]);
+        console.log(`📩 SMS queued for GSM module → ${internationalPhone}: ${message.substring(0, 50)}...`);
         return true;
     }
-    catch {
+    catch (error) {
+        console.error('❌ Failed to queue SMS:', error);
         return false;
     }
 }
@@ -160,15 +184,18 @@ async function approveDetection(req, res) {
         attendanceStatus = status;
         console.log(`✅ Attendance APPROVED (${session}): ${student.name} ${status === 'Late' ? 'LATE' : status}`);
         // Send SMS notification to parents/guardians
-        const [guardians] = await db_1.default.execute('SELECT * FROM parents_teachers WHERE student_id = ?', [student.id]);
+        const [guardians] = await db_1.default.execute(`SELECT p.name, p.contact, ps.relationship
+       FROM parent_student ps
+       JOIN parents p ON ps.parent_id = p.id
+       WHERE ps.student_id = ?`, [student.id]);
         const statusEmoji = attendanceStatus === 'Time-In' ? '✅' : attendanceStatus === 'Late' ? '⏰' : '🔔';
         const message = `${statusEmoji} ATTENDBOX: ${student.name} has ${attendanceStatus === 'Time-In' ? 'arrived at school' : attendanceStatus === 'Time-Out' ? 'left school' : 'arrived LATE'} at ${localTime}. Date: ${localDate}.`;
         for (const g of guardians) {
-            if (g.contact_number) {
-                const sent = await sendSms(g.contact_number, message);
+            if (g.contact) { // Changed from g.contact_number to g.contact
+                const queued = await queueSmsForGSM(g.contact, message, student.id, attendanceId);
                 await db_1.default.execute(`INSERT INTO sms_logs (attendance_id, student_name, parent_name, phone_number, message, status, sent_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`, [attendanceId, student.name, g.name, g.contact_number, message,
-                    sent ? 'sent' : 'failed', sent ? new Date() : null]);
+           VALUES (?, ?, ?, ?, ?, ?, ?)`, [attendanceId, student.name, g.name, g.contact, message,
+                    queued ? 'queued' : 'failed', queued ? new Date() : null]);
             }
         }
         // Update detection status to approved
