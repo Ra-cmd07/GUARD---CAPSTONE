@@ -3,7 +3,7 @@ import { useAuth } from './context/AuthContext';
 import type { UserRole } from './types';
 import LoginPage           from './pages/LoginPage';
 import AdminDashboardPage  from './pages/AdminDashboardPage';
-import TeacherDashboardPage from './pages/TeacherDashboardPage';
+import TeacherDashboardPage from './pages/TeacherDashboardPageOld';
 import ParentDashboardPage  from './pages/ParentDashboardPage';
 import StudentPortalPage   from './pages/StudentPortalPage';
 import DashboardPage       from './pages/DashboardPage';   // legacy teacher QR dashboard

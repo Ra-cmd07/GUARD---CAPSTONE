@@ -9,7 +9,7 @@ import {
 } from '@mui/material';
 import {
   ArrowBack, QrCode2, Bluetooth, CreditCard, CheckCircle,
-  Info, Save,
+  Info, Save, Search,
 } from '@mui/icons-material';
 import api from '../api/client';
 import theme from '../theme/professionalTheme';
@@ -34,6 +34,7 @@ export default function StudentRegistrationPage() {
   const [selectedMethod, setSelectedMethod] = useState<PreferredMethod>('QR');
   const [selectedStudents, setSelectedStudents] = useState<Set<number>>(new Set());
   const [methodData, setMethodData] = useState<{ [studentId: number]: { mac_address?: string; rfid_uid?: string } }>({});
+  const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [snack, setSnack] = useState<{ open: boolean; msg: string; sev: 'success' | 'error' }>
@@ -85,6 +86,22 @@ export default function StudentRegistrationPage() {
       }
     }));
   };
+
+  // Filter students based on search query
+  const filteredStudents = students.filter(student => {
+    if (!searchQuery.trim()) return true;
+    
+    const query = searchQuery.toLowerCase();
+    const lrn = student.lrn?.toLowerCase() || '';
+    const name = student.name?.toLowerCase() || '';
+    const gradeSection = `${student.grade || ''} ${student.section || ''}`.toLowerCase();
+    const method = (student.preferred_method || 'QR').toLowerCase();
+    
+    return lrn.includes(query) || 
+           name.includes(query) || 
+           gradeSection.includes(query) || 
+           method.includes(query);
+  });
 
   const handleSave = async () => {
     if (selectedStudents.size === 0) {
@@ -322,6 +339,25 @@ export default function StudentRegistrationPage() {
                 </Button>
               </Box>
 
+              {/* Search Bar */}
+              <Box sx={{ p: 2, borderBottom: '1px solid #e0e0e0' }}>
+                <TextField
+                  fullWidth
+                  size="small"
+                  placeholder="Search by LRN, Name, Grade/Section, or Current Method..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  InputProps={{
+                    startAdornment: <Search sx={{ color: 'text.secondary', mr: 1 }} />,
+                  }}
+                  sx={{
+                    '& .MuiOutlinedInput-root': {
+                      bgcolor: '#f9f9f9',
+                    },
+                  }}
+                />
+              </Box>
+
               {loading ? (
                 <Box display="flex" justifyContent="center" p={4}>
                   <CircularProgress />
@@ -343,44 +379,54 @@ export default function StudentRegistrationPage() {
                       </TableRow>
                     </TableHead>
                     <TableBody>
-                      {students.map((student) => {
-                        const isSelected = selectedStudents.has(student.id);
-                        return (
-                          <TableRow key={student.id} hover selected={isSelected}>
-                            <TableCell padding="checkbox">
-                              <Checkbox checked={isSelected} onChange={() => handleToggleStudent(student.id)} />
-                            </TableCell>
-                            <TableCell>{student.lrn}</TableCell>
-                            <TableCell><strong>{student.name}</strong></TableCell>
-                            <TableCell>{student.grade} {student.section}</TableCell>
-                            <TableCell>
-                              <Chip label={student.preferred_method || 'QR'} size="small" />
-                            </TableCell>
-                            {selectedMethod === 'BLE' && isSelected && (
-                              <TableCell>
-                                <TextField
-                                  size="small"
-                                  placeholder="AA:BB:CC:DD:EE:FF"
-                                  value={methodData[student.id]?.mac_address || ''}
-                                  onChange={(e) => handleMethodDataChange(student.id, 'mac_address', e.target.value)}
-                                  fullWidth
-                                />
+                      {filteredStudents.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={7} align="center" sx={{ py: 4 }}>
+                            <Typography color="text.secondary">
+                              {searchQuery ? 'No students found matching your search' : 'No students available'}
+                            </Typography>
+                          </TableCell>
+                        </TableRow>
+                      ) : (
+                        filteredStudents.map((student) => {
+                          const isSelected = selectedStudents.has(student.id);
+                          return (
+                            <TableRow key={student.id} hover selected={isSelected}>
+                              <TableCell padding="checkbox">
+                                <Checkbox checked={isSelected} onChange={() => handleToggleStudent(student.id)} />
                               </TableCell>
-                            )}
-                            {selectedMethod === 'RFID' && isSelected && (
+                              <TableCell>{student.lrn}</TableCell>
+                              <TableCell><strong>{student.name}</strong></TableCell>
+                              <TableCell>{student.grade} {student.section}</TableCell>
                               <TableCell>
-                                <TextField
-                                  size="small"
-                                  placeholder="04A3B2C1"
-                                  value={methodData[student.id]?.rfid_uid || ''}
-                                  onChange={(e) => handleMethodDataChange(student.id, 'rfid_uid', e.target.value)}
-                                  fullWidth
-                                />
+                                <Chip label={student.preferred_method || 'QR'} size="small" />
                               </TableCell>
-                            )}
-                          </TableRow>
-                        );
-                      })}
+                              {selectedMethod === 'BLE' && isSelected && (
+                                <TableCell>
+                                  <TextField
+                                    size="small"
+                                    placeholder="AA:BB:CC:DD:EE:FF"
+                                    value={methodData[student.id]?.mac_address || ''}
+                                    onChange={(e) => handleMethodDataChange(student.id, 'mac_address', e.target.value)}
+                                    fullWidth
+                                  />
+                                </TableCell>
+                              )}
+                              {selectedMethod === 'RFID' && isSelected && (
+                                <TableCell>
+                                  <TextField
+                                    size="small"
+                                    placeholder="04A3B2C1"
+                                    value={methodData[student.id]?.rfid_uid || ''}
+                                    onChange={(e) => handleMethodDataChange(student.id, 'rfid_uid', e.target.value)}
+                                    fullWidth
+                                  />
+                                </TableCell>
+                              )}
+                            </TableRow>
+                          );
+                        })
+                      )}
                     </TableBody>
                   </Table>
                 </TableContainer>

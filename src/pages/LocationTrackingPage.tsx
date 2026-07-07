@@ -36,7 +36,7 @@ export default function LocationTrackingPage() {
   const fetchBeacons = async () => {
     try {
       setLoading(true);
-      const res = await api.get('/ble/beacons');
+      const res = await api.get('/location/beacons');
       setBeacons(res.data.beacons || []);
       setError('');
     } catch (err: any) {

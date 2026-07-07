@@ -615,7 +615,7 @@ export default function KioskPage() {
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
-          justifyContent: 'center',
+          justifyContent: 'flex-start',  // Changed from 'center' to allow expansion
           p: 4,
           borderRight: `2px solid ${theme.colors.neutral[700]}`,
         }}>
@@ -625,8 +625,8 @@ export default function KioskPage() {
           {/* Camera Preview Box */}
           <Box sx={{
             width: '100%',
-            maxWidth: 480,
-            aspectRatio: '4/3',
+            height: '100%',  // Fill entire height
+            maxWidth: 'none',  // Remove width limit - fill entire space!
             bgcolor: theme.colors.neutral[900],
             border: `3px dashed ${theme.colors.neutral[600]}`,
             borderRadius: theme.borderRadius.lg,

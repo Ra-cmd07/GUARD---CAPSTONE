@@ -1010,7 +1010,7 @@ export default function ParentDashboardPage() {
                                   {loc.building || '—'}
                                 </TableCell>
                                 <TableCell sx={{ color: '#1a1a1a', fontWeight: 600 }}>
-                                  {loc.distance ? `~${loc.distance}m` : '—'}
+                                  {loc.distance ? `${Number(loc.distance).toFixed(2)}m` : '—'}
                                 </TableCell>
                                 <TableCell>
                                   <Chip 
