@@ -82,13 +82,14 @@ export async function updateBleLocation(req: Request, res: Response): Promise<vo
     // Store in database
     await pool.execute(
       `INSERT INTO student_locations 
-       (student_id, location_name, location_type, coordinates, signal_strength, is_active)
-       VALUES (?, ?, ?, ?, ?, 1)
+       (student_id, location_name, location_type, coordinates, signal_strength, distance, is_active)
+       VALUES (?, ?, ?, ?, ?, ?, 1)
        ON DUPLICATE KEY UPDATE
          location_name = VALUES(location_name),
          location_type = VALUES(location_type),
          coordinates = VALUES(coordinates),
          signal_strength = VALUES(signal_strength),
+         distance = VALUES(distance),
          timestamp = CURRENT_TIMESTAMP,
          is_active = 1`,
       [
@@ -96,7 +97,8 @@ export async function updateBleLocation(req: Request, res: Response): Promise<vo
         beacon.location_name,
         beacon.location_type,
         `${smoothedPosition.lat},${smoothedPosition.lng}`,
-        rssi
+        rssi,
+        parseFloat(distance.toFixed(2))  // Store distance with 2 decimal places
       ]
     );
 
@@ -319,6 +321,7 @@ export async function getStudentLocation(req: Request, res: Response): Promise<v
            sl.location_type,
            sl.coordinates,
            sl.signal_strength AS rssi,
+           sl.distance,
            sl.timestamp,
            bb.building,
            bb.floor
@@ -333,7 +336,8 @@ export async function getStudentLocation(req: Request, res: Response): Promise<v
       ) as any[];
 
       const historyData = (rows as any[]).map(row => {
-        const distance = row.rssi ? Math.round(rssiToDistance(row.rssi)) : null;
+        // Use database distance if available, otherwise calculate from RSSI
+        const distance = row.distance ? parseFloat(row.distance) : (row.rssi ? rssiToDistance(row.rssi) : null);
         return {
           student_id: row.student_id,
           student_name: row.student_name,
@@ -342,7 +346,7 @@ export async function getStudentLocation(req: Request, res: Response): Promise<v
           building: row.building,
           floor: row.floor,
           rssi: row.rssi,
-          distance: distance,
+          distance: distance ? parseFloat(distance.toFixed(2)) : null,
           timestamp: row.timestamp,
         };
       });
@@ -411,7 +415,7 @@ export async function getStudentLocation(req: Request, res: Response): Promise<v
 export async function getBeacons(req: Request, res: Response): Promise<void> {
   try {
     const [rows] = await pool.execute(
-      `SELECT beacon_id, name, location_name, location_type, coordinates, building, floor, is_active
+      `SELECT beacon_id, name, location_name, location_type, coordinates, mac_address, building, floor, is_active
        FROM ble_beacons
        WHERE is_active = 1
        ORDER BY location_name`

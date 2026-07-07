@@ -25,6 +25,7 @@ import rfidApprovalRoutes from './routes/rfidApprovalRoutes';
 import reportsRoutes    from './routes/reportsRoutes';
 import kiosksRoutes     from './routes/kiosksRoutes';
 import gsmRoutes        from './routes/gsmRoutes';
+import teacherRoutes    from './routes/teacherRoutes';
 
 import { errorHandler } from './middleware/errorMiddleware';
 
@@ -71,6 +72,7 @@ app.use('/api/location',    locationRoutes);
 app.use('/api/reports',     reportsRoutes);
 app.use('/api/kiosks',      kiosksRoutes);
 app.use('/api/gsm',         gsmRoutes);
+app.use('/api/teacher',     teacherRoutes);
 
 // ─── Health Check ─────────────────────────────────────────────────────
 app.get('/api/health', (_req, res) => {

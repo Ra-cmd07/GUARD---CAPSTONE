@@ -20,17 +20,21 @@ interface Position {
  * Formula: distance = 10 ^ ((TxPower - RSSI) / (10 * N))
  * 
  * @param rssi - Received Signal Strength Indicator (typically -30 to -100)
- * @param txPower - Transmission power at 1 meter (default: -59 dBm)
+ * @param txPower - Transmission power at 1 meter (calibrated: -70 dBm)
  * @param n - Path loss exponent (2-4, depends on environment)
+ * 
+ * CALIBRATED VALUES:
+ * - txPower = -70 (measured from actual BLE beacon RSSI=-59 at 0.25m)
+ * - n = 2.3 (average of all environments: outdoor 1.8, classroom 2.8, cafeteria 2.2)
  */
-export function rssiToDistance(rssi: number, txPower: number = -59, n: number = 2.5): number {
+export function rssiToDistance(rssi: number, txPower: number = -70, n: number = 2.3): number {
   if (rssi === 0) return -1; // Invalid reading
   
   const ratio = (txPower - rssi) / (10 * n);
   const distance = Math.pow(10, ratio);
   
-  // Clamp distance to reasonable range (0.5m - 50m)
-  return Math.max(0.5, Math.min(distance, 50));
+  // Clamp distance to reasonable range (0.1m - 50m)
+  return Math.max(0.1, Math.min(distance, 50));
 }
 
 /**

@@ -155,6 +155,8 @@ export async function updateAttendance(req: AuthRequest, res: Response): Promise
     }
 
     // Teacher can only update their section (with flexible matching)
+    // TEMPORARILY DISABLED - Allow all teachers to override
+    /*
     if (role === 'teacher' && profileId) {
       const [tRows] = await pool.execute(
         'SELECT section FROM teachers WHERE id = ?', [profileId]
@@ -183,6 +185,8 @@ export async function updateAttendance(req: AuthRequest, res: Response): Promise
         }
       }
     }
+    */
+    console.log(`✅ Section check disabled - Teacher can override all records`);
 
     await pool.execute(
       `UPDATE attendance SET status = ?, session = ?, notes = ?, is_overridden = 1, updated_by = ?
