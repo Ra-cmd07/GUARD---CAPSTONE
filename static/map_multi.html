@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi-Student BLE Tracking</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            overflow: hidden;
+        }
+        
+        #map {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+        
+        .info-box {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+            z-index: 1000;
+            min-width: 280px;
+            max-width: 400px;
+        }
+        
+        .info-box h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+            color: #333;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .status {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+        
+        .status.connected {
+            background: #4caf50;
+            animation: pulse 2s infinite;
+        }
+        
+        .status.disconnected {
+            background: #f44336;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .student-section {
+            margin-bottom: 15px;
+            padding: 10px;
+            border-left: 4px solid;
+            background: #f9f9f9;
+            border-radius: 4px;
+        }
+        
+        .proximity-badge {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 700;
+            margin-left: 8px;
+        }
+        
+        .proximity-close {
+            background: #4caf50;
+            color: white;
+        }
+        
+        .proximity-within-range {
+            background: #ff9800;
+            color: white;
+        }
+        
+        .proximity-out-of-range {
+            background: #f44336;
+            color: white;
+        }
+        
+        .student-header {
+            font-weight: 700;
+            font-size: 13px;
+            margin-bottom: 5px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .student-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+        
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 3px;
+            font-size: 11px;
+        }
+        
+        .info-label {
+            color: #666;
+        }
+        
+        .info-value {
+            font-weight: 600;
+            color: #333;
+        }
+        
+        .distance-label {
+            background: rgba(255, 255, 255, 0.9);
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            color: #333;
+            border: 1px solid #ccc;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            white-space: nowrap;
+        }
+        
+        .anchor-label {
+            background: rgba(76, 175, 80, 0.95) !important;
+            padding: 4px 10px !important;
+            border-radius: 4px !important;
+            font-size: 12px !important;
+            font-weight: 700 !important;
+            color: white !important;
+            border: 2px solid white !important;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3) !important;
+            white-space: nowrap !important;
+        }
+        
+        .anchor-label::before {
+            border-top-color: rgba(76, 175, 80, 0.95) !important;
+        }
+        
+        .leaflet-control-scale {
+            font-size: 12px;
+            font-weight: 600;
+        }
+        
+        .legend {
+            position: absolute;
+            bottom: 40px;
+            left: 10px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 10px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+            z-index: 1000;
+        }
+        
+        .legend-title {
+            font-weight: 700;
+            font-size: 12px;
+            margin-bottom: 8px;
+            color: #333;
+        }
+        
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 5px;
+            font-size: 11px;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    
+    <div class="info-box" id="info-box">
+        <h3>
+            <span class="status disconnected" id="status-indicator"></span>
+            <span id="status-text">Connecting...</span>
+        </h3>
+        <div id="info-content"></div>
+    </div>
+    
+    <div class="legend">
+        <div class="legend-title">Students</div>
+        <div id="legend-content"></div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        // Initialize map with scale
+        const map = L.map('map', {
+            zoomControl: true,
+            attributionControl: true
+        }).setView([8.473258, 124.649872], 19);
+        
+        // Add OpenStreetMap tiles
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors',
+            maxZoom: 22,
+            maxNativeZoom: 19
+        }).addTo(map);
+        
+        // Add scale control
+        L.control.scale({
+            metric: true,
+            imperial: false,
+            maxWidth: 200,
+            position: 'bottomleft'
+        }).addTo(map);
+        
+        // Map markers - MULTIPLE STUDENTS
+        let studentMarkers = {};  // {target_id: marker}
+        let accuracyCircles = {};  // {target_id: circle}
+        let distanceLines = {};  // {target_id: [lines]}
+        let anchorMarkers = {};
+        
+        // WebSocket connection
+        const ws = new WebSocket(`ws://${window.location.host}/ws`);
+        
+        ws.onopen = () => {
+            console.log('[WS] Connected to multi-beacon server');
+            updateStatus(true);
+        };
+        
+        ws.onclose = () => {
+            console.log('[WS] Disconnected from multi-beacon server');
+            updateStatus(false);
+        };
+        
+        ws.onerror = (error) => {
+            console.error('[WS] Error:', error);
+            updateStatus(false);
+        };
+        
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            
+            if (data.type === 'positions') {
+                console.log('[WS] Received positions:', data.students);
+                
+                // Validate that students is an array
+                if (!Array.isArray(data.students)) {
+                    console.error('[WS] Invalid data: students is not an array', data);
+                    return;
+                }
+                
+                // Update ALL students
+                data.students.forEach(studentPosition => {
+                    // Validate each student position has required fields
+                    if (!studentPosition.target_id || !studentPosition.lat || !studentPosition.lng) {
+                        console.warn('[WS] Incomplete student data:', studentPosition);
+                        return;
+                    }
+                    updateStudentPosition(studentPosition);
+                });
+                updateInfoBox(data.students);
+                updateLegend(data.students);
+            }
+        };
+        
+        function updateStatus(connected) {
+            const indicator = document.getElementById('status-indicator');
+            const statusText = document.getElementById('status-text');
+            
+            if (connected) {
+                indicator.className = 'status connected';
+                statusText.textContent = 'Connected';
+            } else {
+                indicator.className = 'status disconnected';
+                statusText.textContent = 'Disconnected';
+            }
+        }
+        
+        function updateStudentPosition(data) {
+            const targetId = data.target_id;
+            const lat = data.lat;
+            const lng = data.lng;
+            const color = data.target_color;
+            const name = data.target_name;
+            
+            // VALIDATION: Check if coordinates are valid numbers
+            if (typeof lat !== 'number' || typeof lng !== 'number' || 
+                isNaN(lat) || isNaN(lng) || 
+                lat === undefined || lng === undefined ||
+                lat === null || lng === null) {
+                console.warn(`[Map] Invalid coordinates for ${name}: lat=${lat}, lng=${lng}`);
+                return; // Skip this update
+            }
+            
+            // Additional validation: Check if coordinates are reasonable
+            if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+                console.warn(`[Map] Coordinates out of range for ${name}: lat=${lat}, lng=${lng}`);
+                return;
+            }
+            
+            // Update or create student marker
+            if (studentMarkers[targetId]) {
+                studentMarkers[targetId].setLatLng([lat, lng]);
+                studentMarkers[targetId].setStyle({
+                    fillColor: data.coasting ? '#ff9800' : color,
+                    color: data.coasting ? '#ff9800' : color
+                });
+            } else {
+                studentMarkers[targetId] = L.circleMarker([lat, lng], {
+                    radius: 10,
+                    fillColor: color,
+                    color: color,
+                    weight: 0,
+                    opacity: 1,
+                    fillOpacity: 1
+                }).addTo(map);
+                
+                studentMarkers[targetId].bindPopup(`<b>${name}</b>`);
+                
+                // Center map on first student
+                if (Object.keys(studentMarkers).length === 1) {
+                    map.setView([lat, lng], 19);
+                }
+            }
+            
+            // Update accuracy circle
+            if (accuracyCircles[targetId]) {
+                accuracyCircles[targetId].setLatLng([lat, lng]);
+                accuracyCircles[targetId].setRadius(data.accuracy_m);
+            } else {
+                accuracyCircles[targetId] = L.circle([lat, lng], {
+                    radius: data.accuracy_m,
+                    color: color,
+                    fillColor: color,
+                    fillOpacity: 0.1,
+                    weight: 1,
+                    opacity: 0.3
+                }).addTo(map);
+            }
+            
+            // Clear old distance lines for this student
+            if (distanceLines[targetId]) {
+                distanceLines[targetId].forEach(item => map.removeLayer(item));
+            }
+            distanceLines[targetId] = [];
+            
+            // Draw new distance lines and anchor markers
+            if (data.anchors && Array.isArray(data.anchors)) {
+                data.anchors.forEach(anchor => {
+                    const anchorId = anchor.id;
+                    const anchorLat = anchor.lat;
+                    const anchorLng = anchor.lng;
+                    const distance = anchor.distance;
+                    
+                    // Validate anchor coordinates
+                    if (typeof anchorLat !== 'number' || typeof anchorLng !== 'number' ||
+                        isNaN(anchorLat) || isNaN(anchorLng)) {
+                        console.warn(`[Map] Invalid anchor coordinates: anchor=${anchorId}`);
+                        return;
+                    }
+                    
+                    // Create or update anchor marker (shared across all students)
+                    if (!anchorMarkers[anchorId]) {
+                        anchorMarkers[anchorId] = L.circleMarker([anchorLat, anchorLng], {
+                            radius: 6,
+                            fillColor: '#4caf50',
+                            color: '#fff',
+                            weight: 2,
+                            opacity: 1,
+                            fillOpacity: 1
+                        }).addTo(map);
+                        
+                        // Add permanent label
+                        anchorMarkers[anchorId].bindTooltip(`Anchor ${anchorId}`, {
+                            permanent: true,
+                            direction: 'top',
+                            className: 'anchor-label',
+                            offset: [0, -10]
+                        });
+                        
+                        anchorMarkers[anchorId].bindPopup(`<b>Anchor ${anchorId}</b>`);
+                    }
+                    
+                    // Draw distance line
+                    const line = L.polyline([[lat, lng], [anchorLat, anchorLng]], {
+                        color: color,
+                        weight: 2,
+                        opacity: 0.5,
+                        dashArray: '5, 10'
+                    }).addTo(map);
+                    
+                    // Distance label
+                    const midLat = (lat + anchorLat) / 2;
+                    const midLng = (lng + anchorLng) / 2;
+                    
+                    const distanceLabel = L.marker([midLat, midLng], {
+                        icon: L.divIcon({
+                            className: 'distance-label',
+                            html: `${distance.toFixed(1)}m`,
+                            iconSize: null
+                        })
+                    }).addTo(map);
+                    
+                    distanceLines[targetId].push(line);
+                    distanceLines[targetId].push(distanceLabel);
+                });
+            }
+        }
+        
+        function updateInfoBox(students) {
+            const content = document.getElementById('info-content');
+            let html = '';
+            
+            students.forEach(student => {
+                // Determine proximity badge (3 zones now)
+                let proximityClass = 'proximity-out-of-range';
+                let proximityText = '✗ OUT OF RANGE';
+                
+                if (student.proximity_status === 'CLOSE') {
+                    proximityClass = 'proximity-close';
+                    proximityText = '✓ CLOSE (≤ 1m)';
+                } else if (student.proximity_status === 'WITHIN_RANGE') {
+                    proximityClass = 'proximity-within-range';
+                    proximityText = '⚠ WITHIN RANGE (1-3m)';
+                } else {
+                    proximityClass = 'proximity-out-of-range';
+                    proximityText = '✗ OUT OF RANGE (> 3m)';
+                }
+                
+                // Build per-anchor proximity status
+                let perAnchorHTML = '';
+                if (student.anchors && student.anchors.length > 0) {
+                    perAnchorHTML = '<div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #ddd;">';
+                    perAnchorHTML += '<div style="font-size: 11px; font-weight: 600; color: #666; margin-bottom: 4px;">Per-Anchor Status:</div>';
+                    
+                    student.anchors.forEach(anchor => {
+                        const zone = anchor.proximity_zone || 'UNKNOWN';
+                        const distance = anchor.distance.toFixed(1);
+                        
+                        let anchorBadgeClass = 'proximity-out-of-range';
+                        let anchorIcon = '✗';
+                        
+                        if (zone === 'CLOSE') {
+                            anchorBadgeClass = 'proximity-close';
+                            anchorIcon = '✓';
+                        } else if (zone === 'WITHIN_RANGE') {
+                            anchorBadgeClass = 'proximity-within-range';
+                            anchorIcon = '⚠';
+                        }
+                        
+                        perAnchorHTML += `
+                            <div class="info-row" style="margin-bottom: 2px;">
+                                <span class="info-label">Anchor ${anchor.id}:</span>
+                                <span class="info-value">
+                                    <span class="proximity-badge ${anchorBadgeClass}" style="padding: 2px 8px; font-size: 10px;">
+                                        ${anchorIcon} ${zone}
+                                    </span>
+                                    <span style="margin-left: 4px; color: #666;">(${distance}m)</span>
+                                </span>
+                            </div>
+                        `;
+                    });
+                    
+                    perAnchorHTML += '</div>';
+                }
+                
+                html += `
+                    <div class="student-section" style="border-left-color: ${student.target_color};">
+                        <div class="student-header">
+                            <span class="student-dot" style="background-color: ${student.target_color};"></span>
+                            ${student.target_name}
+                            <span class="proximity-badge ${proximityClass}">${proximityText}</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Accuracy:</span>
+                            <span class="info-value">±${student.accuracy_m}m</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Anchors:</span>
+                            <span class="info-value">${student.anchors_used} active</span>
+                        </div>
+                        ${student.speed_mps > 0.05 ? `
+                        <div class="info-row">
+                            <span class="info-label">Speed:</span>
+                            <span class="info-value">${student.speed_mps.toFixed(2)} m/s</span>
+                        </div>
+                        ` : ''}
+                        ${student.coasting ? `
+                        <div class="info-row">
+                            <span class="info-label" style="color: #ff9800;">Status:</span>
+                            <span class="info-value" style="color: #ff9800;">Coasting</span>
+                        </div>
+                        ` : ''}
+                        ${perAnchorHTML}
+                    </div>
+                `;
+            });
+            
+            content.innerHTML = html;
+        }
+        
+        function updateLegend(students) {
+            const content = document.getElementById('legend-content');
+            let html = '';
+            
+            students.forEach(student => {
+                html += `
+                    <div class="legend-item">
+                        <span class="student-dot" style="background-color: ${student.target_color};"></span>
+                        <span>${student.target_name}</span>
+                    </div>
+                `;
+            });
+            
+            content.innerHTML = html;
+        }
+        
+        // Listen for position updates from parent window (for embedded iframe)
+        window.addEventListener('message', (event) => {
+            if (event.data && event.data.type === 'update-positions') {
+                event.data.students.forEach(studentPosition => {
+                    updateStudentPosition(studentPosition);
+                });
+                updateInfoBox(event.data.students);
+                updateLegend(event.data.students);
+            }
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BLE Trilateration Map</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            overflow: hidden;
+        }
+        
+        #map {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+        
+        .info-box {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+            z-index: 1000;
+            min-width: 200px;
+            max-width: 300px;
+        }
+        
+        .info-box h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+            color: #333;
+        }
+        
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 5px;
+            font-size: 12px;
+        }
+        
+        .info-label {
+            color: #666;
+        }
+        
+        .info-value {
+            font-weight: 600;
+            color: #333;
+        }
+        
+        .status {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 5px;
+        }
+        
+        .status.connected {
+            background: #4caf50;
+            animation: pulse 2s infinite;
+        }
+        
+        .status.disconnected {
+            background: #f44336;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .waiting-overlay {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(255, 255, 255, 0.95);
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+            z-index: 2000;
+            text-align: center;
+            display: none;
+        }
+        
+        .waiting-overlay.visible {
+            display: block;
+        }
+        
+        .waiting-overlay h2 {
+            margin: 0 0 10px 0;
+            font-size: 18px;
+            color: #333;
+        }
+        
+        .waiting-overlay p {
+            margin: 0;
+            color: #666;
+            font-size: 14px;
+        }
+        
+        .spinner {
+            width: 40px;
+            height: 40px;
+            margin: 20px auto;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3b82f6;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .distance-label {
+            background: rgba(255, 255, 255, 0.9);
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            color: #333;
+            border: 1px solid #ccc;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            white-space: nowrap;
+        }
+        
+        .leaflet-control-scale {
+            font-size: 12px;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    
+    <div class="info-box" id="info-box">
+        <h3>
+            <span class="status disconnected" id="status-indicator"></span>
+            <span id="status-text">Connecting...</span>
+        </h3>
+        <div id="info-content"></div>
+    </div>
+    
+    <div class="waiting-overlay" id="waiting-overlay">
+        <div class="spinner"></div>
+        <h2>Waiting for BLE Signal</h2>
+        <p id="waiting-message">Waiting for anchors to detect device...</p>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        // Initialize map with accurate metric scale
+        const map = L.map('map', {
+            zoomControl: true,
+            attributionControl: true
+        }).setView([8.473258, 124.649872], 19);
+        
+        // Add OpenStreetMap tiles
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors',
+            maxZoom: 22,
+            maxNativeZoom: 19
+        }).addTo(map);
+        
+        // Add scale control (shows meters accurately)
+        L.control.scale({
+            metric: true,
+            imperial: false,
+            maxWidth: 200,
+            position: 'bottomleft'
+        }).addTo(map);
+        
+        // Map markers
+        let studentMarker = null;
+        let accuracyCircle = null;
+        let anchorMarkers = {};
+        let distanceLines = [];
+        
+        // WebSocket connection
+        const ws = new WebSocket(`ws://${window.location.host}/ws`);
+        
+        ws.onopen = () => {
+            console.log('[WS] Connected to trilateration server');
+            updateStatus(true);
+        };
+        
+        ws.onclose = () => {
+            console.log('[WS] Disconnected from trilateration server');
+            updateStatus(false);
+        };
+        
+        ws.onerror = (error) => {
+            console.error('[WS] Error:', error);
+            updateStatus(false);
+        };
+        
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            
+            if (data.type === 'position') {
+                hideWaitingOverlay();
+                updatePosition(data);
+                updateInfoBox(data);
+            } else if (data.type === 'waiting') {
+                showWaitingOverlay(data);
+            }
+        };
+        
+        function updateStatus(connected) {
+            const indicator = document.getElementById('status-indicator');
+            const statusText = document.getElementById('status-text');
+            
+            if (connected) {
+                indicator.className = 'status connected';
+                statusText.textContent = 'Connected';
+            } else {
+                indicator.className = 'status disconnected';
+                statusText.textContent = 'Disconnected';
+            }
+        }
+        
+        function showWaitingOverlay(data) {
+            const overlay = document.getElementById('waiting-overlay');
+            const message = document.getElementById('waiting-message');
+            
+            message.textContent = `Active anchors: ${data.active_anchors} / ${data.needed} required`;
+            overlay.className = 'waiting-overlay visible';
+        }
+        
+        function hideWaitingOverlay() {
+            const overlay = document.getElementById('waiting-overlay');
+            overlay.className = 'waiting-overlay';
+        }
+        
+        function updatePosition(data) {
+            const lat = data.lat;
+            const lng = data.lng;
+            const accuracy = data.accuracy_m;
+            
+            // Update student marker (solid blue dot, no border at all)
+            if (studentMarker) {
+                studentMarker.setLatLng([lat, lng]);
+                studentMarker.setStyle({
+                    fillColor: data.coasting ? '#ff9800' : '#4285f4',
+                    color: data.coasting ? '#ff9800' : '#4285f4',
+                    weight: 0,
+                    radius: 10
+                });
+            } else {
+                // Create solid blue dot with NO border
+                studentMarker = L.circleMarker([lat, lng], {
+                    radius: 10,
+                    fillColor: data.coasting ? '#ff9800' : '#4285f4',
+                    color: data.coasting ? '#ff9800' : '#4285f4',
+                    weight: 0,
+                    opacity: 1,
+                    fillOpacity: 1
+                }).addTo(map);
+                
+                // Center map on first position
+                map.setView([lat, lng], 19);
+            }
+            
+            // Update accuracy circle (this represents the actual meter radius)
+            if (accuracyCircle) {
+                accuracyCircle.setLatLng([lat, lng]);
+                accuracyCircle.setRadius(accuracy);  // This is in METERS
+            } else {
+                accuracyCircle = L.circle([lat, lng], {
+                    radius: accuracy,  // Leaflet automatically converts to meters based on GPS
+                    color: data.coasting ? '#ff9800' : '#3b82f6',
+                    fillColor: data.coasting ? '#ff9800' : '#3b82f6',
+                    fillOpacity: 0.1,
+                    weight: 1
+                }).addTo(map);
+            }
+            
+            // Update anchor markers and distance lines with labels
+            clearDistanceLines();
+            
+            data.anchors.forEach(anchor => {
+                const anchorId = anchor.id;
+                const anchorLat = anchor.lat;
+                const anchorLng = anchor.lng;
+                const distance = anchor.distance;  // Distance in meters
+                
+                // Create or update anchor marker
+                if (!anchorMarkers[anchorId]) {
+                    anchorMarkers[anchorId] = L.circleMarker([anchorLat, anchorLng], {
+                        radius: 6,
+                        fillColor: '#4caf50',
+                        color: '#fff',
+                        weight: 2,
+                        opacity: 1,
+                        fillOpacity: 1
+                    }).addTo(map);
+                    
+                    anchorMarkers[anchorId].bindPopup(`<b>Anchor ${anchorId}</b>`);
+                }
+                
+                // Draw distance line from student to anchor
+                const line = L.polyline([[lat, lng], [anchorLat, anchorLng]], {
+                    color: '#999',
+                    weight: 1,
+                    opacity: 0.5,
+                    dashArray: '5, 10'
+                }).addTo(map);
+                
+                // Calculate midpoint for distance label
+                const midLat = (lat + anchorLat) / 2;
+                const midLng = (lng + anchorLng) / 2;
+                
+                // Add distance label at midpoint showing REAL distance in meters
+                const distanceLabel = L.marker([midLat, midLng], {
+                    icon: L.divIcon({
+                        className: 'distance-label',
+                        html: `${distance.toFixed(1)}m`,
+                        iconSize: null
+                    })
+                }).addTo(map);
+                
+                distanceLines.push(line);
+                distanceLines.push(distanceLabel);
+                
+                // Also draw a circle around anchor showing its range
+                const anchorRangeCircle = L.circle([anchorLat, anchorLng], {
+                    radius: distance,  // Show the actual detected distance
+                    color: '#4caf50',
+                    fillColor: '#4caf50',
+                    fillOpacity: 0.05,
+                    weight: 1,
+                    opacity: 0.3,
+                    dashArray: '3, 6'
+                }).addTo(map);
+                
+                distanceLines.push(anchorRangeCircle);
+            });
+            
+            // Change marker color if coasting
+            if (studentMarker) {
+                const newColor = data.coasting ? '#ff9800' : '#4285f4';
+                studentMarker.setStyle({
+                    fillColor: newColor,
+                    color: newColor,
+                    weight: 0,
+                    radius: 10
+                });
+            }
+            if (accuracyCircle) {
+                accuracyCircle.setStyle({
+                    color: data.coasting ? '#ff9800' : '#4285f4',
+                    fillColor: data.coasting ? '#ff9800' : '#4285f4'
+                });
+            }
+        }
+        
+        function clearDistanceLines() {
+            distanceLines.forEach(line => map.removeLayer(line));
+            distanceLines = [];
+        }
+        
+        function updateInfoBox(data) {
+            const content = document.getElementById('info-content');
+            
+            let html = `
+                <div class="info-row">
+                    <span class="info-label">Latitude:</span>
+                    <span class="info-value">${data.lat.toFixed(7)}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Longitude:</span>
+                    <span class="info-value">${data.lng.toFixed(7)}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Accuracy:</span>
+                    <span class="info-value">±${data.accuracy_m}m</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Anchors:</span>
+                    <span class="info-value">${data.anchors_used} active</span>
+                </div>
+            `;
+            
+            if (data.speed_mps > 0.05) {
+                html += `
+                    <div class="info-row">
+                        <span class="info-label">Speed:</span>
+                        <span class="info-value">${data.speed_mps.toFixed(2)} m/s</span>
+                    </div>
+                `;
+            }
+            
+            if (data.zone_name) {
+                html += `
+                    <div class="info-row">
+                        <span class="info-label">Zone:</span>
+                        <span class="info-value">${data.zone_name}</span>
+                    </div>
+                `;
+            }
+            
+            if (data.coasting) {
+                html += `
+                    <div class="info-row">
+                        <span class="info-label" style="color: #ff9800;">Status:</span>
+                        <span class="info-value" style="color: #ff9800;">Coasting</span>
+                    </div>
+                `;
+            }
+            
+            if (data.anchors_used > 0) {
+                html += `<hr style="margin: 10px 0; border: none; border-top: 1px solid #e0e0e0;">`;
+                html += `<div style="margin-bottom: 5px; font-size: 11px; font-weight: 600; color: #666;">Distance from Anchors:</div>`;
+                
+                data.anchors.forEach(anchor => {
+                    html += `
+                        <div class="info-row">
+                            <span class="info-label">Anchor ${anchor.id}:</span>
+                            <span class="info-value">${anchor.distance.toFixed(1)}m</span>
+                        </div>
+                    `;
+                });
+            }
+            
+            content.innerHTML = html;
+        }
+        
+        // Listen for position updates from parent window (for embedded iframe)
+        window.addEventListener('message', (event) => {
+            if (event.data && event.data.type === 'update-position') {
+                updatePosition(event.data.position);
+                updateInfoBox(event.data.position);
+            }
+        });
+    </script>
+</body>
+</html>
