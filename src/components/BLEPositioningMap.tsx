@@ -13,6 +13,9 @@ interface AnchorInfo {
 }
 
 interface BLEPosition {
+  target_id: number;  // NEW: Student identifier
+  target_name: string;  // NEW: Student name
+  target_color: string;  // NEW: Display color
   lat: number;
   lng: number;
   accuracy_m: number;
@@ -43,7 +46,7 @@ export default function BLEPositioningMap({
   showDiagnostics = false,
 }: BLEPositioningMapProps) {
   const [connected, setConnected] = useState(false);
-  const [position, setPosition] = useState<BLEPosition | null>(null);
+  const [positions, setPositions] = useState<BLEPosition[]>([]);  // Changed to array
   const [waiting, setWaiting] = useState<{ active_anchors: number; needed: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -80,11 +83,23 @@ export default function BLEPositioningMap({
           const data = JSON.parse(event.data);
           console.log('[BLE Map] 📍 Received:', data.type, data);
 
-          if (data.type === 'position') {
-            setPosition(data);
+          if (data.type === 'positions') {
+            // Multi-beacon mode: array of positions
+            setPositions(data.students || []);
             setWaiting(null);
             
             // Update iframe map if available
+            if (iframeRef.current?.contentWindow) {
+              iframeRef.current.contentWindow.postMessage(
+                { type: 'update-positions', students: data.students },
+                trilaterationServerUrl
+              );
+            }
+          } else if (data.type === 'position') {
+            // Single beacon mode (backward compatibility)
+            setPositions([data]);
+            setWaiting(null);
+            
             if (iframeRef.current?.contentWindow) {
               iframeRef.current.contentWindow.postMessage(
                 { type: 'update-position', position: data },
@@ -275,7 +290,7 @@ export default function BLEPositioningMap({
       )}
 
       {/* Position Info Panel (Diagnostic Mode) */}
-      {showDiagnostics && position && (
+      {showDiagnostics && positions.length > 0 && (
         <Paper
           elevation={3}
           sx={{
@@ -300,109 +315,59 @@ export default function BLEPositioningMap({
             📍 Position Diagnostics
           </Typography>
 
-          <Box display="flex" flexDirection="column" gap={0.5}>
-            <Typography variant="caption" sx={{ fontFamily: theme.typography.fontFamily.primary }}>
-              <strong>Latitude:</strong> {position.lat.toFixed(7)}
-            </Typography>
-            <Typography variant="caption" sx={{ fontFamily: theme.typography.fontFamily.primary }}>
-              <strong>Longitude:</strong> {position.lng.toFixed(7)}
-            </Typography>
-            <Typography variant="caption" sx={{ fontFamily: theme.typography.fontFamily.primary }}>
-              <strong>Accuracy:</strong> ±{position.accuracy_m}m
-              {position.warming_up && ' (warming up...)'}
-            </Typography>
-            {position.speed_mps > 0.05 && (
-              <>
-                <Typography variant="caption" sx={{ fontFamily: theme.typography.fontFamily.primary }}>
-                  <strong>Speed:</strong> {position.speed_mps.toFixed(2)} m/s
-                </Typography>
-                {position.heading_deg !== null && (
-                  <Typography variant="caption" sx={{ fontFamily: theme.typography.fontFamily.primary }}>
-                    <strong>Heading:</strong> {position.heading_deg.toFixed(1)}°
-                  </Typography>
-                )}
-              </>
-            )}
-            <Typography variant="caption" sx={{ fontFamily: theme.typography.fontFamily.primary }}>
-              <strong>Anchors:</strong> {position.anchors_used} active
-            </Typography>
-            <Typography variant="caption" sx={{ fontFamily: theme.typography.fontFamily.primary }}>
-              <strong>Residual:</strong> {position.raw_residual_m.toFixed(2)}m
-            </Typography>
-            {position.zone_name && (
-              <Box mt={0.5}>
-                <Chip
-                  label={position.zone_name}
-                  size="small"
-                  icon={<RadioButtonChecked />}
+          {positions.map((position) => (
+            <Box key={position.target_id} mb={2} pb={2} borderBottom={`1px solid ${theme.colors.neutral[200]}`}>
+              <Box display="flex" alignItems="center" gap={1} mb={1}>
+                <Box 
                   sx={{
-                    bgcolor: position.in_zone 
-                      ? theme.colors.status.success.light 
-                      : theme.colors.status.warning.light,
-                    color: position.in_zone 
-                      ? theme.colors.status.success.dark 
-                      : theme.colors.status.warning.dark,
-                    fontSize: '0.7rem',
-                    mt: 0.5,
+                    width: 10,
+                    height: 10,
+                    borderRadius: '50%',
+                    bgcolor: position.target_color,
                   }}
                 />
-                {position.snapped && position.snap_distance_m !== null && (
-                  <Typography variant="caption" color={theme.colors.neutral[500]} display="block" mt={0.5}>
-                    Snapped {position.snap_distance_m.toFixed(1)}m to zone edge
-                  </Typography>
+                <Typography variant="caption" fontWeight={theme.typography.fontWeight.bold}>
+                  {position.target_name}
+                </Typography>
+              </Box>
+
+              <Box display="flex" flexDirection="column" gap={0.5}>
+                <Typography variant="caption" sx={{ fontFamily: theme.typography.fontFamily.primary }}>
+                  <strong>Latitude:</strong> {position.lat.toFixed(7)}
+                </Typography>
+                <Typography variant="caption" sx={{ fontFamily: theme.typography.fontFamily.primary }}>
+                  <strong>Longitude:</strong> {position.lng.toFixed(7)}
+                </Typography>
+                <Typography variant="caption" sx={{ fontFamily: theme.typography.fontFamily.primary }}>
+                  <strong>Accuracy:</strong> ±{position.accuracy_m}m
+                  {position.warming_up && ' (warming up...)'}
+                </Typography>
+                {position.speed_mps > 0.05 && (
+                  <>
+                    <Typography variant="caption" sx={{ fontFamily: theme.typography.fontFamily.primary }}>
+                      <strong>Speed:</strong> {position.speed_mps.toFixed(2)} m/s
+                    </Typography>
+                    {position.heading_deg !== null && (
+                      <Typography variant="caption" sx={{ fontFamily: theme.typography.fontFamily.primary }}>
+                        <strong>Heading:</strong> {position.heading_deg.toFixed(1)}°
+                      </Typography>
+                    )}
+                  </>
+                )}
+                <Typography variant="caption" sx={{ fontFamily: theme.typography.fontFamily.primary }}>
+                  <strong>Anchors:</strong> {position.anchors_used} active
+                </Typography>
+                {position.coasting && (
+                  <Chip
+                    label="Coasting (no fresh fix)"
+                    size="small"
+                    color="warning"
+                    sx={{ mt: 0.5, fontSize: '0.65rem' }}
+                  />
                 )}
               </Box>
-            )}
-            {position.coasting && (
-              <Chip
-                label="Coasting (no fresh fix)"
-                size="small"
-                color="warning"
-                sx={{ mt: 0.5, fontSize: '0.65rem' }}
-              />
-            )}
-          </Box>
-
-          {/* Anchor List */}
-          <Box mt={1.5} pt={1.5} borderTop={`1px solid ${theme.colors.neutral[200]}`}>
-            <Typography 
-              variant="caption" 
-              fontWeight={theme.typography.fontWeight.semibold}
-              display="block" 
-              mb={0.5}
-              sx={{ fontFamily: theme.typography.fontFamily.primary }}
-            >
-              📡 Active Anchors:
-            </Typography>
-            {position.anchors.map((anchor) => (
-              <Box 
-                key={anchor.id} 
-                display="flex" 
-                justifyContent="space-between" 
-                alignItems="center"
-                sx={{ py: 0.5 }}
-              >
-                <Typography variant="caption" sx={{ fontFamily: theme.typography.fontFamily.primary }}>
-                  Anchor {anchor.id}
-                </Typography>
-                <Box display="flex" alignItems="center" gap={1}>
-                  <Chip
-                    icon={<SignalWifi4Bar />}
-                    label={`${anchor.rssi} dBm`}
-                    size="small"
-                    sx={{
-                      fontSize: '0.6rem',
-                      height: 18,
-                      '& .MuiChip-icon': { fontSize: 12 },
-                    }}
-                  />
-                  <Typography variant="caption" color={theme.colors.neutral[600]}>
-                    {anchor.distance.toFixed(1)}m
-                  </Typography>
-                </Box>
-              </Box>
-            ))}
-          </Box>
+            </Box>
+          ))}
         </Paper>
       )}
     </Box>

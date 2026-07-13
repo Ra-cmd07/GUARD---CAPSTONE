@@ -735,7 +735,7 @@ export default function ParentDashboardPage() {
                   </Box>
 
                   {/* BLE Trilateration Map */}
-                  <Paper elevation={2} sx={{ mb: 3, overflow: 'hidden', borderRadius: 2, border: '1px solid #e0e0e0' }}>
+                  <Paper elevation={2} sx={{ mb: 3, overflow: 'hidden', borderRadius: 2, border: '1px solid #e0e0e0', height: '70vh', minHeight: 500 }}>
                     <BLEPositioningMap
                       trilaterationServerUrl={import.meta.env.VITE_TRILATERATION_SERVER_URL || 'http://localhost:8080'}
                       studentName={selected?.name}
