@@ -4,6 +4,8 @@ exports.initializeWebSocket = initializeWebSocket;
 exports.getIO = getIO;
 exports.emitAttendanceEvent = emitAttendanceEvent;
 exports.emitAttendanceOverride = emitAttendanceOverride;
+exports.emitLocationUpdate = emitLocationUpdate;
+exports.emitLocationBatch = emitLocationBatch;
 const socket_io_1 = require("socket.io");
 let io = null;
 // Initialize WebSocket server
@@ -157,3 +159,57 @@ function emitAttendanceOverride(data) {
     });
 }
 exports.default = { initializeWebSocket, getIO, emitAttendanceEvent, emitAttendanceOverride };
+// ═══════════════════════════════════════════════════════════════════════
+// 🗺️  REAL-TIME LOCATION TRACKING
+// ═══════════════════════════════════════════════════════════════════════
+/**
+ * Emit real-time location update for a student
+ * Used for moving dot on map based on BLE signal strength
+ */
+function emitLocationUpdate(data) {
+    if (!io) {
+        console.warn('⚠️  WebSocket not initialized');
+        return;
+    }
+    console.log(`📍 Broadcasting location update for student ${data.studentName}`);
+    // Notify all admins and teachers
+    io.to('admin').to('teacher').emit('location:update', {
+        type: 'student_location',
+        student: {
+            id: data.studentId,
+            name: data.studentName,
+            section: data.section,
+            grade: data.grade,
+        },
+        location: {
+            position: data.position,
+            beacon: data.beacon,
+            rssi: data.rssi,
+            distance: data.distance,
+            timestamp: data.timestamp,
+        },
+    });
+    console.log(`  → Sent to admins and teachers`);
+}
+/**
+ * Emit batch location updates for multiple students
+ * More efficient when updating many students at once
+ */
+function emitLocationBatch(students) {
+    if (!io || students.length === 0)
+        return;
+    console.log(`📍 Broadcasting batch location update for ${students.length} students`);
+    io.to('admin').to('teacher').emit('location:batch', {
+        type: 'batch_update',
+        students: students.map(s => ({
+            studentId: s.studentId,
+            name: s.studentName,
+            section: s.section,
+            grade: s.grade,
+            position: s.position,
+            beaconName: s.beaconName,
+            distance: s.distance,
+            timestamp: s.timestamp,
+        })),
+    });
+}

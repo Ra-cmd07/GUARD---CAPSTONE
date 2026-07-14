@@ -143,29 +143,38 @@ async function updateAttendance(req, res) {
             return;
         }
         // Teacher can only update their section (with flexible matching)
+        // TEMPORARILY DISABLED - Allow all teachers to override
+        /*
         if (role === 'teacher' && profileId) {
-            const [tRows] = await db_1.default.execute('SELECT section FROM teachers WHERE id = ?', [profileId]);
-            const teacherSection = tRows[0]?.section;
-            if (teacherSection && existing.section) {
-                // Extract section part from teacher's section (e.g., "section 1" from "Grade 7 - section 1")
-                const teacherSectionPart = teacherSection.includes(' - ')
-                    ? teacherSection.split(' - ')[1].trim()
-                    : teacherSection;
-                // Check if sections match (exact or partial)
-                const sectionsMatch = existing.section === teacherSection || // Exact match
-                    existing.section === teacherSectionPart || // Part match
-                    existing.section.includes(teacherSectionPart) || // Contains match
-                    teacherSectionPart.includes(existing.section); // Reverse contains
-                if (!sectionsMatch) {
-                    console.log(`❌ Section mismatch: Teacher="${teacherSection}" vs Record="${existing.section}"`);
-                    res.status(403).json({ error: 'Cannot update records outside your section' });
-                    return;
-                }
-                else {
-                    console.log(`✅ Section match: Teacher="${teacherSection}" matches Record="${existing.section}"`);
-                }
+          const [tRows] = await pool.execute(
+            'SELECT section FROM teachers WHERE id = ?', [profileId]
+          ) as any[];
+          const teacherSection = (tRows as any[])[0]?.section;
+          
+          if (teacherSection && existing.section) {
+            // Extract section part from teacher's section (e.g., "section 1" from "Grade 7 - section 1")
+            const teacherSectionPart = teacherSection.includes(' - ')
+              ? teacherSection.split(' - ')[1].trim()
+              : teacherSection;
+            
+            // Check if sections match (exact or partial)
+            const sectionsMatch =
+              existing.section === teacherSection ||  // Exact match
+              existing.section === teacherSectionPart ||  // Part match
+              existing.section.includes(teacherSectionPart) ||  // Contains match
+              teacherSectionPart.includes(existing.section);  // Reverse contains
+            
+            if (!sectionsMatch) {
+              console.log(`❌ Section mismatch: Teacher="${teacherSection}" vs Record="${existing.section}"`);
+              res.status(403).json({ error: 'Cannot update records outside your section' });
+              return;
+            } else {
+              console.log(`✅ Section match: Teacher="${teacherSection}" matches Record="${existing.section}"`);
             }
+          }
         }
+        */
+        console.log(`✅ Section check disabled - Teacher can override all records`);
         await db_1.default.execute(`UPDATE attendance SET status = ?, session = ?, notes = ?, is_overridden = 1, updated_by = ?
        WHERE id = ?`, [status || existing.status, session || existing.session, notes || existing.notes,
             req.user.id, id]);
