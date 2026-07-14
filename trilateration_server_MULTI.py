@@ -35,11 +35,11 @@ ANCHOR_POSITIONS = {
 # Student/Target definitions
 STUDENTS = {
     1: {"name": "Bernie", "mac": "F7:6C:A5:11:0A:F7", "color": "#4285f4"},  # Blue
-    2: {"name": "Kurtt", "mac": "51:00:24:06:00:C4", "color": "#ea4335"},  # Red
+    2: {"name": "Student 2", "mac": "51:00:24:06:00:C4", "color": "#ea4335"},  # Red
 }
 
 # Algorithm parameters
-MIN_ANCHORS = 2  # Temporarily lowered from 3 for testing with 2 anchors
+MIN_ANCHORS = 1  # CHANGED to 1: Allow single anchor for proximity mode testing
 BROADCAST_INTERVAL = 0.2   # VERY FAST: Update map every 0.2s (5x per second)
 MEASUREMENT_TIMEOUT = 10.0  # INCREASED from 5.0 to 10.0 seconds
 COAST_TIMEOUT = 5.0         # INCREASED from 3.0 to 5.0 seconds
@@ -340,29 +340,33 @@ def calculate_position_for_target(target_id: int) -> Optional[Position]:
     
     # Check positioning mode
     if POSITIONING_MODE == "proximity":
-        # PROXIMITY MODE: Place dot at the GPS position of the nearest anchor
-        # with offset based on distance zone
+        # PROXIMITY MODE: Place dot at actual measured distance from nearest anchor
+        # This creates realistic movement: close = near anchor, far = away from anchor
         nearest_anchor = min(fresh_anchors, key=lambda a: a.distance)
         anchor_lat, anchor_lng = ANCHOR_POSITIONS[nearest_anchor.anchor_id]
         distance = nearest_anchor.distance
         
-        # Calculate offset based on distance and zone
-        # When very close (< 0.5m), keep dot centered on anchor
-        # Otherwise, scale offset for visibility (5x multiplier)
-        if distance < 0.5:
-            offset_meters = 0  # No offset - keep centered on anchor!
-        else:
-            offset_meters = distance * 5  # 5x multiplier for visible positioning
+        # Use ACTUAL measured distance (not multiplied)
+        # This makes the dot position reflect real physical distance
+        offset_meters = distance
         
-        # Apply offset in a direction (north for simplicity)
+        # Each target gets a different direction angle for visual separation
+        # Target 1: 45° (northeast), Target 2: 135° (southeast), etc.
+        import math
+        angle_degrees = 45 + (target_id - 1) * 90  # 45°, 135°, 225°, 315° for targets 1,2,3,4
+        angle_radians = math.radians(angle_degrees)
+        
+        # Convert distance and angle to lat/lng offset
         # 1 degree latitude ≈ 111,320 meters
-        offset_lat = offset_meters / 111320.0
+        # 1 degree longitude ≈ 111,320 * cos(latitude) meters
+        lat_offset = (offset_meters * math.cos(angle_radians)) / 111320.0
+        lng_offset = (offset_meters * math.sin(angle_radians)) / (111320.0 * math.cos(math.radians(anchor_lat)))
         
-        raw_lat = anchor_lat + offset_lat
-        raw_lng = anchor_lng
-        residual = 1.0
+        raw_lat = anchor_lat + lat_offset
+        raw_lng = anchor_lng + lng_offset
+        residual = distance  # Use actual distance for accuracy circle
         
-        print(f"[PROXIMITY] Target {target_id}: Nearest=Anchor{nearest_anchor.anchor_id}, distance={distance:.2f}m, zone={nearest_anchor.proximity_zone}")
+        print(f"[PROXIMITY] Target {target_id}: Nearest=Anchor{nearest_anchor.anchor_id}, distance={distance:.2f}m, zone={nearest_anchor.proximity_zone}, angle={angle_degrees}°")
     else:
         # TRILATERATION MODE: Calculate position using all anchors
         result = trilaterate(fresh_anchors)
