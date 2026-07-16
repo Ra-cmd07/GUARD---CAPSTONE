@@ -61,12 +61,7 @@ function calculatePosition(signals) {
 }
 /**
  * Calculate position offset within accuracy circle
- * Places the beacon dot at the actual distance from the anchor
- *
- * Distance zones:
- * - Close: 0-5m (stay very close to anchor)
- * - Within range: 5-15m (medium distance from anchor)
- * - Far: 15m+ (farther from anchor)
+ * When only one beacon is available, estimate position based on RSSI direction
  *
  * @param beaconLat - Beacon latitude
  * @param beaconLng - Beacon longitude
@@ -75,30 +70,24 @@ function calculatePosition(signals) {
  */
 function calculateOffsetPosition(beaconLat, beaconLng, rssi, previousPosition) {
     const distance = rssiToDistance(rssi);
-    // If we have previous position, move toward/away from beacon based on actual distance
+    // If we have previous position, move toward/away from beacon
     if (previousPosition) {
         const deltaLat = previousPosition.lat - beaconLat;
         const deltaLng = previousPosition.lng - beaconLng;
-        const currentDistanceMeters = Math.sqrt(deltaLat * deltaLat + deltaLng * deltaLng) * 111320; // to meters
-        // Calculate the direction angle from beacon to previous position
-        const angle = Math.atan2(deltaLng, deltaLat);
-        // Convert new distance from meters to degrees (approximate)
-        const distanceDeg = distance / 111320;
-        // Place dot at the actual distance from beacon in the same direction
-        // Use high alpha for more responsive distance changes
-        const alpha = 0.6; // 60% new position, 40% old position for smooth but responsive movement
-        const newLat = beaconLat + Math.cos(angle) * distanceDeg;
-        const newLng = beaconLng + Math.sin(angle) * distanceDeg;
+        const currentDistance = Math.sqrt(deltaLat * deltaLat + deltaLng * deltaLng) * 111320; // to meters
+        // Smoothly adjust position based on new distance reading
+        const ratio = distance / Math.max(currentDistance, 1);
+        const smoothing = 0.3; // 30% new, 70% old (prevents jitter)
         return {
-            lat: previousPosition.lat * (1 - alpha) + newLat * alpha,
-            lng: previousPosition.lng * (1 - alpha) + newLng * alpha,
+            lat: beaconLat + deltaLat * ratio * smoothing + deltaLat * (1 - smoothing),
+            lng: beaconLng + deltaLng * ratio * smoothing + deltaLng * (1 - smoothing),
             accuracy: Math.round(distance)
         };
     }
-    // No previous position: place at distance in a consistent initial direction
-    // Use 45-degree angle (northeast) as default starting direction
+    // No previous position: place at distance in random direction
+    // Convert meters to degrees (approximate)
     const distanceDeg = distance / 111320;
-    const angle = Math.PI / 4; // 45 degrees - consistent initial placement
+    const angle = Math.random() * Math.PI * 2;
     return {
         lat: beaconLat + Math.cos(angle) * distanceDeg,
         lng: beaconLng + Math.sin(angle) * distanceDeg,

@@ -36,6 +36,7 @@ const PORT = parseInt(process.env.PORT || '5000');
 app.use(helmet({
   contentSecurityPolicy: false, // Disable CSP to allow images from same origin
   crossOriginEmbedderPolicy: false,
+  crossOriginResourcePolicy: false, // IMPORTANT: Disable this to allow image loading!
 }));
 app.use(cors({
   origin:         process.env.CLIENT_ORIGIN || 'http://localhost:5173',
@@ -54,7 +55,19 @@ const uploadsPath = __dirname.endsWith('dist')
   : path.join(__dirname, 'uploads');       // Development: server.ts -> ./uploads
   
 console.log('📁 Serving static uploads from:', path.resolve(uploadsPath));
-app.use('/uploads', express.static(uploadsPath));
+
+// Serve uploads with proper CORS headers - FIX: Use * to allow all origins
+app.use('/uploads', (req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  res.header('Cache-Control', 'no-cache, no-store, must-revalidate');
+  if (req.method === 'OPTIONS') {
+    res.sendStatus(200);
+  } else {
+    next();
+  }
+}, express.static(uploadsPath));
 
 // ─── API Routes ────────────────────────────────────────────────────────
 app.use('/api/auth',        authRoutes);

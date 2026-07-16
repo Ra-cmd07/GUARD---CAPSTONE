@@ -9,7 +9,7 @@ exports.getKioskList = getKioskList;
 exports.getRecentScans = getRecentScans;
 const db_1 = __importDefault(require("../lib/db"));
 const socketHandler_1 = require("../src/websocket/socketHandler");
-const cloudinary_1 = require("../config/cloudinary");
+const localPhotoUpload_1 = require("../utils/localPhotoUpload");
 /**
  * Queue SMS for GSM module to send
  * Converts phone numbers to international format (+63...)
@@ -137,21 +137,14 @@ async function kioskScan(req, res) {
             qr_data || null,
         ]);
         const attendanceId = attResult.insertId;
-        // ── Upload photo to Cloudinary in BACKGROUND (async) ─────────────
+        // ── Upload photo to local storage in BACKGROUND (async) ─────────────
         if (photo_base64) {
             // Don't await - let it run in background
             (async () => {
                 try {
                     const base64Data = photo_base64.replace(/^data:image\/\w+;base64,/, '');
-                    const filename = `scan_${Date.now()}_${student.name.replace(/\s+/g, '_')}`;
-                    const uploadResult = await cloudinary_1.cloudinary.uploader.upload(`data:image/jpeg;base64,${base64Data}`, {
-                        folder: 'attendbox/scans',
-                        public_id: filename,
-                        resource_type: 'image',
-                        transformation: [{ width: 800, height: 800, crop: 'limit' }]
-                    });
-                    const photoPath = uploadResult.secure_url;
-                    console.log('📸 Photo uploaded to Cloudinary:', photoPath);
+                    const photoPath = await (0, localPhotoUpload_1.savePhotoLocally)(base64Data, student.name, 'scan');
+                    console.log('📸 Photo saved locally:', photoPath);
                     // Update attendance record with photo path
                     await db_1.default.execute('UPDATE attendance SET photo_path = ? WHERE id = ?', [photoPath, attendanceId]);
                     // Log to scan_photos table

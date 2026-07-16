@@ -5,6 +5,9 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getBleDevices = getBleDevices;
 exports.uploadBleData = uploadBleData;
+exports.getScanStatus = getScanStatus;
+exports.setScanStatus = setScanStatus;
+exports.detectBleToken = detectBleToken;
 exports.getBleDashboard = getBleDashboard;
 const db_1 = __importDefault(require("../lib/db"));
 function escapeHtml(value) {
@@ -119,6 +122,125 @@ async function uploadBleData(req, res) {
     catch (err) {
         console.error('uploadBleData error:', err);
         res.status(500).json({ error: 'Unable to save BLE data' });
+    }
+}
+// Track which kiosks are currently scanning for BLE tokens
+// Key: kiosk_id, Value: { scanning: boolean, lastUpdate: timestamp }
+const kioskScanStatus = new Map();
+/**
+ * Get BLE scan status for a kiosk
+ * ESP32 polls this to know if it should scan
+ */
+async function getScanStatus(req, res) {
+    try {
+        const kioskId = parseInt(req.query.kiosk_id) || 1;
+        const now = Date.now();
+        // Get status for this kiosk
+        const status = kioskScanStatus.get(kioskId);
+        // If no status or too old (>10 seconds), assume not scanning
+        if (!status || (now - status.lastUpdate) > 10000) {
+            res.json({ scanning: false, kiosk_id: kioskId });
+            return;
+        }
+        res.json({
+            scanning: status.scanning,
+            kiosk_id: kioskId,
+            age_ms: now - status.lastUpdate
+        });
+    }
+    catch (err) {
+        console.error('[BLE Scan Status] Error:', err);
+        res.status(500).json({ error: 'Failed to get scan status' });
+    }
+}
+/**
+ * Set BLE scan status for a kiosk
+ * Kiosk calls this when BLE button is clicked or scanning stops
+ */
+async function setScanStatus(req, res) {
+    try {
+        const { kiosk_id, scanning } = req.body;
+        if (typeof kiosk_id !== 'number' || typeof scanning !== 'boolean') {
+            res.status(400).json({
+                error: 'Invalid request: kiosk_id (number) and scanning (boolean) required'
+            });
+            return;
+        }
+        // Update status
+        kioskScanStatus.set(kiosk_id, {
+            scanning,
+            lastUpdate: Date.now()
+        });
+        console.log(`[BLE Scan Status] Kiosk ${kiosk_id}: ${scanning ? 'STARTED' : 'STOPPED'} scanning`);
+        res.json({
+            success: true,
+            kiosk_id,
+            scanning,
+            message: scanning ? 'BLE scanning enabled' : 'BLE scanning disabled'
+        });
+    }
+    catch (err) {
+        console.error('[BLE Scan Status] Error:', err);
+        res.status(500).json({ error: 'Failed to set scan status' });
+    }
+}
+/**
+ * ESP32 BLE Token Attendance Detection
+ * Receives BLE beacon detection from ESP32 and creates pending attendance
+ */
+async function detectBleToken(req, res) {
+    try {
+        const { student_id, student_name, mac, rssi, distance, kiosk_id, gate_name } = req.body;
+        // Validate required fields
+        if (!student_id || !student_name || !mac) {
+            res.status(400).json({
+                error: 'Missing required fields: student_id, student_name, mac'
+            });
+            return;
+        }
+        console.log(`[BLE Token] Detection from ESP32: ${student_name} (${mac}) at ${distance}m`);
+        // Check if student exists
+        const [students] = await db_1.default.execute(`SELECT id, name, grade, section FROM students WHERE id = ?`, [student_id]);
+        if (students.length === 0) {
+            res.status(404).json({ error: 'Student not found in database' });
+            return;
+        }
+        const student = students[0];
+        // Check for recent pending detection (last 30 seconds) to prevent duplicates
+        // Note: using detected_at (existing column) instead of created_at
+        const [recentDetections] = await db_1.default.execute(`SELECT id FROM ble_detections 
+       WHERE student_id = ? 
+       AND status = 'pending' 
+       AND detected_at > DATE_SUB(NOW(), INTERVAL 30 SECOND)`, [student_id]);
+        if (recentDetections.length > 0) {
+            console.log(`[BLE Token] Duplicate detection for ${student_name} - ignoring`);
+            res.json({
+                success: true,
+                message: 'Detection already exists (within 30 seconds)',
+                duplicate: true
+            });
+            return;
+        }
+        // Insert BLE detection record (matching existing table structure)
+        // Table has: beacon_id, location_name instead of kiosk_id, gate_name
+        const [result] = await db_1.default.execute(`INSERT INTO ble_detections 
+       (student_id, student_name, mac_address, rssi, beacon_id, location_name, status)
+       VALUES (?, ?, ?, ?, ?, ?, 'pending')`, [student_id, student_name, mac, rssi || null, kiosk_id || 1, gate_name || 'Main Gate']);
+        const detectionId = result.insertId;
+        console.log(`[BLE Token] ✅ Detection recorded: ID ${detectionId} for ${student_name}`);
+        console.log(`[BLE Token] Status: PENDING (waiting for kiosk auto-approval)`);
+        res.status(201).json({
+            success: true,
+            message: 'BLE detection recorded',
+            id: detectionId,
+            student_id,
+            student_name,
+            status: 'pending'
+        });
+    }
+    catch (err) {
+        console.error('[BLE Token] Error:', err);
+        res.status(500).json({ error: 'Failed to process BLE detection' });
     }
 }
 async function getBleDashboard(req, res) {

@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import pool from '../lib/db';
-import { cloudinary } from '../config/cloudinary';
+import { savePhotoLocally } from '../utils/localPhotoUpload';
 
 /**
  * Queue SMS for GSM module to send
@@ -118,28 +118,17 @@ export async function approveDetection(req: Request, res: Response): Promise<voi
       section: student.section
     });
 
-    // Handle photo upload to Cloudinary if provided
+    // Handle photo upload to local storage if provided
     let photoPath = null;
     if (photo_base64) {
       try {
         const base64Data = photo_base64.replace(/^data:image\/\w+;base64,/, '');
-        const filename = `ble_approved_${Date.now()}_${student.name.replace(/\s+/g, '_')}`;
         
-        // Upload to Cloudinary
-        const uploadResult = await cloudinary.uploader.upload(
-          `data:image/jpeg;base64,${base64Data}`,
-          {
-            folder: 'attendbox/scans',
-            public_id: filename,
-            resource_type: 'image',
-            transformation: [{ width: 800, height: 800, crop: 'limit' }]
-          }
-        );
-        
-        photoPath = uploadResult.secure_url;
-        console.log('📸 BLE photo uploaded to Cloudinary:', photoPath);
+        // Save to local uploads folder
+        photoPath = await savePhotoLocally(base64Data, student.name, 'ble_approved');
+        console.log('📸 BLE photo saved locally:', photoPath);
       } catch (err) {
-        console.error('Failed to upload BLE photo to Cloudinary:', err);
+        console.error('Failed to save BLE photo locally:', err);
       }
     }
 

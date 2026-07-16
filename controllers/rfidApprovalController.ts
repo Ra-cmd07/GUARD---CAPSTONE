@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import path from 'path';
 import fs from 'fs';
 import pool from '../lib/db';
-import { cloudinary } from '../config/cloudinary';
+import { savePhotoLocally } from '../utils/localPhotoUpload';
 
 // Lightweight SMS helper
 async function sendSms(phone: string, message: string): Promise<boolean> {
@@ -230,25 +230,14 @@ export async function approveRFID(req: Request, res: Response): Promise<void> {
 
     const attendanceId = (attResult as any).insertId;
 
-    // Upload photo to Cloudinary in BACKGROUND (async)
+    // Upload photo to local storage in BACKGROUND (async)
     if (photo_base64) {
       (async () => {
         try {
           const base64Data = photo_base64.replace(/^data:image\/\w+;base64,/, '');
-          const filename = `rfid_${Date.now()}_${student.name.replace(/\s+/g, '_')}`;
           
-          const uploadResult = await cloudinary.uploader.upload(
-            `data:image/jpeg;base64,${base64Data}`,
-            {
-              folder: 'attendbox/scans',
-              public_id: filename,
-              resource_type: 'image',
-              transformation: [{ width: 800, height: 800, crop: 'limit' }]
-            }
-          );
-          
-          const photoPath = uploadResult.secure_url;
-          console.log('📸 RFID photo uploaded to Cloudinary:', photoPath);
+          const photoPath = await savePhotoLocally(base64Data, student.name, 'rfid');
+          console.log('📸 RFID photo saved locally:', photoPath);
 
           // Update attendance record with photo path
           await pool.execute(
@@ -256,7 +245,6 @@ export async function approveRFID(req: Request, res: Response): Promise<void> {
             [photoPath, attendanceId]
           );
 
-          // Log photo
           // Log photo
           await pool.execute(
             'INSERT INTO scan_photos (attendance_id, student_name, status, photo_path) VALUES (?, ?, ?, ?)',

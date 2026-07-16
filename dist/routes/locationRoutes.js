@@ -7,6 +7,7 @@ const router = (0, express_1.Router)();
 // Real-time BLE location updates
 router.post('/ble-update', locationController_1.updateBleLocation);
 router.post('/ble-batch', locationController_1.updateBleLocationBatch);
+router.post('/trilateration-update', locationController_1.updateTrilaterationPosition); // NEW: For trilateration server
 // Get live student positions
 router.get('/students-live', authMiddleware_1.protect, locationController_1.getLiveStudentLocations);
 // Get specific student location (for parent dashboard)

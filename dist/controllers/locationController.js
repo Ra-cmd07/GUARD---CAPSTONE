@@ -10,6 +10,7 @@ exports.getStudentLocation = getStudentLocation;
 exports.getBeacons = getBeacons;
 exports.deactivateStudentLocation = deactivateStudentLocation;
 exports.clearStudentLocationHistory = clearStudentLocationHistory;
+exports.updateTrilaterationPosition = updateTrilaterationPosition;
 const db_1 = __importDefault(require("../lib/db"));
 const blePositioning_1 = require("../utils/blePositioning");
 const socketHandler_1 = require("../src/websocket/socketHandler");
@@ -410,5 +411,36 @@ async function clearStudentLocationHistory(req, res) {
     catch (err) {
         console.error('Clear location history error:', err);
         res.status(500).json({ error: 'Failed to clear location history' });
+    }
+}
+/**
+ * POST /api/location/trilateration-update
+ * Receive pre-calculated position from trilateration server
+ */
+async function updateTrilaterationPosition(req, res) {
+    try {
+        const { studentId, latitude, longitude, accuracy, locationName, locationType, distance, zone } = req.body;
+        if (!studentId || !latitude || !longitude) {
+            res.status(400).json({ error: 'studentId, latitude, and longitude are required' });
+            return;
+        }
+        // Format coordinates as "lat,lng" string
+        const coordinates = `${latitude},${longitude}`;
+        // Store in database
+        await db_1.default.execute(`INSERT INTO student_locations 
+       (student_id, location_name, location_type, coordinates, signal_strength, distance, is_active)
+       VALUES (?, ?, ?, ?, ?, ?, 1)`, [
+            studentId,
+            locationName || zone || 'BLE_TRACKING',
+            locationType || 'ble_tracking',
+            coordinates,
+            accuracy || 0, // Use accuracy as signal_strength
+            distance || 0
+        ]);
+        res.json({ success: true });
+    }
+    catch (err) {
+        console.error('Trilateration update error:', err);
+        res.status(500).json({ error: 'Server error' });
     }
 }

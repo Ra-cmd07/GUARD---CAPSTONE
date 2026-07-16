@@ -7,7 +7,7 @@ exports.getPendingDetections = getPendingDetections;
 exports.approveDetection = approveDetection;
 exports.rejectDetection = rejectDetection;
 const db_1 = __importDefault(require("../lib/db"));
-const cloudinary_1 = require("../config/cloudinary");
+const localPhotoUpload_1 = require("../utils/localPhotoUpload");
 /**
  * Queue SMS for GSM module to send
  * Converts phone numbers to international format (+63...)
@@ -97,24 +97,17 @@ async function approveDetection(req, res) {
             grade: student.grade,
             section: student.section
         });
-        // Handle photo upload to Cloudinary if provided
+        // Handle photo upload to local storage if provided
         let photoPath = null;
         if (photo_base64) {
             try {
                 const base64Data = photo_base64.replace(/^data:image\/\w+;base64,/, '');
-                const filename = `ble_approved_${Date.now()}_${student.name.replace(/\s+/g, '_')}`;
-                // Upload to Cloudinary
-                const uploadResult = await cloudinary_1.cloudinary.uploader.upload(`data:image/jpeg;base64,${base64Data}`, {
-                    folder: 'attendbox/scans',
-                    public_id: filename,
-                    resource_type: 'image',
-                    transformation: [{ width: 800, height: 800, crop: 'limit' }]
-                });
-                photoPath = uploadResult.secure_url;
-                console.log('📸 BLE photo uploaded to Cloudinary:', photoPath);
+                // Save to local uploads folder
+                photoPath = await (0, localPhotoUpload_1.savePhotoLocally)(base64Data, student.name, 'ble_approved');
+                console.log('📸 BLE photo saved locally:', photoPath);
             }
             catch (err) {
-                console.error('Failed to upload BLE photo to Cloudinary:', err);
+                console.error('Failed to save BLE photo locally:', err);
             }
         }
         // Calculate Philippines time (UTC+8)
