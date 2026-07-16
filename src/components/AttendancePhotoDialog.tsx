@@ -1,6 +1,6 @@
 import { Dialog, DialogTitle, DialogContent, DialogActions, Button, Box, Typography, Chip, IconButton } from '@mui/material';
 import { Close, Download, ZoomIn, ZoomOut } from '@mui/icons-material';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { format } from 'date-fns';
 import theme from '../theme/professionalTheme';
 
@@ -24,6 +24,14 @@ export default function AttendancePhotoDialog({
   method,
 }: AttendancePhotoDialogProps) {
   const [zoom, setZoom] = useState(100);
+  const [imageError, setImageError] = useState(false);
+  const [imageLoaded, setImageLoaded] = useState(false);
+
+  // Reset error state when photoUrl changes
+  useEffect(() => {
+    setImageError(false);
+    setImageLoaded(false);
+  }, [photoUrl]);
 
   // Debug logging
   console.log('🎭 AttendancePhotoDialog props:', {
@@ -49,16 +57,27 @@ export default function AttendancePhotoDialog({
 
   if (!photoUrl) return null;
 
+  // Trim any whitespace from photoUrl
+  const cleanPhotoUrl = photoUrl.trim();
+
   const baseUrl = (import.meta.env.VITE_API_URL || 'http://localhost:5000').replace('/api', '');
   
-  // Check if photoUrl is already a full Cloudinary URL
-  const fullPhotoUrl = (photoUrl && photoUrl.startsWith('http')) 
-    ? photoUrl  // Use Cloudinary URL as-is
-    : `${baseUrl}${photoUrl}`; // Legacy local URL
+  console.log('🔧 DEBUG baseUrl calculation:');
+  console.log('   VITE_API_URL:', import.meta.env.VITE_API_URL);
+  console.log('   baseUrl after replace:', baseUrl);
+  console.log('   photoUrl (raw):', JSON.stringify(photoUrl));
+  console.log('   photoUrl (clean):', JSON.stringify(cleanPhotoUrl));
+  
+  // Check if photoUrl is Cloudinary URL or local path
+  let fullPhotoUrl = (cleanPhotoUrl && cleanPhotoUrl.startsWith('http')) 
+    ? cleanPhotoUrl  // Use Cloudinary CDN URL directly
+    : `${baseUrl}${cleanPhotoUrl}`; // Local storage URL
+  
+  // NO cache-busting - it causes CORS issues
+  // fullPhotoUrl = `${fullPhotoUrl}?t=${Date.now()}`;
 
-  console.log('🔗 Final photo URL being used in <img>:', fullPhotoUrl);
-  console.log('🔗 Original photoUrl prop:', photoUrl);
-  console.log('🔗 Starts with http?:', photoUrl?.startsWith('http'));
+  console.log('🔗 Final photo URL:', fullPhotoUrl);
+  console.log('🔗 Source:', cleanPhotoUrl?.startsWith('http') ? 'Cloudinary CDN ☁️' : 'Local Storage 💾');
 
   return (
     <Dialog 
@@ -166,14 +185,19 @@ export default function AttendancePhotoDialog({
             src={fullPhotoUrl}
             alt="Attendance photo"
             style={{
-              width: `${zoom}%`,
-              height: 'auto',
+              maxWidth: '100%',
+              maxHeight: '100%',
               objectFit: 'contain',
-              transition: 'width 0.2s ease',
             }}
             onError={(e) => {
-              const target = e.target as HTMLImageElement;
-              target.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><text x="50%" y="50%" text-anchor="middle" fill="gray">Photo not available</text></svg>';
+              console.error('❌ Photo failed to load!');
+              console.error('   Failed URL:', (e.target as HTMLImageElement).src);
+              console.error('   Original photoUrl prop:', photoUrl);
+              console.error('   baseUrl:', baseUrl);
+              console.error('   Error event:', e);
+            }}
+            onLoad={() => {
+              console.log('✅ Photo loaded successfully:', fullPhotoUrl);
             }}
           />
         </Box>

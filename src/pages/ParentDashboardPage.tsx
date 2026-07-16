@@ -46,9 +46,14 @@ export default function ParentDashboardPage() {
   const showSnack = (msg: string, sev: any = 'info') => setSnack({ open: true, msg, sev });
 
   const handleViewPhoto = (record: AttendanceRecord) => {
+    console.log('====================================');
     console.log('🖼️ Parent viewing photo for:', record.student_name);
-    console.log('📸 Photo path:', record.photo_path);
-    console.log('📋 Full record:', record);
+    console.log('📸 Photo path from record:', record.photo_path);
+    console.log('📸 Photo path type:', typeof record.photo_path);
+    console.log('📸 Photo path is truthy:', !!record.photo_path);
+    console.log('📸 Photo path length:', record.photo_path?.length);
+    console.log('📋 Full record:', JSON.stringify(record, null, 2));
+    console.log('====================================');
     
     setPhotoDialog({
       open: true,
@@ -62,7 +67,8 @@ export default function ParentDashboardPage() {
 
   // Load children
   useEffect(() => {
-    api.get('/students')
+    // Add cache-busting timestamp to force fresh data
+    api.get(`/students?_t=${Date.now()}`)
       .then(r => {
         const kids = r.data as Student[];
         setChildren(kids);
@@ -999,6 +1005,7 @@ export default function ParentDashboardPage() {
 
       {/* Photo Viewer Dialog */}
       <AttendancePhotoDialog
+        key={`${photoDialog.photoUrl}-${Date.now()}`} // Force complete re-render with timestamp
         open={photoDialog.open}
         onClose={() => setPhotoDialog({ ...photoDialog, open: false })}
         photoUrl={photoDialog.photoUrl}
