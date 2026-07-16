@@ -7,6 +7,7 @@ import {
   getBeacons,
   deactivateStudentLocation,
   clearStudentLocationHistory,
+  updateTrilaterationPosition,
 } from '../controllers/locationController';
 import { protect } from '../middleware/authMiddleware';
 
@@ -15,6 +16,7 @@ const router = Router();
 // Real-time BLE location updates
 router.post('/ble-update', updateBleLocation);
 router.post('/ble-batch', updateBleLocationBatch);
+router.post('/trilateration-update', updateTrilaterationPosition);  // NEW: For trilateration server
 
 // Get live student positions
 router.get('/students-live', protect, getLiveStudentLocations);
