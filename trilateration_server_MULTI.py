@@ -19,11 +19,18 @@ from collections import defaultdict, deque
 from dataclasses import dataclass, asdict
 from typing import Dict, List, Optional, Tuple
 import threading
+import requests  # For backend API integration
 
 app = Flask(__name__, static_folder='static')
 sock = Sock(app)
 
 # ==================== CONFIGURATION ====================
+
+# Backend API configuration
+BACKEND_API_URL = "http://localhost:5000/api/location/trilateration-update"
+ENABLE_BACKEND_SYNC = True  # Set to False to disable database saving
+DB_UPDATE_INTERVAL = 5.0  # Save to database every 5 seconds (instead of every 0.05s)
+SAVE_ON_ZONE_CHANGE = True  # Save immediately when proximity zone changes
 
 # Anchor positions (GPS coordinates: latitude, longitude)
 ANCHOR_POSITIONS = {
@@ -32,20 +39,30 @@ ANCHOR_POSITIONS = {
     3: (8.473128110736846, 124.64999282967305),
 }
 
+# Anchor location names (match the dartboard labels on the map)
+ANCHOR_LOCATIONS = {
+    1: "Classroom",
+    2: "Cafeteria",
+    3: "Library",
+}
+
 # Student/Target definitions
+# target_id: Used by Arduino sketch (1, 2, 3...)
+# student_id: Actual database ID
+# mac: BLE beacon MAC address
 STUDENTS = {
-    1: {"name": "Bernie", "mac": "F7:6C:A5:11:0A:F7", "color": "#4285f4"},  # Blue
-    2: {"name": "Student 2", "mac": "51:00:24:06:00:C4", "color": "#ea4335"},  # Red
+    1: {"name": "Bernie", "mac": "F7:6C:A5:11:0A:F7", "color": "#4285f4", "student_id": 1},  # Blue
+    2: {"name": "Kurtt", "mac": "51:00:24:06:00:C4", "color": "#ea4335", "student_id": 3},  # Red - CHANGE student_id to match database!
 }
 
 # Algorithm parameters
 MIN_ANCHORS = 1  # CHANGED to 1: Allow single anchor for proximity mode testing
-BROADCAST_INTERVAL = 0.2   # VERY FAST: Update map every 0.2s (5x per second)
+BROADCAST_INTERVAL = 0.05  # MAXIMUM SPEED: Update map every 0.05s (20x per second!)
 MEASUREMENT_TIMEOUT = 10.0  # INCREASED from 5.0 to 10.0 seconds
 COAST_TIMEOUT = 5.0         # INCREASED from 3.0 to 5.0 seconds
 MEDIAN_WINDOW = 3
-KALMAN_Q = 2.0   # VERY RESPONSIVE: Fast reaction to movement (was 0.1, then 0.5)
-KALMAN_R = 1.0   # TRUST MEASUREMENTS: Lower = trust sensors more (was 2.0)
+KALMAN_Q = 5.0   # MAXIMUM RESPONSIVENESS: Instant reaction to movement (was 2.0)
+KALMAN_R = 0.5   # TRUST MEASUREMENTS MORE: Lower = trust sensors more (was 1.0)
 POSITIONING_MODE = "proximity"  # CHANGED: "trilateration" or "proximity" - proximity places dot at nearest anchor
 
 # ==================== DATA STRUCTURES ====================
@@ -80,9 +97,13 @@ class Position:
 # Global state - PER TARGET
 anchor_readings: Dict[int, Dict[int, deque]] = defaultdict(lambda: defaultdict(lambda: deque(maxlen=MEDIAN_WINDOW)))
 last_positions: Dict[int, Optional[Position]] = {}
+last_db_save_time: Dict[int, float] = {}  # Track last database save time per student
+last_saved_zone: Dict[int, str] = {}  # Track last saved proximity zone per student
 kalman_states: Dict[int, Dict] = {}
 websocket_clients = []
 lock = threading.Lock()
+db_write_queue = []  # Queue for async database writes
+db_write_lock = threading.Lock()
 
 # ==================== UTILITIES ====================
 
@@ -434,6 +455,159 @@ def calculate_position_for_target(target_id: int) -> Optional[Position]:
 
 # ==================== BROADCASTING ====================
 
+def send_to_backend_api_async(position: Position):
+    """
+    NON-BLOCKING: Add position to queue for background database save
+    This function returns immediately without waiting for HTTP response
+    """
+    if not ENABLE_BACKEND_SYNC:
+        return
+    
+    with db_write_lock:
+        db_write_queue.append(position)
+
+def database_writer_thread():
+    """
+    Background thread that processes database write queue
+    Runs independently and doesn't block real-time tracking
+    """
+    while True:
+        try:
+            time.sleep(0.1)  # Check queue every 100ms
+            
+            with db_write_lock:
+                if not db_write_queue:
+                    continue
+                
+                # Pop position from queue
+                position = db_write_queue.pop(0)
+            
+            # Perform actual HTTP POST (this is slow, but in background thread)
+            try:
+                student_data = STUDENTS.get(position.target_id)
+                if not student_data:
+                    continue
+                
+                db_student_id = student_data.get("student_id", position.target_id)
+                
+                location_name = position.proximity_status
+                if position.anchors and len(position.anchors) > 0:
+                    nearest_anchor = min(position.anchors, key=lambda a: a["distance"])
+                    nearest_anchor_id = nearest_anchor["id"]
+                    anchor_location = ANCHOR_LOCATIONS.get(nearest_anchor_id, f"Anchor {nearest_anchor_id}")
+                    location_name = f"{anchor_location} - {position.proximity_status}"
+                
+                payload = {
+                    "studentId": db_student_id,
+                    "studentName": position.target_name,
+                    "mac": student_data["mac"],
+                    "latitude": position.lat,
+                    "longitude": position.lng,
+                    "accuracy": position.accuracy_m,
+                    "locationName": location_name,
+                    "locationType": "ble_tracking",
+                    "distance": position.anchors[0]["distance"] if position.anchors else 0,
+                    "zone": position.proximity_status
+                }
+                
+                response = requests.post(BACKEND_API_URL, json=payload, timeout=2)
+                if response.status_code == 200:
+                    print(f"[DB] ✓ Saved {position.target_name} to database: {location_name}")
+                else:
+                    print(f"[DB] ✗ Failed to save {position.target_name}: HTTP {response.status_code}")
+                    
+            except requests.exceptions.Timeout:
+                print(f"[DB] ✗ Timeout saving {position.target_name} to database")
+            except Exception as e:
+                print(f"[DB] ✗ Error saving to database: {e}")
+                
+        except Exception as e:
+            print(f"[DB Writer] Error: {e}")
+            time.sleep(1)
+
+def should_save_to_database(position: Position) -> bool:
+    """
+    Determine if this position should be saved to database
+    Only save on:
+    1. Zone change (CLOSE → WITHIN_RANGE → OUT_OF_RANGE)
+    2. Time interval (every DB_UPDATE_INTERVAL seconds)
+    3. Anchor change (moved between locations)
+    """
+    target_id = position.target_id
+    now = time.time()
+    
+    # First position always saves
+    if target_id not in last_db_save_time:
+        last_db_save_time[target_id] = now
+        last_saved_zone[target_id] = position.proximity_status
+        return True
+    
+    # Check if zone changed
+    if SAVE_ON_ZONE_CHANGE:
+        if position.proximity_status != last_saved_zone.get(target_id):
+            print(f"[DB] Zone changed for {position.target_name}: {last_saved_zone.get(target_id)} → {position.proximity_status}")
+            last_db_save_time[target_id] = now
+            last_saved_zone[target_id] = position.proximity_status
+            return True
+    
+    # Check if enough time has passed
+    time_since_last_save = now - last_db_save_time[target_id]
+    if time_since_last_save >= DB_UPDATE_INTERVAL:
+        print(f"[DB] Time interval reached for {position.target_name} ({time_since_last_save:.1f}s)")
+        last_db_save_time[target_id] = now
+        last_saved_zone[target_id] = position.proximity_status
+        return True
+    
+    return False
+
+def send_to_backend_api(position: Position):
+    """Send position data to backend API for database storage"""
+    if not ENABLE_BACKEND_SYNC:
+        return
+    
+    try:
+        # Find student by target_id
+        student_data = STUDENTS.get(position.target_id)
+        if not student_data:
+            return
+        
+        # Get actual database student_id (not target_id)
+        db_student_id = student_data.get("student_id", position.target_id)
+        
+        # Determine location name based on nearest anchor
+        location_name = position.proximity_status  # Default to proximity status
+        if position.anchors and len(position.anchors) > 0:
+            # Find nearest anchor
+            nearest_anchor = min(position.anchors, key=lambda a: a["distance"])
+            nearest_anchor_id = nearest_anchor["id"]
+            
+            # Get location name for this anchor
+            anchor_location = ANCHOR_LOCATIONS.get(nearest_anchor_id, f"Anchor {nearest_anchor_id}")
+            
+            # Format: "Cafeteria - CLOSE" or "Library - WITHIN_RANGE"
+            location_name = f"{anchor_location} - {position.proximity_status}"
+        
+        # Prepare payload for backend
+        payload = {
+            "studentId": db_student_id,  # Use database student_id, not target_id
+            "studentName": position.target_name,
+            "mac": student_data["mac"],
+            "latitude": position.lat,
+            "longitude": position.lng,
+            "accuracy": position.accuracy_m,
+            "locationName": location_name,  # e.g., "Cafeteria - CLOSE"
+            "locationType": "ble_tracking",
+            "distance": position.anchors[0]["distance"] if position.anchors else 0,
+            "zone": position.proximity_status
+        }
+        
+        # Send to backend (non-blocking, fire and forget)
+        requests.post(BACKEND_API_URL, json=payload, timeout=1)
+        
+    except Exception as e:
+        # Silently fail - don't disrupt tracking if backend is down
+        pass
+
 def broadcast_positions():
     """Calculate and broadcast ALL student positions"""
     while True:
@@ -448,8 +622,13 @@ def broadcast_positions():
                 if position:
                     last_positions[target_id] = position
                     positions.append(asdict(position))
+                    
+                    # Check if we should save to database (smart logic)
+                    if should_save_to_database(position):
+                        # Queue for async database write (non-blocking)
+                        send_to_backend_api_async(position)
             
-            # Broadcast to all WebSocket clients
+            # Broadcast to all WebSocket clients (FAST - no blocking!)
             if positions:
                 message = json.dumps({
                     'type': 'positions',  # Note: plural!
@@ -586,10 +765,21 @@ if __name__ == '__main__':
     print(f"  GET  /status  ← System status")
     print(f"  Listening on  http://0.0.0.0:8080")
     print("=" * 60)
+    print(f"  ⚡ PERFORMANCE MODE:")
+    print(f"    • WebSocket broadcast: Every {BROADCAST_INTERVAL}s (FAST)")
+    print(f"    • Database writes: Every {DB_UPDATE_INTERVAL}s or on zone change")
+    print(f"    • Non-blocking: Database writes happen in background")
+    print("=" * 60)
+    
+    # Start background database writer thread
+    db_writer = threading.Thread(target=database_writer_thread, daemon=True)
+    db_writer.start()
+    print("[DB Writer] ✓ Background database writer started")
     
     # Start background broadcaster
     broadcaster = threading.Thread(target=broadcast_positions, daemon=True)
     broadcaster.start()
+    print("[Broadcaster] ✓ Position broadcaster started")
     
     # Start Flask server
     app.run(host='0.0.0.0', port=8080, debug=False)

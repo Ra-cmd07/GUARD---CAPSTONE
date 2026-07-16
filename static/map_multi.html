@@ -146,19 +146,15 @@
         }
         
         .anchor-label {
-            background: rgba(76, 175, 80, 0.95) !important;
-            padding: 4px 10px !important;
+            background: rgba(255, 255, 255, 0.95) !important;
+            padding: 5px 12px !important;
             border-radius: 4px !important;
             font-size: 12px !important;
             font-weight: 700 !important;
-            color: white !important;
-            border: 2px solid white !important;
+            color: #333 !important;
+            border: 2px solid !important;
             box-shadow: 0 2px 6px rgba(0,0,0,0.3) !important;
             white-space: nowrap !important;
-        }
-        
-        .anchor-label::before {
-            border-top-color: rgba(76, 175, 80, 0.95) !important;
         }
         
         .leaflet-control-scale {
@@ -191,6 +187,11 @@
             margin-bottom: 5px;
             font-size: 11px;
         }
+        
+        .student-pin-marker {
+            background: none !important;
+            border: none !important;
+        }
     </style>
 </head>
 <body>
@@ -211,6 +212,12 @@
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
+        // Read URL parameter for filtering
+        const urlParams = new URLSearchParams(window.location.search);
+        const filterStudent = urlParams.get('filter');  // e.g., "Kurtt" or null for all students
+        
+        console.log('[MAP] Filter parameter:', filterStudent);
+        
         // Initialize map with scale
         const map = L.map('map', {
             zoomControl: true,
@@ -237,6 +244,22 @@
         let accuracyCircles = {};  // {target_id: circle}
         let distanceLines = {};  // {target_id: [lines]}
         let anchorMarkers = {};
+        let anchorDartboards = {};  // {anchor_id: [circles]} for dartboard effect
+        
+        // Anchor definitions with names and colors
+        const ANCHOR_CONFIGS = {
+            1: { name: 'Classroom', color: '#4caf50' },  // Green
+            2: { name: 'Cafeteria', color: '#4caf50' },  // Green
+            3: { name: 'Library', color: '#4caf50' }     // Green
+        };
+        
+        // Helper function: Check if student should be displayed
+        function shouldDisplayStudent(studentName) {
+            if (!filterStudent) {
+                return true;  // No filter = show all students
+            }
+            return studentName === filterStudent;  // Only show matching student
+        }
         
         // WebSocket connection
         const ws = new WebSocket(`ws://${window.location.host}/ws`);
@@ -268,8 +291,15 @@
                     return;
                 }
                 
-                // Update ALL students
-                data.students.forEach(studentPosition => {
+                // FILTER students based on URL parameter
+                let filteredStudents = data.students;
+                if (filterStudent) {
+                    filteredStudents = data.students.filter(s => s.target_name === filterStudent);
+                    console.log(`[WS] Filtered to ${filteredStudents.length} student(s) matching "${filterStudent}"`);
+                }
+                
+                // Update ONLY filtered students
+                filteredStudents.forEach(studentPosition => {
                     // Validate each student position has required fields
                     if (!studentPosition.target_id || !studentPosition.lat || !studentPosition.lng) {
                         console.warn('[WS] Incomplete student data:', studentPosition);
@@ -277,8 +307,31 @@
                     }
                     updateStudentPosition(studentPosition);
                 });
-                updateInfoBox(data.students);
-                updateLegend(data.students);
+                updateInfoBox(filteredStudents);
+                updateLegend(filteredStudents);
+                
+                // REMOVE markers for students not in the filtered list
+                if (filterStudent) {
+                    const filteredIds = new Set(filteredStudents.map(s => s.target_id));
+                    
+                    // Remove student markers not in filtered list
+                    Object.keys(studentMarkers).forEach(targetId => {
+                        if (!filteredIds.has(parseInt(targetId))) {
+                            if (studentMarkers[targetId]) {
+                                map.removeLayer(studentMarkers[targetId]);
+                                delete studentMarkers[targetId];
+                            }
+                            if (accuracyCircles[targetId]) {
+                                map.removeLayer(accuracyCircles[targetId]);
+                                delete accuracyCircles[targetId];
+                            }
+                            if (distanceLines[targetId]) {
+                                distanceLines[targetId].forEach(item => map.removeLayer(item));
+                                delete distanceLines[targetId];
+                            }
+                        }
+                    });
+                }
             }
         };
         
@@ -317,21 +370,50 @@
                 return;
             }
             
-            // Update or create student marker
+            // Update or create student marker (PIN STYLE)
             if (studentMarkers[targetId]) {
                 studentMarkers[targetId].setLatLng([lat, lng]);
-                studentMarkers[targetId].setStyle({
-                    fillColor: data.coasting ? '#ff9800' : color,
-                    color: data.coasting ? '#ff9800' : color
-                });
+                // Update icon color if coasting
+                const iconHtml = `
+                    <div style="position: relative;">
+                        <svg width="32" height="42" viewBox="0 0 32 42" style="filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3));">
+                            <path d="M16 0C7.2 0 0 7.2 0 16c0 8.8 16 26 16 26s16-17.2 16-26c0-8.8-7.2-16-16-16z" 
+                                  fill="${data.coasting ? '#ff9800' : color}" 
+                                  stroke="#fff" 
+                                  stroke-width="2"/>
+                            <circle cx="16" cy="16" r="6" fill="#fff"/>
+                        </svg>
+                    </div>
+                `;
+                studentMarkers[targetId].setIcon(L.divIcon({
+                    html: iconHtml,
+                    className: 'student-pin-marker',
+                    iconSize: [32, 42],
+                    iconAnchor: [16, 42],
+                    popupAnchor: [0, -42]
+                }));
             } else {
-                studentMarkers[targetId] = L.circleMarker([lat, lng], {
-                    radius: 10,
-                    fillColor: color,
-                    color: color,
-                    weight: 0,
-                    opacity: 1,
-                    fillOpacity: 1
+                // Create pin-style marker
+                const iconHtml = `
+                    <div style="position: relative;">
+                        <svg width="32" height="42" viewBox="0 0 32 42" style="filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3));">
+                            <path d="M16 0C7.2 0 0 7.2 0 16c0 8.8 16 26 16 26s16-17.2 16-26c0-8.8-7.2-16-16-16z" 
+                                  fill="${color}" 
+                                  stroke="#fff" 
+                                  stroke-width="2"/>
+                            <circle cx="16" cy="16" r="6" fill="#fff"/>
+                        </svg>
+                    </div>
+                `;
+                
+                studentMarkers[targetId] = L.marker([lat, lng], {
+                    icon: L.divIcon({
+                        html: iconHtml,
+                        className: 'student-pin-marker',
+                        iconSize: [32, 42],
+                        iconAnchor: [16, 42],
+                        popupAnchor: [0, -42]
+                    })
                 }).addTo(map);
                 
                 studentMarkers[targetId].bindPopup(`<b>${name}</b>`);
@@ -380,24 +462,63 @@
                     
                     // Create or update anchor marker (shared across all students)
                     if (!anchorMarkers[anchorId]) {
-                        anchorMarkers[anchorId] = L.circleMarker([anchorLat, anchorLng], {
-                            radius: 6,
-                            fillColor: '#4caf50',
-                            color: '#fff',
+                        const anchorConfig = ANCHOR_CONFIGS[anchorId] || { name: `Anchor ${anchorId}`, color: '#4caf50' };
+                        
+                        // Create dartboard circles (3 zones: CLOSE, WITHIN_RANGE, OUT_OF_RANGE)
+                        anchorDartboards[anchorId] = [];
+                        
+                        // Outer circle - OUT_OF_RANGE zone (>3m)
+                        const outerCircle = L.circle([anchorLat, anchorLng], {
+                            radius: 5,  // 5 meters
+                            fillColor: anchorConfig.color,
+                            color: anchorConfig.color,
+                            fillOpacity: 0.05,
                             weight: 2,
+                            opacity: 0.3
+                        }).addTo(map);
+                        anchorDartboards[anchorId].push(outerCircle);
+                        
+                        // Middle circle - WITHIN_RANGE zone (1-3m)
+                        const middleCircle = L.circle([anchorLat, anchorLng], {
+                            radius: 3,  // 3 meters
+                            fillColor: anchorConfig.color,
+                            color: anchorConfig.color,
+                            fillOpacity: 0.1,
+                            weight: 2,
+                            opacity: 0.5
+                        }).addTo(map);
+                        anchorDartboards[anchorId].push(middleCircle);
+                        
+                        // Inner circle - CLOSE zone (0-1m)
+                        const innerCircle = L.circle([anchorLat, anchorLng], {
+                            radius: 1,  // 1 meter
+                            fillColor: anchorConfig.color,
+                            color: anchorConfig.color,
+                            fillOpacity: 0.2,
+                            weight: 2,
+                            opacity: 0.7
+                        }).addTo(map);
+                        anchorDartboards[anchorId].push(innerCircle);
+                        
+                        // Anchor pin/marker
+                        anchorMarkers[anchorId] = L.circleMarker([anchorLat, anchorLng], {
+                            radius: 8,
+                            fillColor: anchorConfig.color,
+                            color: '#fff',
+                            weight: 3,
                             opacity: 1,
                             fillOpacity: 1
                         }).addTo(map);
                         
-                        // Add permanent label
-                        anchorMarkers[anchorId].bindTooltip(`Anchor ${anchorId}`, {
+                        // Add permanent label with location name
+                        anchorMarkers[anchorId].bindTooltip(anchorConfig.name, {
                             permanent: true,
                             direction: 'top',
                             className: 'anchor-label',
-                            offset: [0, -10]
+                            offset: [0, -12]
                         });
                         
-                        anchorMarkers[anchorId].bindPopup(`<b>Anchor ${anchorId}</b>`);
+                        anchorMarkers[anchorId].bindPopup(`<b>${anchorConfig.name}</b><br>Anchor ${anchorId}`);
                     }
                     
                     // Draw distance line
@@ -537,11 +658,41 @@
         // Listen for position updates from parent window (for embedded iframe)
         window.addEventListener('message', (event) => {
             if (event.data && event.data.type === 'update-positions') {
-                event.data.students.forEach(studentPosition => {
+                // FILTER students based on URL parameter
+                let filteredStudents = event.data.students;
+                if (filterStudent) {
+                    filteredStudents = event.data.students.filter(s => s.target_name === filterStudent);
+                    console.log(`[postMessage] Filtered to ${filteredStudents.length} student(s) matching "${filterStudent}"`);
+                }
+                
+                filteredStudents.forEach(studentPosition => {
                     updateStudentPosition(studentPosition);
                 });
-                updateInfoBox(event.data.students);
-                updateLegend(event.data.students);
+                updateInfoBox(filteredStudents);
+                updateLegend(filteredStudents);
+                
+                // REMOVE markers for students not in the filtered list
+                if (filterStudent) {
+                    const filteredIds = new Set(filteredStudents.map(s => s.target_id));
+                    
+                    // Remove student markers not in filtered list
+                    Object.keys(studentMarkers).forEach(targetId => {
+                        if (!filteredIds.has(parseInt(targetId))) {
+                            if (studentMarkers[targetId]) {
+                                map.removeLayer(studentMarkers[targetId]);
+                                delete studentMarkers[targetId];
+                            }
+                            if (accuracyCircles[targetId]) {
+                                map.removeLayer(accuracyCircles[targetId]);
+                                delete accuracyCircles[targetId];
+                            }
+                            if (distanceLines[targetId]) {
+                                distanceLines[targetId].forEach(item => map.removeLayer(item));
+                                delete distanceLines[targetId];
+                            }
+                        }
+                    });
+                }
             }
         });
     </script>
