@@ -951,7 +951,7 @@ export default function AdminDashboardPage() {
               </Box>
 
               {/* BLE Positioning Map */}
-              <Paper elevation={2} sx={{ overflow: 'hidden', borderRadius: 2, border: '1px solid #e0e0e0', height: 'calc(100vh - 200px)' }}>
+              <Paper elevation={2} sx={{ overflow: 'hidden', borderRadius: 2, border: '1px solid #e0e0e0', height: 'calc(100vh - 200px)', bgcolor: 'transparent' }}>
                 <BLEPositioningMap
                   trilaterationServerUrl={import.meta.env.VITE_TRILATERATION_SERVER_URL || 'http://localhost:8080'}
                   showDiagnostics={true}

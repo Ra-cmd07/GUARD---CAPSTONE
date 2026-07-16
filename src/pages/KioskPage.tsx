@@ -205,6 +205,18 @@ export default function KioskPage() {
     console.log('   Polling every 3 seconds...');
     console.log('   Mode: AUTOMATIC APPROVAL (No guard interaction needed)');
     
+    // Notify backend that this kiosk started BLE scanning
+    // This tells ESP32 to start scanning
+    api.post('/ble/scan-status', {
+      kiosk_id: KIOSK_ID,
+      scanning: true
+    }).then(() => {
+      console.log('✅ Notified backend: BLE scanning STARTED');
+      console.log('   ESP32 will now start scanning for tokens');
+    }).catch(err => {
+      console.error('❌ Failed to notify backend:', err);
+    });
+    
     // Poll backend for PENDING BLE detections every 3 seconds
     const pollInterval = setInterval(async () => {
       try {
@@ -275,6 +287,18 @@ export default function KioskPage() {
       clearInterval(scanIntervalRef.current);
       scanIntervalRef.current = null;
     }
+    
+    // Notify backend that this kiosk stopped BLE scanning
+    // This tells ESP32 to stop scanning
+    api.post('/ble/scan-status', {
+      kiosk_id: KIOSK_ID,
+      scanning: false
+    }).then(() => {
+      console.log('✅ Notified backend: BLE scanning STOPPED');
+      console.log('   ESP32 will now stop scanning');
+    }).catch(err => {
+      console.error('❌ Failed to notify backend:', err);
+    });
   };
 
   // ── Approve BLE Detection ─────────────────────────────────────────────

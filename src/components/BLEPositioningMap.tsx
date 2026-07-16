@@ -38,12 +38,14 @@ interface BLEPositioningMapProps {
   trilaterationServerUrl?: string;
   studentName?: string;
   showDiagnostics?: boolean;
+  filterStudentName?: string;  // NEW: Filter to show only specific student
 }
 
 export default function BLEPositioningMap({
   trilaterationServerUrl = 'http://localhost:8080',
   studentName,
   showDiagnostics = false,
+  filterStudentName,  // NEW: If provided, only show this student
 }: BLEPositioningMapProps) {
   const [connected, setConnected] = useState(false);
   const [positions, setPositions] = useState<BLEPosition[]>([]);  // Changed to array
@@ -85,13 +87,20 @@ export default function BLEPositioningMap({
 
           if (data.type === 'positions') {
             // Multi-beacon mode: array of positions
-            setPositions(data.students || []);
+            let students = data.students || [];
+            
+            // Filter to show only specific student if filterStudentName is provided
+            if (filterStudentName) {
+              students = students.filter((s: BLEPosition) => s.target_name === filterStudentName);
+            }
+            
+            setPositions(students);
             setWaiting(null);
             
-            // Update iframe map if available
+            // Update iframe map if available - send filtered students
             if (iframeRef.current?.contentWindow) {
               iframeRef.current.contentWindow.postMessage(
-                { type: 'update-positions', students: data.students },
+                { type: 'update-positions', students: students },  // Send filtered list
                 trilaterationServerUrl
               );
             }
@@ -156,11 +165,11 @@ export default function BLEPositioningMap({
   }, [connect]);
 
   return (
-    <Box sx={{ position: 'relative', height: '100%', minHeight: 600 }}>
+    <Box sx={{ position: 'relative', width: '100%', height: '100%', minHeight: 500, bgcolor: 'transparent' }}>
       {/* Embedded map from trilateration server */}
       <iframe
         ref={iframeRef}
-        src={trilaterationServerUrl}
+        src={`${trilaterationServerUrl}${filterStudentName ? `?filter=${encodeURIComponent(filterStudentName)}` : ''}`}
         style={{
           width: '100%',
           height: '100%',

@@ -314,7 +314,7 @@ export default function ParentDashboardPage() {
           </Typography>
         </Box>
 
-        <Box sx={{ p: 3 }}>
+        <Box sx={{ p: 3, bgcolor: 'transparent' }}>
           {selected ? (
             <>
               {/* Child Selector - Show if parent has multiple children */}
@@ -735,10 +735,11 @@ export default function ParentDashboardPage() {
                   </Box>
 
                   {/* BLE Trilateration Map */}
-                  <Paper elevation={2} sx={{ mb: 3, overflow: 'hidden', borderRadius: 2, border: '1px solid #e0e0e0' }}>
+                  <Paper elevation={2} sx={{ mb: 3, overflow: 'hidden', borderRadius: 2, border: '1px solid #e0e0e0', bgcolor: 'transparent', height: 500 }}>
                     <BLEPositioningMap
                       trilaterationServerUrl={import.meta.env.VITE_TRILATERATION_SERVER_URL || 'http://localhost:8080'}
                       studentName={selected?.name}
+                      filterStudentName={selected?.name}
                       showDiagnostics={false}
                     />
                   </Paper>
@@ -800,7 +801,6 @@ export default function ParentDashboardPage() {
                             <TableRow>
                               <TableCell sx={{ bgcolor: '#3b82f6', color: '#fff', fontWeight: 700 }}>Time</TableCell>
                               <TableCell sx={{ bgcolor: '#3b82f6', color: '#fff', fontWeight: 700 }}>Location</TableCell>
-                              <TableCell sx={{ bgcolor: '#3b82f6', color: '#fff', fontWeight: 700 }}>Building</TableCell>
                               <TableCell sx={{ bgcolor: '#3b82f6', color: '#fff', fontWeight: 700 }}>Distance</TableCell>
                               <TableCell sx={{ bgcolor: '#3b82f6', color: '#fff', fontWeight: 700 }}>Type</TableCell>
                             </TableRow>
@@ -813,9 +813,6 @@ export default function ParentDashboardPage() {
                                 </TableCell>
                                 <TableCell sx={{ color: '#1a1a1a', fontWeight: 600 }}>
                                   {loc.location_name}
-                                </TableCell>
-                                <TableCell sx={{ color: '#666' }}>
-                                  {loc.building || '—'}
                                 </TableCell>
                                 <TableCell sx={{ color: '#1a1a1a', fontWeight: 600 }}>
                                   {loc.distance ? `${Number(loc.distance).toFixed(2)}m` : '—'}
