@@ -78,7 +78,11 @@ export default function ParentDashboardPage() {
     try {
       const from = format(new Date(), 'yyyy-MM-dd'); // Today
       const to   = format(new Date(new Date().setDate(new Date().getDate() + 6)), 'yyyy-MM-dd'); // +6 days
-      const { data } = await api.get(`/students/${selected.id}/attendance?from=${from}&to=${to}`);
+      
+      // Add cache-busting parameter to force fresh data
+      const cacheBuster = `_t=${Date.now()}`;
+      const { data } = await api.get(`/students/${selected.id}/attendance?from=${from}&to=${to}&${cacheBuster}`);
+      
       console.log('📊 Fetched attendance records for parent:', data);
       console.log(`📸 Records with photos: ${(data || []).filter((r: any) => r.photo_path).length} of ${(data || []).length}`);
       setRecords(data || []);
@@ -93,11 +97,11 @@ export default function ParentDashboardPage() {
 
   useEffect(() => { fetchRecords(); }, [fetchRecords]);
 
-  // Auto-refresh every 10 seconds to show new attendance without manual reload
+  // Auto-refresh every 3 seconds to show new attendance without manual reload
   useEffect(() => {
     const interval = setInterval(() => {
       fetchRecords();
-    }, 10000); // Poll every 10 seconds
+    }, 3000); // Poll every 3 seconds
 
     return () => clearInterval(interval);
   }, [fetchRecords]);
@@ -140,12 +144,78 @@ export default function ParentDashboardPage() {
     'Time-In': 'success', 'Time-Out': 'info', Late: 'warning', Absent: 'error',
   };
 
-  // Campus status: is Time-In today without Time-Out?
+  // Campus status: based on MOST RECENT action today (supports multiple in/out per day)
   const today = format(new Date(), 'yyyy-MM-dd');
   const todayRecords = records.filter(r => r.date === today);
-  const hasTimeIn  = todayRecords.some(r => r.status === 'Time-In' || r.status === 'Late');
-  const hasTimeOut = todayRecords.some(r => r.status === 'Time-Out');
-  const onCampus   = hasTimeIn && !hasTimeOut;
+  
+  console.log('🔍 [Campus Status Debug]');
+  console.log('Today:', today);
+  console.log('Today Records:', todayRecords);
+  
+  if (todayRecords.length === 0) {
+    // No records today - OFF CAMPUS
+    var onCampus = false;
+    console.log('Result: OFF CAMPUS (no records)');
+  } else {
+    // Convert time string (HH:MM:SS AM/PM or HH:MM:SS) to comparable number
+    const timeToMinutes = (timeStr: string): number => {
+      if (!timeStr) return 0;
+      
+      // Handle both "HH:MM:SS AM" and "HH:MM:SS" formats
+      const match = timeStr.match(/(\d+):(\d+):(\d+)\s*(AM|PM)?/i);
+      if (!match) return 0;
+      
+      let hours = parseInt(match[1]);
+      const minutes = parseInt(match[2]);
+      const seconds = parseInt(match[3]);
+      const meridiem = match[4]?.toUpperCase();
+      
+      // Convert to 24-hour format if AM/PM present
+      if (meridiem) {
+        if (meridiem === 'PM' && hours !== 12) hours += 12;
+        if (meridiem === 'AM' && hours === 12) hours = 0;
+      }
+      
+      return hours * 3600 + minutes * 60 + seconds; // Convert to seconds for comparison
+    };
+    
+    // Find most recent action
+    let mostRecentSeconds = 0;
+    let mostRecentIsTimeIn = false;
+    
+    todayRecords.forEach(record => {
+      // Check time_in
+      if (record.time_in) {
+        const timeInSeconds = timeToMinutes(record.time_in);
+        console.log(`  Checking time_in: ${record.time_in} = ${timeInSeconds} seconds`);
+        
+        if (timeInSeconds > mostRecentSeconds) {
+          mostRecentSeconds = timeInSeconds;
+          mostRecentIsTimeIn = true;
+          console.log(`    ✅ New most recent: time_in ${record.time_in}`);
+        }
+      }
+      
+      // Check time_out
+      if (record.time_out) {
+        const timeOutSeconds = timeToMinutes(record.time_out);
+        console.log(`  Checking time_out: ${record.time_out} = ${timeOutSeconds} seconds`);
+        
+        if (timeOutSeconds > mostRecentSeconds) {
+          mostRecentSeconds = timeOutSeconds;
+          mostRecentIsTimeIn = false;
+          console.log(`    ✅ New most recent: time_out ${record.time_out}`);
+        }
+      }
+    });
+    
+    console.log(`Most Recent Seconds: ${mostRecentSeconds}`);
+    console.log(`Is Time-In: ${mostRecentIsTimeIn}`);
+    
+    // ON CAMPUS if most recent action is time_in, OFF CAMPUS if most recent is time_out
+    var onCampus = mostRecentIsTimeIn;
+    console.log(`Result: ${onCampus ? 'ON CAMPUS' : 'OFF CAMPUS'}`);
+  }
 
   const handleLogout = () => { logout(); navigate('/login', { replace: true }); };
 
