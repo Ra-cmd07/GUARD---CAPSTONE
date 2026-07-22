@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import pool from '../lib/db';
 import { savePhotoLocally } from '../utils/localPhotoUpload';
+import { uploadQueue } from '../utils/uploadQueue';
 
 /**
  * Queue SMS for GSM module to send
@@ -196,20 +197,27 @@ export async function approveDetection(req: Request, res: Response): Promise<voi
     const [insertResult] = await pool.execute(
       `INSERT INTO attendance 
        (student_id, student_name, lrn, gender, grade, section, kiosk_id, 
-        scan_method, status, session, date, time_in, time_out, photo_path) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'BLE', ?, ?, ?, ?, ?, ?)`,
+        scan_method, status, session, date, time_in, time_out, photo_path, local_path) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'BLE', ?, ?, ?, ?, ?, ?, ?)`,
       [
         student.id, student.name, student.lrn, student.gender,
         student.grade, student.section, detection.kiosk_id || null,
         status, session, localDate,
         status === 'Time-In' || status === 'Late' ? localTime : null,
         status === 'Time-Out' ? localTime : null,
-        photoPath
+        photoPath,
+        photoPath  // local_path same as photo_path initially
       ]
     ) as any[];
     
     attendanceId = (insertResult as any).insertId;
     attendanceStatus = status;
+    
+    // Queue Cloudinary upload (background, non-blocking)
+    if (photoPath) {
+      uploadQueue.enqueue(attendanceId, photoPath, student.name);
+      console.log('📤 BLE photo queued for Cloudinary upload');
+    }
     
     console.log(`✅ Attendance APPROVED (${session}): ${student.name} ${status === 'Late' ? 'LATE' : status}`);
 

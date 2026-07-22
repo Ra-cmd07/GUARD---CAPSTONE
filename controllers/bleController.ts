@@ -1,5 +1,7 @@
 import { Request, Response } from 'express';
 import pool from '../lib/db';
+import { calculatePosition } from '../utils/blePositioning';
+import { getIO } from '../src/websocket/socketHandler';
 
 function escapeHtml(value: string): string {
   return value
@@ -90,47 +92,144 @@ export async function uploadBleData(req: Request, res: Response): Promise<void> 
     const rejectedCount = { value: 0 };
 
     const insertPromises = devices.map(async (device: any) => {
-      const macAddress = String(device.mac_address || '').trim();
+      const uuid = String(device.uuid || '').trim();
+      const macAddress = String(device.mac_address || device.mac || '').trim();
       const distance = Number(device.distance || 0);
       const rssi = Number(device.rssi || 0);
       const timestamp = String(device.timestamp || new Date().toISOString()).trim();
 
-      if (!macAddress) {
+      // Require UUID (primary) or MAC (fallback for old data)
+      if (!uuid && !macAddress) {
         rejectedCount.value++;
         return;
       }
 
       try {
-        // ✅ FIX: Normalize MAC for comparison (remove colons and dashes)
-        const normalizedMac = normalizeMac(macAddress);
-
-        // Check if MAC address is registered in students table
-        const [students] = await pool.execute(
-          `SELECT id FROM students 
-           WHERE REPLACE(REPLACE(LOWER(mac_address), ':', ''), '-', '') = ?`,
-          [normalizedMac]
-        ) as any[];
+        // 🆕 UUID-BASED LOOKUP: Check if UUID or MAC is registered in students table
+        let students: any[];
+        
+        if (uuid) {
+          [students] = await pool.execute(
+            `SELECT id FROM students WHERE uuid = ?`,
+            [uuid]
+          ) as any[];
+        } else {
+          // Fallback to MAC if UUID not provided (backward compatibility)
+          const normalizedMac = normalizeMac(macAddress);
+          [students] = await pool.execute(
+            `SELECT id FROM students 
+             WHERE REPLACE(REPLACE(LOWER(mac_address), ':', ''), '-', '') = ?`,
+            [normalizedMac]
+          ) as any[];
+        }
 
         if ((students as any[]).length === 0) {
-          console.warn(`MAC ${macAddress} not registered in students table`);
+          console.warn(`UUID/MAC ${uuid || macAddress} not registered in students table`);
           rejectedCount.value++;
           return;
         }
 
-        // Insert into BLEPROXY only if MAC is registered
+        // Insert into BLEPROXY with UUID support
         await pool.execute(
-          `INSERT INTO BLEPROXY (room_name, mac_address, distance, rssi, timestamp)
-           VALUES (?, ?, ?, ?, ?)`,
-          [roomName, macAddress, distance, rssi, timestamp]
+          `INSERT INTO BLEPROXY (room_name, uuid, mac_address, distance, rssi, timestamp)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [roomName, uuid || null, macAddress || null, distance, rssi, timestamp]
         );
         insertedCount.value++;
       } catch (err) {
-        console.error(`Error processing MAC ${macAddress}:`, err);
+        console.error(`Error processing UUID/MAC ${uuid || macAddress}:`, err);
         rejectedCount.value++;
       }
     });
 
     await Promise.all(insertPromises);
+    
+    // 🗺️ TRILATERATION: Calculate and broadcast student positions
+    try {
+      // Get beacon/anchor coordinates (map room_name to physical location)
+      // Note: room_name comes as "anchor_1", "anchor_2", "anchor_3" from ESP32
+      const anchorCoordinates: Record<string, string> = {
+        'anchor_1': '8.4857,124.6565', // Replace with actual Anchor 1 coordinates
+        'anchor_2': '8.4858,124.6567', // Replace with actual Anchor 2 coordinates
+        'anchor_3': '8.4856,124.6563', // Replace with actual Anchor 3 coordinates
+      };
+      
+      // Get unique students from this batch
+      const studentUUIDs = devices
+        .map((d: any) => d.uuid)
+        .filter((uuid: string) => uuid);
+      
+      if (studentUUIDs.length > 0) {
+        // For each student, get latest readings from all anchors
+        for (const uuid of studentUUIDs) {
+          const [readings] = await pool.execute(
+            `SELECT room_name, distance, rssi, timestamp
+             FROM BLEPROXY
+             WHERE uuid = ?
+             AND timestamp > DATE_SUB(NOW(), INTERVAL 10 SECOND)
+             ORDER BY timestamp DESC
+             LIMIT 3`,
+            [uuid]
+          ) as any[];
+          
+          if (readings.length >= 2) { // Need at least 2 anchors for positioning
+            // Map readings to beacon signals
+            const signals = readings.map((r: any) => ({
+              beacon_id: r.room_name,
+              rssi: r.rssi,
+              coordinates: anchorCoordinates[r.room_name] || '8.4857,124.6565'
+            })).filter((s: any) => s.coordinates);
+            
+            // Calculate position
+            const position = calculatePosition(signals);
+            
+            if (position) {
+              // Get student info
+              const [studentInfo] = await pool.execute(
+                `SELECT id, name, grade, section FROM students WHERE uuid = ?`,
+                [uuid]
+              ) as any[];
+              
+              if (studentInfo.length > 0) {
+                const student = studentInfo[0];
+                
+                // Broadcast via WebSocket
+                const io = getIO();
+                if (io) {
+                  io.to('admin').to('teacher').emit('location:update', {
+                    type: 'student_location',
+                    student: {
+                      id: student.id,
+                      name: student.name,
+                      section: student.section,
+                      grade: student.grade,
+                    },
+                    location: {
+                      position: {
+                        lat: position.lat,
+                        lng: position.lng,
+                        accuracy: position.accuracy
+                      },
+                      beacon: {
+                        name: signals[0].beacon_id,
+                      },
+                      distance: readings[0].distance,
+                      timestamp: new Date().toISOString(),
+                    }
+                  });
+                  
+                  console.log(`📍 Broadcasted position for ${student.name}: ${position.lat}, ${position.lng}`);
+                }
+              }
+            }
+          }
+        }
+      }
+    } catch (trilaterationError) {
+      console.error('Trilateration error:', trilaterationError);
+      // Don't fail the request if trilateration fails
+    }
+    
     res.status(201).json({
       message: 'BLE proxy data processed',
       roomName,
@@ -214,12 +313,14 @@ export async function setScanStatus(req: Request, res: Response): Promise<void> 
 /**
  * ESP32 BLE Token Attendance Detection
  * Receives BLE beacon detection from ESP32 and creates pending attendance
+ * NOW SUPPORTS UUID-BASED IDENTIFICATION
  */
 export async function detectBleToken(req: Request, res: Response): Promise<void> {
   try {
     const {
       student_id,
       student_name,
+      uuid,
       mac,
       rssi,
       distance,
@@ -227,28 +328,54 @@ export async function detectBleToken(req: Request, res: Response): Promise<void>
       gate_name
     } = req.body;
 
-    // Validate required fields
-    if (!student_id || !student_name || !mac) {
+    // Validate required fields (UUID is now primary, MAC is optional)
+    if (!uuid) {
       res.status(400).json({ 
-        error: 'Missing required fields: student_id, student_name, mac' 
+        error: 'Missing required field: uuid' 
       });
       return;
     }
 
-    console.log(`[BLE Token] Detection from ESP32: ${student_name} (${mac}) at ${distance}m`);
+    console.log(`[BLE Token] Detection from ESP32: UUID=${uuid}, Name=${student_name || 'unknown'}, Distance=${distance}m`);
 
-    // Check if student exists
-    const [students] = await pool.execute(
-      `SELECT id, name, grade, section FROM students WHERE id = ?`,
-      [student_id]
-    ) as any[];
+    // 🆕 UUID-BASED LOOKUP: Find student by UUID (primary) or by student_id (fallback)
+    let students: any[];
+    
+    if (student_id) {
+      // If student_id provided, verify it matches the UUID
+      [students] = await pool.execute(
+        `SELECT id, name, grade, section, uuid, mac_address FROM students WHERE id = ? AND uuid = ?`,
+        [student_id, uuid]
+      ) as any[];
+    } else {
+      // Look up by UUID only
+      [students] = await pool.execute(
+        `SELECT id, name, grade, section, uuid, mac_address FROM students WHERE uuid = ?`,
+        [uuid]
+      ) as any[];
+    }
 
     if ((students as any[]).length === 0) {
-      res.status(404).json({ error: 'Student not found in database' });
+      console.warn(`[BLE Token] ❌ No student found with UUID: ${uuid}`);
+      res.status(404).json({ error: 'Student not found for this UUID' });
       return;
     }
 
     const student = students[0];
+    const actualStudentId = student.id;
+    const actualStudentName = student.name;
+
+    console.log(`[BLE Token] ✅ Student identified: ${actualStudentName} (ID: ${actualStudentId})`);
+
+    // 🆕 OPTIONAL: Update MAC address if provided (for logging/debugging purposes)
+    if (mac && student.mac_address !== mac) {
+      console.log(`[BLE Token] MAC changed for ${actualStudentName}: ${student.mac_address} → ${mac}`);
+      await pool.execute(
+        `UPDATE students SET mac_address = ?, updated_at = NOW() WHERE id = ?`,
+        [mac, actualStudentId]
+      );
+      console.log(`[BLE Token] ✅ Student MAC address updated in database`);
+    }
 
     // Check for recent pending detection (last 30 seconds) to prevent duplicates
     // Note: using detected_at (existing column) instead of created_at
@@ -257,11 +384,11 @@ export async function detectBleToken(req: Request, res: Response): Promise<void>
        WHERE student_id = ? 
        AND status = 'pending' 
        AND detected_at > DATE_SUB(NOW(), INTERVAL 30 SECOND)`,
-      [student_id]
+      [actualStudentId]
     ) as any[];
 
     if ((recentDetections as any[]).length > 0) {
-      console.log(`[BLE Token] Duplicate detection for ${student_name} - ignoring`);
+      console.log(`[BLE Token] Duplicate detection for ${actualStudentName} - ignoring`);
       res.json({ 
         success: true, 
         message: 'Detection already exists (within 30 seconds)',
@@ -276,20 +403,21 @@ export async function detectBleToken(req: Request, res: Response): Promise<void>
       `INSERT INTO ble_detections 
        (student_id, student_name, mac_address, rssi, beacon_id, location_name, status)
        VALUES (?, ?, ?, ?, ?, ?, 'pending')`,
-      [student_id, student_name, mac, rssi || null, kiosk_id || 1, gate_name || 'Main Gate']
+      [actualStudentId, actualStudentName, mac || uuid, rssi || null, kiosk_id || 1, gate_name || 'Main Gate']
     ) as any;
 
     const detectionId = (result as any).insertId;
 
-    console.log(`[BLE Token] ✅ Detection recorded: ID ${detectionId} for ${student_name}`);
+    console.log(`[BLE Token] ✅ Detection recorded: ID ${detectionId} for ${actualStudentName}`);
     console.log(`[BLE Token] Status: PENDING (waiting for kiosk auto-approval)`);
 
     res.status(201).json({
       success: true,
       message: 'BLE detection recorded',
       id: detectionId,
-      student_id,
-      student_name,
+      student_id: actualStudentId,
+      student_name: actualStudentName,
+      uuid: uuid,
       status: 'pending'
     });
 

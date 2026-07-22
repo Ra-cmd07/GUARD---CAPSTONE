@@ -6,6 +6,7 @@ import path from 'path';
 import dotenv from 'dotenv';
 import { createServer } from 'http';
 import { initializeWebSocket } from './src/websocket/socketHandler';
+import { uploadQueue } from './utils/uploadQueue';
 
 dotenv.config();
 
@@ -110,6 +111,7 @@ httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 AttendBox API running at http://0.0.0.0:${PORT}`);
   console.log(`   Local:   http://localhost:${PORT}`);
   console.log(`🔌 WebSocket server ready for real-time updates`);
+  console.log(`📤 Background upload queue initialized`);
 });
 
 export default app;
