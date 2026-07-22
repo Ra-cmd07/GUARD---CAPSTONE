@@ -171,7 +171,7 @@ export default function KioskPage() {
               approved_by: 'kiosk_auto',
             });
             
-            console.log('✅ RFID detection AUTO-APPROVED:', approvalResponse.data);
+            console.log('✅ RFID detection AUTO-APPROVED - Attendance recorded!');
             
             // Show success screen
             setResult({
@@ -185,13 +185,13 @@ export default function KioskPage() {
             setScanState('success');
             console.log('✅ RFID auto-approved - Success screen displayed!');
           } catch (approveErr: any) {
-            console.error('❌ RFID auto-approval failed:', approveErr);
+            console.error('❌ RFID auto-approval failed');
             setErrorMsg(approveErr.response?.data?.error || 'Failed to approve attendance');
             setScanState('error');
           }
         }
       } catch (err) {
-        console.error('❌ RFID polling error:', err);
+        console.error('❌ RFID polling error');
       }
     }, 2000); // Poll every 2 seconds
     
@@ -214,7 +214,7 @@ export default function KioskPage() {
       console.log('✅ Notified backend: BLE scanning STARTED');
       console.log('   ESP32 will now start scanning for tokens');
     }).catch(err => {
-      console.error('❌ Failed to notify backend:', err);
+      console.error('❌ Failed to notify backend');
     });
     
     // Poll backend for PENDING BLE detections every 3 seconds
@@ -252,7 +252,7 @@ export default function KioskPage() {
               approved_by: 'kiosk_auto',
             });
             
-            console.log('✅ BLE detection AUTO-APPROVED:', approvalResponse.data);
+            console.log('✅ BLE detection AUTO-APPROVED - Attendance recorded!');
             
             // Show success screen
             setResult({
@@ -266,7 +266,7 @@ export default function KioskPage() {
             
             console.log('✅ Success state set - Success screen should show');
           } catch (approveErr: any) {
-            console.error('❌ Auto-approval failed:', approveErr);
+            console.error('❌ Auto-approval failed');
             setErrorMsg(approveErr.response?.data?.error || 'Failed to record attendance');
             setScanState('error');
           }
@@ -274,7 +274,7 @@ export default function KioskPage() {
           console.log('   No pending detections found');
         }
       } catch (err) {
-        console.error('❌ Polling error:', err);
+        console.error('❌ Polling error');
       }
     }, 3000); // Poll every 3 seconds
     
@@ -297,7 +297,7 @@ export default function KioskPage() {
       console.log('✅ Notified backend: BLE scanning STOPPED');
       console.log('   ESP32 will now stop scanning');
     }).catch(err => {
-      console.error('❌ Failed to notify backend:', err);
+      console.error('❌ Failed to notify backend');
     });
   };
 
@@ -324,7 +324,7 @@ export default function KioskPage() {
         approved_by: 'kiosk_guard',
       });
       
-      console.log('✅ BLE detection APPROVED:', data);
+      console.log('✅ BLE detection APPROVED - Attendance recorded!');
       console.log('   Setting scanState to: success');
       
       setResult({
@@ -337,7 +337,7 @@ export default function KioskPage() {
       
       console.log('✅ Success state set - Success screen should show');
     } catch (err: any) {
-      console.error('❌ Approval failed:', err);
+      console.error('❌ Approval failed');
       setErrorMsg(err.response?.data?.error || 'Failed to approve attendance');
       setScanState('error');
     }
@@ -356,7 +356,7 @@ export default function KioskPage() {
       console.log('❌ BLE detection REJECTED');
       resetAll();  // Go back to idle state
     } catch (err) {
-      console.error('Reject error:', err);
+      console.error('Reject error');
       resetAll();
     }
   }, [result]);
@@ -396,7 +396,7 @@ export default function KioskPage() {
       
       console.log('✅ Success state set - Success screen should show');
     } catch (err: any) {
-      console.error('❌ RFID approval failed:', err);
+      console.error('❌ RFID approval failed');
       setErrorMsg(err.response?.data?.error || 'Failed to approve attendance');
       setScanState('error');
     }
@@ -415,7 +415,7 @@ export default function KioskPage() {
       console.log('❌ RFID detection REJECTED');
       resetAll();  // Go back to idle state
     } catch (err) {
-      console.error('Reject error:', err);
+      console.error('Reject error');
       resetAll();
     }
   }, [result]);

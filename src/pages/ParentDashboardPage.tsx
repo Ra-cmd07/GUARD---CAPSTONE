@@ -16,6 +16,7 @@ import type { AttendanceRecord, ParentProfile, Student } from '../types';
 import BLEPositioningMap from '../components/BLEPositioningMap';
 import AttendancePhotoDialog from '../components/AttendancePhotoDialog';
 import theme from '../theme/professionalTheme';
+import useWebSocket from '../hooks/useWebSocket';
 
 type Tab = 'overview' | 'attendance' | 'location' | 'sms';
 
@@ -44,6 +45,9 @@ export default function ParentDashboardPage() {
   });
 
   const showSnack = (msg: string, sev: any = 'info') => setSnack({ open: true, msg, sev });
+
+  // WebSocket for real-time updates (replaces polling)
+  const { socket, connected } = useWebSocket('parent', profile?.id);
 
   const handleViewPhoto = (record: AttendanceRecord) => {
     console.log('====================================');
@@ -78,9 +82,9 @@ export default function ParentDashboardPage() {
   }, []);
 
   // Load attendance for selected child (today + next 6 days)
-  const fetchRecords = useCallback(async () => {
+  const fetchRecords = useCallback(async (showLoading = true) => {
     if (!selected) return;
-    setLoading(true);
+    if (showLoading) setLoading(true); // Only show loading on initial load
     try {
       const from = format(new Date(), 'yyyy-MM-dd'); // Today
       const to   = format(new Date(new Date().setDate(new Date().getDate() + 6)), 'yyyy-MM-dd'); // +6 days
@@ -94,23 +98,59 @@ export default function ParentDashboardPage() {
       setRecords(data || []);
     } catch (err) {
       console.error('Failed to load attendance:', err);
-      showSnack('Failed to load attendance', 'error');
+      if (showLoading) showSnack('Failed to load attendance', 'error');
       setRecords([]);
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
     }
   }, [selected]);
 
-  useEffect(() => { fetchRecords(); }, [fetchRecords]);
+  useEffect(() => { fetchRecords(true); }, [fetchRecords]);
 
-  // Auto-refresh every 3 seconds to show new attendance without manual reload
+  // Auto-refresh records every 3 seconds for real-time updates (backup to WebSocket)
   useEffect(() => {
+    if (!selected) return;
+    
     const interval = setInterval(() => {
-      fetchRecords();
-    }, 3000); // Poll every 3 seconds
-
+      console.log('🔄 Auto-refreshing attendance records...');
+      fetchRecords(false); // Silent refresh - no loading state
+    }, 3000); // Refresh every 3 seconds
+    
     return () => clearInterval(interval);
-  }, [fetchRecords]);
+  }, [selected, fetchRecords]);
+
+  // WebSocket real-time updates - Listen for new attendance events
+  useEffect(() => {
+    if (!socket || !selected) return;
+
+    console.log(`🔌 Listening for attendance updates for student: ${selected.name} (ID: ${selected.id})`);
+
+    // Listen for new attendance events from backend
+    const handleNewAttendance = (data: any) => {
+      console.log('📡 Received attendance:new event:', data);
+
+      // Check if this event is for the currently selected child
+      if (data.student?.id === selected.id) {
+        console.log(`✅ New attendance for ${selected.name} - Adding to records`);
+        
+        // Fetch fresh data to get complete record with photo_path, etc. (silent refresh)
+        fetchRecords(false);
+        
+        // Show notification
+        showSnack(`New attendance: ${data.attendance.status}`, 'info');
+      } else {
+        console.log(`  → Event is for different student (${data.student?.name}), ignoring`);
+      }
+    };
+
+    socket.on('attendance:new', handleNewAttendance);
+
+    // Cleanup listener when component unmounts or selected child changes
+    return () => {
+      console.log(`🔌 Removing attendance listener for ${selected.name}`);
+      socket.off('attendance:new', handleNewAttendance);
+    };
+  }, [socket, selected, fetchRecords]);
 
   // Load recent SMS logs for overview
   useEffect(() => {
@@ -158,70 +198,77 @@ export default function ParentDashboardPage() {
   console.log('Today:', today);
   console.log('Today Records:', todayRecords);
   
-  if (todayRecords.length === 0) {
-    // No records today - OFF CAMPUS
-    var onCampus = false;
-    console.log('Result: OFF CAMPUS (no records)');
-  } else {
-    // Convert time string (HH:MM:SS AM/PM or HH:MM:SS) to comparable number
-    const timeToMinutes = (timeStr: string): number => {
-      if (!timeStr) return 0;
-      
-      // Handle both "HH:MM:SS AM" and "HH:MM:SS" formats
-      const match = timeStr.match(/(\d+):(\d+):(\d+)\s*(AM|PM)?/i);
-      if (!match) return 0;
-      
-      let hours = parseInt(match[1]);
-      const minutes = parseInt(match[2]);
-      const seconds = parseInt(match[3]);
-      const meridiem = match[4]?.toUpperCase();
-      
-      // Convert to 24-hour format if AM/PM present
-      if (meridiem) {
-        if (meridiem === 'PM' && hours !== 12) hours += 12;
-        if (meridiem === 'AM' && hours === 12) hours = 0;
-      }
-      
-      return hours * 3600 + minutes * 60 + seconds; // Convert to seconds for comparison
-    };
-    
-    // Find most recent action
-    let mostRecentSeconds = 0;
-    let mostRecentIsTimeIn = false;
-    
-    todayRecords.forEach(record => {
-      // Check time_in
-      if (record.time_in) {
-        const timeInSeconds = timeToMinutes(record.time_in);
-        console.log(`  Checking time_in: ${record.time_in} = ${timeInSeconds} seconds`);
+  // Force re-render by using records.length as dependency
+  const [campusStatus, setCampusStatus] = useState<boolean>(false);
+  
+  useEffect(() => {
+    if (todayRecords.length === 0) {
+      // No records today - OFF CAMPUS
+      setCampusStatus(false);
+      console.log('Result: OFF CAMPUS (no records)');
+    } else {
+      // Convert time string (HH:MM:SS AM/PM or HH:MM:SS) to comparable number
+      const timeToMinutes = (timeStr: string): number => {
+        if (!timeStr) return 0;
         
-        if (timeInSeconds > mostRecentSeconds) {
-          mostRecentSeconds = timeInSeconds;
-          mostRecentIsTimeIn = true;
-          console.log(`    ✅ New most recent: time_in ${record.time_in}`);
-        }
-      }
-      
-      // Check time_out
-      if (record.time_out) {
-        const timeOutSeconds = timeToMinutes(record.time_out);
-        console.log(`  Checking time_out: ${record.time_out} = ${timeOutSeconds} seconds`);
+        // Handle both "HH:MM:SS AM" and "HH:MM:SS" formats
+        const match = timeStr.match(/(\d+):(\d+):(\d+)\s*(AM|PM)?/i);
+        if (!match) return 0;
         
-        if (timeOutSeconds > mostRecentSeconds) {
-          mostRecentSeconds = timeOutSeconds;
-          mostRecentIsTimeIn = false;
-          console.log(`    ✅ New most recent: time_out ${record.time_out}`);
+        let hours = parseInt(match[1]);
+        const minutes = parseInt(match[2]);
+        const seconds = parseInt(match[3]);
+        const meridiem = match[4]?.toUpperCase();
+        
+        // Convert to 24-hour format if AM/PM present
+        if (meridiem) {
+          if (meridiem === 'PM' && hours !== 12) hours += 12;
+          if (meridiem === 'AM' && hours === 12) hours = 0;
         }
-      }
-    });
-    
-    console.log(`Most Recent Seconds: ${mostRecentSeconds}`);
-    console.log(`Is Time-In: ${mostRecentIsTimeIn}`);
-    
-    // ON CAMPUS if most recent action is time_in, OFF CAMPUS if most recent is time_out
-    var onCampus = mostRecentIsTimeIn;
-    console.log(`Result: ${onCampus ? 'ON CAMPUS' : 'OFF CAMPUS'}`);
-  }
+        
+        return hours * 3600 + minutes * 60 + seconds; // Convert to seconds for comparison
+      };
+      
+      // Find most recent action
+      let mostRecentSeconds = 0;
+      let mostRecentIsTimeIn = false;
+      
+      todayRecords.forEach(record => {
+        // Check time_in
+        if (record.time_in) {
+          const timeInSeconds = timeToMinutes(record.time_in);
+          console.log(`  Checking time_in: ${record.time_in} = ${timeInSeconds} seconds`);
+          
+          if (timeInSeconds > mostRecentSeconds) {
+            mostRecentSeconds = timeInSeconds;
+            mostRecentIsTimeIn = true;
+            console.log(`    ✅ New most recent: time_in ${record.time_in}`);
+          }
+        }
+        
+        // Check time_out
+        if (record.time_out) {
+          const timeOutSeconds = timeToMinutes(record.time_out);
+          console.log(`  Checking time_out: ${record.time_out} = ${timeOutSeconds} seconds`);
+          
+          if (timeOutSeconds > mostRecentSeconds) {
+            mostRecentSeconds = timeOutSeconds;
+            mostRecentIsTimeIn = false;
+            console.log(`    ✅ New most recent: time_out ${record.time_out}`);
+          }
+        }
+      });
+      
+      console.log(`Most Recent Seconds: ${mostRecentSeconds}`);
+      console.log(`Is Time-In: ${mostRecentIsTimeIn}`);
+      
+      // ON CAMPUS if most recent action is time_in, OFF CAMPUS if most recent is time_out
+      setCampusStatus(mostRecentIsTimeIn);
+      console.log(`Result: ${mostRecentIsTimeIn ? 'ON CAMPUS' : 'OFF CAMPUS'}`);
+    }
+  }, [records, today]); // Re-calculate when records change
+  
+  const onCampus = campusStatus;
 
   const handleLogout = () => { logout(); navigate('/login', { replace: true }); };
 

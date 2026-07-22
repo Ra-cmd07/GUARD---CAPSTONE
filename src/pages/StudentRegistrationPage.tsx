@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Box, Paper, Typography, Button, Grid,
+  Box, Paper, Typography, Button,
   Alert, Snackbar, CircularProgress, Divider, Chip,
   Card, CardContent,
   Tooltip, IconButton, Checkbox, Table, TableBody, TableCell,
@@ -12,7 +12,6 @@ import {
   Info, Save, Search,
 } from '@mui/icons-material';
 import api from '../api/client';
-import theme from '../theme/professionalTheme';
 
 type PreferredMethod = 'QR' | 'BLE' | 'RFID';
 
@@ -20,10 +19,12 @@ interface Student {
   id: number;
   lrn: string;
   name: string;
+  gender?: string;  // Added gender field
   grade?: string;
   section?: string;
   preferred_method?: PreferredMethod;
-  mac_address?: string;
+  uuid?: string;  // Service UUID (for phone beacons)
+  mac_address?: string;  // MAC address (for hardware beacons)
   rfid_uid?: string;
 }
 
@@ -33,7 +34,14 @@ export default function StudentRegistrationPage() {
   const [students, setStudents] = useState<Student[]>([]);
   const [selectedMethod, setSelectedMethod] = useState<PreferredMethod>('QR');
   const [selectedStudents, setSelectedStudents] = useState<Set<number>>(new Set());
-  const [methodData, setMethodData] = useState<{ [studentId: number]: { mac_address?: string; rfid_uid?: string } }>({});
+  const [methodData, setMethodData] = useState<{ 
+    [studentId: number]: { 
+      uuid?: string; 
+      mac_address?: string;
+      rfid_uid?: string;
+    } 
+  }>({});
+  const [bleType, setBleType] = useState<{ [studentId: number]: 'MAC' | 'UUID' }>({});  // Track BLE identifier type
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -62,8 +70,18 @@ export default function StudentRegistrationPage() {
       const newSet = new Set(prev);
       if (newSet.has(studentId)) {
         newSet.delete(studentId);
+        // Clean up BLE type when deselecting
+        setBleType(prevBleType => {
+          const newBleType = { ...prevBleType };
+          delete newBleType[studentId];
+          return newBleType;
+        });
       } else {
         newSet.add(studentId);
+        // Set default BLE type to UUID when selecting
+        if (selectedMethod === 'BLE') {
+          setBleType(prev => ({ ...prev, [studentId]: 'UUID' }));
+        }
       }
       return newSet;
     });
@@ -77,7 +95,7 @@ export default function StudentRegistrationPage() {
     }
   };
 
-  const handleMethodDataChange = (studentId: number, field: 'mac_address' | 'rfid_uid', value: string) => {
+  const handleMethodDataChange = (studentId: number, field: 'uuid' | 'mac_address' | 'rfid_uid', value: string) => {
     setMethodData(prev => ({
       ...prev,
       [studentId]: {
@@ -85,6 +103,10 @@ export default function StudentRegistrationPage() {
         [field]: value,
       }
     }));
+  };
+
+  const handleBleTypeChange = (studentId: number, type: 'MAC' | 'UUID') => {
+    setBleType(prev => ({ ...prev, [studentId]: type }));
   };
 
   // Filter students based on search query
@@ -112,11 +134,37 @@ export default function StudentRegistrationPage() {
     // Validate method-specific data
     if (selectedMethod === 'BLE') {
       for (const studentId of selectedStudents) {
-        if (!methodData[studentId]?.mac_address) {
+        const data = methodData[studentId];
+        const type = bleType[studentId];
+        
+        // Require BLE type selection
+        if (!type) {
           const student = students.find(s => s.id === studentId);
           setSnack({ 
             open: true, 
-            msg: `MAC Address required for ${student?.name} (BLE method)`, 
+            msg: `Please select BLE identifier type (MAC or UUID) for ${student?.name}`, 
+            sev: 'error' 
+          });
+          return;
+        }
+        
+        // Validate MAC address if Hardware Beacon selected
+        if (type === 'MAC' && !data?.mac_address) {
+          const student = students.find(s => s.id === studentId);
+          setSnack({ 
+            open: true, 
+            msg: `MAC Address required for ${student?.name} (Hardware Beacon)`, 
+            sev: 'error' 
+          });
+          return;
+        }
+        
+        // Validate UUID if Phone Beacon selected
+        if (type === 'UUID' && !data?.uuid) {
+          const student = students.find(s => s.id === studentId);
+          setSnack({ 
+            open: true, 
+            msg: `Service UUID required for ${student?.name} (Phone Beacon)`, 
             sev: 'error' 
           });
           return;
@@ -150,9 +198,13 @@ export default function StudentRegistrationPage() {
           section: student?.section,
           preferred_method: selectedMethod,
         };
-
         if (selectedMethod === 'BLE') {
-          updateData.mac_address = methodData[studentId]?.mac_address;
+          const type = bleType[studentId];
+          if (type === 'UUID') {
+            updateData.uuid = methodData[studentId]?.uuid;
+          } else if (type === 'MAC') {
+            updateData.mac_address = methodData[studentId]?.mac_address;
+          }
         }
 
         if (selectedMethod === 'RFID') {
@@ -231,9 +283,9 @@ export default function StudentRegistrationPage() {
           </Box>
         </Box>
 
-        <Grid container spacing={3}>
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
           {/* Method Selection */}
-          <Grid size={{ xs: 12 }}>
+          <Box>
             <Paper elevation={3} sx={{ p: 3, borderRadius: 2 }}>
               <Box display="flex" alignItems="center" gap={1.5} mb={2}>
                 <CheckCircle sx={{ color: '#3b82f6', fontSize: 28 }} />
@@ -248,13 +300,13 @@ export default function StudentRegistrationPage() {
               </Box>
               <Divider sx={{ mb: 3 }} />
 
-              <Grid container spacing={2}>
+              <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(3, 1fr)' }, gap: 2 }}>
                 {(['QR', 'BLE', 'RFID'] as PreferredMethod[]).map((method) => {
                   const info = methodInfo[method];
                   const isSelected = selectedMethod === method;
 
                   return (
-                    <Grid size={{ xs: 12, md: 4 }} key={method}>
+                    <Box key={method}>
                       <Card
                         onClick={() => setSelectedMethod(method)}
                         sx={{
@@ -292,10 +344,10 @@ export default function StudentRegistrationPage() {
                           </Box>
                         </CardContent>
                       </Card>
-                    </Grid>
+                    </Box>
                   );
                 })}
-              </Grid>
+              </Box>
 
               {/* Method Requirements */}
               <Box mt={3}>
@@ -303,7 +355,7 @@ export default function StudentRegistrationPage() {
                   <Alert severity="info">
                     <Typography variant="body2" fontWeight={600}>BLE Setup Required</Typography>
                     <Typography variant="caption">
-                      Enter MAC address for each selected student in the table below
+                      Choose identifier type (MAC for hardware beacons, UUID for phone beacons) and enter the value for each selected student
                     </Typography>
                   </Alert>
                 )}
@@ -325,10 +377,10 @@ export default function StudentRegistrationPage() {
                 )}
               </Box>
             </Paper>
-          </Grid>
+          </Box>
 
           {/* Student Selection Table */}
-          <Grid size={{ xs: 12 }}>
+          <Box>
             <Paper elevation={3} sx={{ borderRadius: 2 }}>
               <Box sx={{ p: 2, borderBottom: '1px solid #e0e0e0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <Typography fontWeight={700}>
@@ -374,7 +426,8 @@ export default function StudentRegistrationPage() {
                         <TableCell>Name</TableCell>
                         <TableCell>Grade/Section</TableCell>
                         <TableCell>Current Method</TableCell>
-                        {selectedMethod === 'BLE' && <TableCell>MAC Address *</TableCell>}
+                        {selectedMethod === 'BLE' && <TableCell>BLE Type *</TableCell>}
+                        {selectedMethod === 'BLE' && <TableCell>Identifier *</TableCell>}
                         {selectedMethod === 'RFID' && <TableCell>RFID UID *</TableCell>}
                       </TableRow>
                     </TableHead>
@@ -402,15 +455,51 @@ export default function StudentRegistrationPage() {
                                 <Chip label={student.preferred_method || 'QR'} size="small" />
                               </TableCell>
                               {selectedMethod === 'BLE' && isSelected && (
-                                <TableCell>
-                                  <TextField
-                                    size="small"
-                                    placeholder="AA:BB:CC:DD:EE:FF"
-                                    value={methodData[student.id]?.mac_address || ''}
-                                    onChange={(e) => handleMethodDataChange(student.id, 'mac_address', e.target.value)}
-                                    fullWidth
-                                  />
-                                </TableCell>
+                                <>
+                                  <TableCell>
+                                    <Box sx={{ display: 'flex', gap: 1 }}>
+                                      <Chip 
+                                        label="Hardware (MAC)" 
+                                        size="small"
+                                        onClick={() => handleBleTypeChange(student.id, 'MAC')}
+                                        color={bleType[student.id] === 'MAC' ? 'primary' : 'default'}
+                                        variant={bleType[student.id] === 'MAC' ? 'filled' : 'outlined'}
+                                        sx={{ cursor: 'pointer' }}
+                                      />
+                                      <Chip 
+                                        label="Phone (UUID)" 
+                                        size="small"
+                                        onClick={() => handleBleTypeChange(student.id, 'UUID')}
+                                        color={bleType[student.id] === 'UUID' ? 'primary' : 'default'}
+                                        variant={bleType[student.id] === 'UUID' ? 'filled' : 'outlined'}
+                                        sx={{ cursor: 'pointer' }}
+                                      />
+                                    </Box>
+                                  </TableCell>
+                                  <TableCell>
+                                    {bleType[student.id] === 'MAC' ? (
+                                      <TextField
+                                        size="small"
+                                        placeholder="AA:BB:CC:DD:EE:FF"
+                                        value={methodData[student.id]?.mac_address || ''}
+                                        onChange={(e) => handleMethodDataChange(student.id, 'mac_address', e.target.value)}
+                                        fullWidth
+                                      />
+                                    ) : bleType[student.id] === 'UUID' ? (
+                                      <TextField
+                                        size="small"
+                                        placeholder="00001111-0000-1000-8000-00805f9b34fb"
+                                        value={methodData[student.id]?.uuid || ''}
+                                        onChange={(e) => handleMethodDataChange(student.id, 'uuid', e.target.value)}
+                                        fullWidth
+                                      />
+                                    ) : (
+                                      <Typography variant="caption" color="text.secondary">
+                                        Select BLE type first
+                                      </Typography>
+                                    )}
+                                  </TableCell>
+                                </>
                               )}
                               {selectedMethod === 'RFID' && isSelected && (
                                 <TableCell>
@@ -432,10 +521,10 @@ export default function StudentRegistrationPage() {
                 </TableContainer>
               )}
             </Paper>
-          </Grid>
+          </Box>
 
           {/* Save Button */}
-          <Grid size={{ xs: 12 }}>
+          <Box>
             <Paper elevation={2} sx={{ p: 2.5, borderRadius: 2, background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' }}>
               <Button
                 variant="contained"
@@ -455,8 +544,8 @@ export default function StudentRegistrationPage() {
                 {saving ? 'Saving...' : `Save ${selectedMethod} Method for ${selectedStudents.size} Student(s)`}
               </Button>
             </Paper>
-          </Grid>
-        </Grid>
+          </Box>
+        </Box>
       </Box>
 
       <Snackbar
