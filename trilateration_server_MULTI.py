@@ -51,8 +51,9 @@ ANCHOR_LOCATIONS = {
 # student_id: Actual database ID
 # mac: BLE beacon MAC address
 STUDENTS = {
-    1: {"name": "Bernie", "mac": "F7:6C:A5:11:0A:F7", "color": "#4285f4", "student_id": 1},  # Blue
-    2: {"name": "Kurtt", "mac": "51:00:24:06:00:C4", "color": "#ea4335", "student_id": 3},  # Red - CHANGE student_id to match database!
+    1: {"name": "Bernie", "mac": "F7:6C:A5:11:0A:F7", "color": "#4285f4", "student_id": 1, "uuid": "00005242-0000-1000-8000-00805f9b34fb"},
+    2: {"name": "Kurtt", "mac": "51:00:24:06:00:C4", "color": "#ea4335", "student_id": 3, "uuid": "00001803-0000-1000-8000-00805f9b34fb"},
+    3: {"name": "Rae", "mac": "58:54:FF:88:E2:36", "color": "#34a853", "student_id": 2, "uuid": "00001111-0000-1000-8000-00805f9b34fb"},
 }
 
 # Algorithm parameters
