@@ -11,8 +11,9 @@ import {
   Alert,
   ActivityIndicator,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../context/AuthContext';
-import api from '../config/api';
+import api, { API_BASE_URL } from '../config/api';
 
 export default function LoginScreen() {
   const [username, setUsername] = useState('');
@@ -29,17 +30,26 @@ export default function LoginScreen() {
     setLoading(true);
     try {
       console.log('Attempting login with:', username);
-      const { data } = await api.post('/auth/login', { 
-        username: username.trim(), 
-        password: password.trim() 
+      console.log('[AttendBox API] Login will POST to:', API_BASE_URL + '/auth/login');
+      console.log('[AttendBox API] Payload:', { username: username.trim() });
+      const { data } = await api.post('/auth/login', {
+        username: username.trim(),
+        password: password.trim(),
       });
       console.log('Login successful!');
       await login(data.token, data.user);
     } catch (error: any) {
       console.error('Login error:', error.response?.data || error.message);
+      if (error.config) {
+        console.error('[AttendBox API] Request config:', {
+          url: error.config.url,
+          method: error.config.method,
+          baseURL: error.config.baseURL,
+        });
+      }
       Alert.alert(
         'Login Failed',
-        error.response?.data?.error || 'Invalid credentials'
+        error.response?.data?.error || error.message || 'Invalid credentials'
       );
     } finally {
       setLoading(false);
@@ -51,7 +61,11 @@ export default function LoginScreen() {
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      <View style={styles.content}>
+      <LinearGradient
+        colors={['#2563eb', '#60a5fa', '#eff6ff']}
+        style={styles.gradient}
+      >
+        <View style={styles.content}>
         {/* Logo/Header */}
         <View style={styles.header}>
           <Text style={styles.logo}>📚</Text>
@@ -103,6 +117,7 @@ export default function LoginScreen() {
           Powered by AttendBox Mobile v1.0
         </Text>
       </View>
+      </LinearGradient>
     </KeyboardAvoidingView>
   );
 }
@@ -110,7 +125,9 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#2563eb',
+  },
+  gradient: {
+    flex: 1,
   },
   content: {
     flex: 1,

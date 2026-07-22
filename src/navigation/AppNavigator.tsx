@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import LoginScreen from '../screens/LoginScreen';
 import ParentDashboardScreen from '../screens/ParentDashboardScreen';
 import StudentPortalScreen from '../screens/StudentPortalScreen';
+import TeacherDashboardScreen from '../screens/TeacherDashboardScreen';
 import { ActivityIndicator, View } from 'react-native';
 
 const Stack = createStackNavigator();
@@ -29,6 +30,8 @@ export default function AppNavigator() {
           <Stack.Screen name="ParentDashboard" component={ParentDashboardScreen} />
         ) : role === 'student' ? (
           <Stack.Screen name="StudentPortal" component={StudentPortalScreen} />
+        ) : role === 'teacher' ? (
+          <Stack.Screen name="TeacherDashboard" component={TeacherDashboardScreen} />
         ) : (
           <Stack.Screen name="Login" component={LoginScreen} />
         )}
