@@ -51,6 +51,7 @@ export default function BLEPositioningMap({
   const [positions, setPositions] = useState<BLEPosition[]>([]);  // Changed to array
   const [waiting, setWaiting] = useState<{ active_anchors: number; needed: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [diagnosticsMinimized, setDiagnosticsMinimized] = useState(false);  // NEW: State for collapsible panel
   const wsRef = useRef<WebSocket | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -306,25 +307,47 @@ export default function BLEPositioningMap({
             position: 'absolute',
             bottom: 16,
             left: 16,
-            p: 2,
+            p: diagnosticsMinimized ? 1.5 : 2,
             bgcolor: 'rgba(255,255,255,0.98)',
             backdropFilter: 'blur(10px)',
             zIndex: 1000,
-            minWidth: 250,
-            maxWidth: 400,
+            minWidth: diagnosticsMinimized ? 'auto' : 250,
+            maxWidth: diagnosticsMinimized ? 'auto' : 400,
             borderRadius: theme.borderRadius.base,
+            transition: 'all 0.3s ease',
           }}
         >
-          <Typography 
-            variant="subtitle2" 
-            fontWeight={theme.typography.fontWeight.bold}
-            gutterBottom
-            sx={{ fontFamily: theme.typography.fontFamily.display }}
-          >
-            📍 Position Diagnostics
-          </Typography>
+          <Box display="flex" justifyContent="space-between" alignItems="center" mb={diagnosticsMinimized ? 0 : 1}>
+            <Typography 
+              variant="subtitle2" 
+              fontWeight={theme.typography.fontWeight.bold}
+              sx={{ fontFamily: theme.typography.fontFamily.display }}
+            >
+              📍 Position Diagnostics
+            </Typography>
+            <Box
+              component="button"
+              onClick={() => setDiagnosticsMinimized(!diagnosticsMinimized)}
+              sx={{
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                padding: '4px 8px',
+                borderRadius: theme.borderRadius.sm,
+                fontSize: '18px',
+                color: theme.colors.neutral[600],
+                transition: 'background 0.2s',
+                '&:hover': {
+                  bgcolor: theme.colors.neutral[100],
+                },
+              }}
+              title={diagnosticsMinimized ? 'Expand' : 'Minimize'}
+            >
+              {diagnosticsMinimized ? '+' : '−'}
+            </Box>
+          </Box>
 
-          {positions.map((position) => (
+          {!diagnosticsMinimized && positions.map((position) => (
             <Box key={position.target_id} mb={2} pb={2} borderBottom={`1px solid ${theme.colors.neutral[200]}`}>
               <Box display="flex" alignItems="center" gap={1} mb={1}>
                 <Box 
