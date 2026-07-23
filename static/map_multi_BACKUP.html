@@ -37,35 +37,6 @@
             z-index: 1000;
             min-width: 280px;
             max-width: 400px;
-            max-height: 80vh;
-            overflow-y: auto;
-        }
-        
-        .info-box.minimized {
-            min-width: auto;
-            padding: 10px;
-        }
-        
-        .info-box-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 10px;
-        }
-        
-        .minimize-button {
-            background: none;
-            border: none;
-            cursor: pointer;
-            font-size: 18px;
-            padding: 4px 8px;
-            border-radius: 4px;
-            transition: background 0.2s;
-            color: #666;
-        }
-        
-        .minimize-button:hover {
-            background: #f0f0f0;
         }
         
         .info-box h3 {
@@ -221,141 +192,17 @@
             background: none !important;
             border: none !important;
         }
-        
-        /* Custom Layer Switcher - Collapsible */
-        .layer-switcher {
-            position: absolute;
-            bottom: 10px;
-            right: 10px;
-            z-index: 1000;
-        }
-        
-        .layer-switcher-button {
-            background: rgba(255, 255, 255, 0.95);
-            border: none;
-            padding: 10px 16px;
-            border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
-            cursor: pointer;
-            font-size: 14px;
-            font-weight: 600;
-            color: #333;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            transition: background 0.2s;
-        }
-        
-        .layer-switcher-button:hover {
-            background: rgba(255, 255, 255, 1);
-            box-shadow: 0 2px 12px rgba(0,0,0,0.3);
-        }
-        
-        .layer-switcher-menu {
-            position: absolute;
-            bottom: 50px;
-            right: 0;
-            background: rgba(255, 255, 255, 0.95);
-            padding: 12px;
-            border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
-            min-width: 200px;
-            display: none;
-        }
-        
-        .layer-switcher-menu.open {
-            display: block;
-        }
-        
-        .layer-switcher-title {
-            font-weight: 700;
-            font-size: 13px;
-            margin-bottom: 10px;
-            color: #333;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-        
-        .layer-option {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            padding: 8px;
-            margin-bottom: 4px;
-            cursor: pointer;
-            border-radius: 4px;
-            transition: background 0.2s;
-            font-size: 12px;
-        }
-        
-        .layer-option:hover {
-            background: #f0f0f0;
-        }
-        
-        .layer-option.active {
-            background: #e3f2fd;
-            font-weight: 600;
-        }
-        
-        .layer-radio {
-            width: 16px;
-            height: 16px;
-            border-radius: 50%;
-            border: 2px solid #666;
-            display: inline-block;
-            position: relative;
-        }
-        
-        .layer-option.active .layer-radio {
-            border-color: #2196f3;
-        }
-        
-        .layer-option.active .layer-radio::after {
-            content: '';
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: #2196f3;
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-        }
     </style>
 </head>
 <body>
     <div id="map"></div>
     
     <div class="info-box" id="info-box">
-        <div class="info-box-header">
-            <h3 style="margin: 0; display: flex; align-items: center; gap: 8px;">
-                <span class="status disconnected" id="status-indicator"></span>
-                <span id="status-text">Connecting...</span>
-            </h3>
-            <button class="minimize-button" id="minimize-info" title="Minimize">−</button>
-        </div>
+        <h3>
+            <span class="status disconnected" id="status-indicator"></span>
+            <span id="status-text">Connecting...</span>
+        </h3>
         <div id="info-content"></div>
-    </div>
-    
-    <div class="layer-switcher">
-        <button class="layer-switcher-button" id="layer-switcher-toggle">
-            🗺️ Map Style
-        </button>
-        <div class="layer-switcher-menu" id="layer-switcher-menu">
-            <div class="layer-option active" data-layer="streets" id="layer-streets">
-                <span class="layer-radio"></span>
-                <span>Streets (OSM)</span>
-            </div>
-            <div class="layer-option" data-layer="satellite" id="layer-satellite">
-                <span class="layer-radio"></span>
-                <span>Satellite</span>
-            </div>
-            <div class="layer-option" data-layer="satellite-labels" id="layer-satellite-labels">
-                <span class="layer-radio"></span>
-                <span>Satellite + Labels</span>
-            </div>
-        </div>
     </div>
     
     <div class="legend">
@@ -377,103 +224,12 @@
             attributionControl: true
         }).setView([8.473258, 124.649872], 19);
         
-        // Define map layers
-        const streets = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        // Add OpenStreetMap tiles
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             attribution: '© OpenStreetMap contributors',
             maxZoom: 22,
             maxNativeZoom: 19
-        });
-        
-        const satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-            attribution: '© Esri, Maxar, Earthstar Geographics',
-            maxZoom: 19
-        });
-        
-        const satLabels = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
-            maxZoom: 19
-        });
-        
-        // Add default layer (Streets)
-        streets.addTo(map);
-        
-        // Add layer switcher control (top-right corner) - HIDDEN, we'll use custom one
-        L.control.layers({
-            "Streets (OSM)": streets,
-            "Satellite": satellite,
-            "Satellite + Labels": L.layerGroup([satellite, satLabels])
-        }, {}, { position: "topright" }).addTo(map);
-        
-        // Custom layer switcher functionality
-        let currentLayer = 'streets';
-        const layerMap = {
-            'streets': streets,
-            'satellite': satellite,
-            'satellite-labels': L.layerGroup([satellite, satLabels])
-        };
-        
-        // Info box minimize/maximize
-        const infoBox = document.getElementById('info-box');
-        const infoContent = document.getElementById('info-content');
-        const minimizeButton = document.getElementById('minimize-info');
-        let infoBoxMinimized = false;
-        
-        minimizeButton.addEventListener('click', function() {
-            infoBoxMinimized = !infoBoxMinimized;
-            if (infoBoxMinimized) {
-                infoContent.style.display = 'none';
-                infoBox.classList.add('minimized');
-                minimizeButton.textContent = '+';
-                minimizeButton.title = 'Maximize';
-            } else {
-                infoContent.style.display = 'block';
-                infoBox.classList.remove('minimized');
-                minimizeButton.textContent = '−';
-                minimizeButton.title = 'Minimize';
-            }
-        });
-        
-        // Toggle menu open/close
-        const toggleButton = document.getElementById('layer-switcher-toggle');
-        const menu = document.getElementById('layer-switcher-menu');
-        
-        toggleButton.addEventListener('click', function(e) {
-            e.stopPropagation();
-            menu.classList.toggle('open');
-        });
-        
-        // Close menu when clicking outside
-        document.addEventListener('click', function(e) {
-            if (!menu.contains(e.target) && e.target !== toggleButton) {
-                menu.classList.remove('open');
-            }
-        });
-        
-        // Add click handlers to layer options
-        document.querySelectorAll('.layer-option').forEach(option => {
-            option.addEventListener('click', function() {
-                const layerType = this.dataset.layer;
-                
-                // Update active state
-                document.querySelectorAll('.layer-option').forEach(opt => opt.classList.remove('active'));
-                this.classList.add('active');
-                
-                // Remove current layer
-                if (layerMap[currentLayer]) {
-                    map.removeLayer(layerMap[currentLayer]);
-                }
-                
-                // Add new layer
-                if (layerMap[layerType]) {
-                    layerMap[layerType].addTo(map);
-                    currentLayer = layerType;
-                }
-                
-                // Close menu after selection
-                menu.classList.remove('open');
-                
-                console.log('[Map] Switched to layer:', layerType);
-            });
-        });
+        }).addTo(map);
         
         // Add scale control
         L.control.scale({
