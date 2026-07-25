@@ -3,7 +3,7 @@ import { useAuth } from './context/AuthContext';
 import type { UserRole } from './types';
 import LoginPage           from './pages/LoginPage';
 import AdminDashboardPage  from './pages/AdminDashboardPage';
-import TeacherDashboardPage from './pages/TeacherDashboardPageOld';
+import TeacherDashboardPage from './pages/TeacherDashboardPage';
 import ParentDashboardPage  from './pages/ParentDashboardPage';
 import StudentPortalPage   from './pages/StudentPortalPage';
 import DashboardPage       from './pages/DashboardPage';   // legacy teacher QR dashboard
@@ -11,6 +11,7 @@ import StudentsPage        from './pages/StudentPage';
 import StudentRegistrationPage from './pages/StudentRegistrationPage';
 import LocationTrackingPage from './pages/LocationTrackingPage';
 import KioskPage           from './pages/KioskPage';
+import SF2ReportPage       from './pages/SF2ReportPage';
 
 // ─── Route guard — redirects to login if not authed ───────────────────
 function PrivateRoute({ children }: { children: React.ReactNode }) {
@@ -83,6 +84,11 @@ export default function App() {
       {/* Location Tracking (Admin & Teacher) */}
       <Route path="/location-tracking" element={
         <RoleRoute role={['admin', 'teacher']}><LocationTrackingPage /></RoleRoute>
+      } />
+
+      {/* SF2 Report (Teachers & Admin) */}
+      <Route path="/sf2-report" element={
+        <RoleRoute role={['admin', 'teacher']}><SF2ReportPage /></RoleRoute>
       } />
 
       {/* Root redirect */}

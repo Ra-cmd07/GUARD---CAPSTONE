@@ -50,19 +50,20 @@ export default function LoginPage() {
     <Box sx={{
       minHeight: '100vh',
       background: theme.colors.primary.gradient,
-      display:   'flex',
+      display: 'flex',
       flexDirection: 'column',
     }}>
       {/* Header */}
       <Box sx={{ 
-        px: 4, 
+        px: { xs: 2, sm: 4 }, 
         py: 2, 
         borderBottom: '1px solid rgba(255,255,255,0.15)', 
         display: 'flex', 
         alignItems: 'center', 
-        gap: 1.5 
+        gap: 1.5,
+        flexWrap: 'wrap',
       }}>
-        <School sx={{ color: theme.colors.secondary.main, fontSize: 32 }} />
+        <School sx={{ color: theme.colors.secondary.main, fontSize: { xs: 24, sm: 32 } }} />
         <Box>
           <Typography 
             variant="h6" 
@@ -71,6 +72,7 @@ export default function LoginPage() {
               fontFamily: theme.typography.fontFamily.display,
               fontWeight: theme.typography.fontWeight.extrabold,
               lineHeight: 1.1,
+              fontSize: { xs: '1rem', sm: '1.25rem' },
             }}
           >
             ATTENDBOX
@@ -80,18 +82,19 @@ export default function LoginPage() {
             sx={{
               color: 'rgba(255,255,255,0.8)',
               fontFamily: theme.typography.fontFamily.primary,
+              fontSize: { xs: '0.65rem', sm: '0.75rem' },
             }}
           >
-            Unified Student Attendance Tracking System
+            Student Attendance Tracking
           </Typography>
         </Box>
       </Box>
 
       {/* Login Card */}
-      <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', p: 3 }}>
+      <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', p: { xs: 1.5, sm: 3 } }}>
         <Paper 
           sx={{ 
-            p: 5, 
+            p: { xs: 3, sm: 5 }, 
             width: '100%', 
             maxWidth: 420, 
             borderRadius: theme.borderRadius.card,
@@ -107,23 +110,25 @@ export default function LoginPage() {
                 color: theme.colors.primary.main,
                 fontFamily: theme.typography.fontFamily.display,
                 fontWeight: theme.typography.fontWeight.bold,
+                fontSize: { xs: '1.5rem', sm: '1.75rem' },
               }}
               gutterBottom
             >
-              Welcome Back
+              Welcome
             </Typography>
             <Typography 
               variant="body2" 
               sx={{
                 color: theme.colors.neutral[600],
                 fontFamily: theme.typography.fontFamily.primary,
+                fontSize: { xs: '0.8rem', sm: '0.875rem' },
               }}
             >
-              Sign in to your account — your role is detected automatically
+              Sign in to your account
             </Typography>
           </Box>
 
-          {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+          {error && <Alert severity="error" sx={{ mb: 2, fontSize: { xs: '0.8rem', sm: '0.875rem' } }}>{error}</Alert>}
 
           <Box component="form" onSubmit={handleSubmit}>
             <TextField
@@ -134,6 +139,7 @@ export default function LoginPage() {
               autoFocus
               value={username} 
               onChange={e => setUsername(e.target.value)}
+              size="small"
               sx={{
                 '& .MuiOutlinedInput-root': {
                   borderRadius: theme.borderRadius.input,
@@ -149,6 +155,7 @@ export default function LoginPage() {
               type={showPw ? 'text' : 'password'}
               value={password} 
               onChange={e => setPassword(e.target.value)}
+              size="small"
               sx={{
                 '& .MuiOutlinedInput-root': {
                   borderRadius: theme.borderRadius.input,
@@ -158,8 +165,8 @@ export default function LoginPage() {
               InputProps={{
                 endAdornment: (
                   <InputAdornment position="end">
-                    <IconButton onClick={() => setShowPw(p => !p)} edge="end">
-                      {showPw ? <VisibilityOff /> : <Visibility />}
+                    <IconButton onClick={() => setShowPw(p => !p)} edge="end" size="small">
+                      {showPw ? <VisibilityOff fontSize="small" /> : <Visibility fontSize="small" />}
                     </IconButton>
                   </InputAdornment>
                 ),
@@ -175,18 +182,19 @@ export default function LoginPage() {
               sx={{
                 ...theme.components.button.primary,
                 mt: 3, 
-                py: 1.5,
+                py: { xs: 1, sm: 1.5 },
+                fontSize: { xs: '0.9rem', sm: '1rem' },
                 '&:hover': theme.components.button.primary.hover,
               }}
             >
-              {loading ? <CircularProgress size={24} color="inherit" /> : 'Sign In'}
+              {loading ? <CircularProgress size={20} color="inherit" /> : 'Sign In'}
             </Button>
           </Box>
 
           {/* Role hints */}
           <Box sx={{ 
             mt: 3, 
-            p: 2, 
+            p: { xs: 1.5, sm: 2 }, 
             bgcolor: theme.colors.neutral[50], 
             borderRadius: theme.borderRadius.base,
             border: `1px solid ${theme.colors.neutral[200]}`,
@@ -197,15 +205,16 @@ export default function LoginPage() {
                 color: theme.colors.neutral[700],
                 fontFamily: theme.typography.fontFamily.primary,
                 fontWeight: theme.typography.fontWeight.semibold,
+                fontSize: { xs: '0.7rem', sm: '0.75rem' },
               }}
               display="block" 
               mb={0.5}
             >
-              Access is granted based on your role:
+              Access based on your role:
             </Typography>
             {[
               { role: 'Admin', desc: 'Full system management' },
-              { role: 'Teacher', desc: 'Class attendance management' },
+              { role: 'Teacher', desc: 'Class attendance' },
               { role: 'Parent', desc: 'View child attendance' },
               { role: 'Student', desc: 'View personal records' },
             ].map(r => (
@@ -215,6 +224,7 @@ export default function LoginPage() {
                 sx={{
                   color: theme.colors.neutral[600],
                   fontFamily: theme.typography.fontFamily.primary,
+                  fontSize: { xs: '0.65rem', sm: '0.75rem' },
                 }}
                 display="block"
               >

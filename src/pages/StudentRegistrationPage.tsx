@@ -11,6 +11,7 @@ import {
   ArrowBack, QrCode2, Bluetooth, CreditCard, CheckCircle,
   Info, Save, Search,
 } from '@mui/icons-material';
+import { FormControl, Select, MenuItem } from '@mui/material';
 import api from '../api/client';
 
 type PreferredMethod = 'QR' | 'BLE' | 'RFID';
@@ -28,12 +29,22 @@ interface Student {
   rfid_uid?: string;
 }
 
+interface Section {
+  id: number;
+  name: string;
+  grade: string;
+  section_code: string;
+  student_count?: number;
+}
+
 export default function StudentRegistrationPage() {
   const navigate = useNavigate();
 
   const [students, setStudents] = useState<Student[]>([]);
+  const [sections, setSections] = useState<Section[]>([]);
   const [selectedMethod, setSelectedMethod] = useState<PreferredMethod>('QR');
   const [selectedStudents, setSelectedStudents] = useState<Set<number>>(new Set());
+  const [selectedSections, setSelectedSections] = useState<{ [studentId: number]: number }>({});
   const [methodData, setMethodData] = useState<{ 
     [studentId: number]: { 
       uuid?: string; 
@@ -48,10 +59,20 @@ export default function StudentRegistrationPage() {
   const [snack, setSnack] = useState<{ open: boolean; msg: string; sev: 'success' | 'error' }>
     ({ open: false, msg: '', sev: 'success' });
 
-  // Load all students
+  // Load all students and sections
   useEffect(() => {
     loadStudents();
+    loadSections();
   }, []);
+
+  const loadSections = async () => {
+    try {
+      const { data } = await api.get('/admin/sections');
+      setSections(data.sections || []);
+    } catch (err) {
+      console.error('Failed to load sections:', err);
+    }
+  };
 
   const loadStudents = async () => {
     setLoading(true);
@@ -195,7 +216,7 @@ export default function StudentRegistrationPage() {
           name: student?.name,
           gender: student?.gender || 'M',
           grade: student?.grade,
-          section: student?.section,
+          section_id: selectedSections[studentId] || student?.section_id,
           preferred_method: selectedMethod,
         };
         if (selectedMethod === 'BLE') {
@@ -226,6 +247,7 @@ export default function StudentRegistrationPage() {
       await loadStudents();
       setSelectedStudents(new Set());
       setMethodData({});
+      setSelectedSections({});
     } catch (err: any) {
       setSnack({ 
         open: true, 
@@ -425,6 +447,7 @@ export default function StudentRegistrationPage() {
                         <TableCell>LRN</TableCell>
                         <TableCell>Name</TableCell>
                         <TableCell>Grade/Section</TableCell>
+                        <TableCell>Assign Section *</TableCell>
                         <TableCell>Current Method</TableCell>
                         {selectedMethod === 'BLE' && <TableCell>BLE Type *</TableCell>}
                         {selectedMethod === 'BLE' && <TableCell>Identifier *</TableCell>}
@@ -450,7 +473,27 @@ export default function StudentRegistrationPage() {
                               </TableCell>
                               <TableCell>{student.lrn}</TableCell>
                               <TableCell><strong>{student.name}</strong></TableCell>
-                              <TableCell>{student.grade} {student.section}</TableCell>
+                              <TableCell>{student.grade} {student.section_name || student.section}</TableCell>
+                              <TableCell>
+                                {isSelected ? (
+                                  <FormControl fullWidth size="small">
+                                    <Select
+                                      value={selectedSections[student.id] || ''}
+                                      onChange={(e) => setSelectedSections(prev => ({ ...prev, [student.id]: Number(e.target.value) }))}
+                                      displayEmpty
+                                    >
+                                      <MenuItem value="">-- Keep Current --</MenuItem>
+                                      {sections.map(section => (
+                                        <MenuItem key={section.id} value={section.id}>
+                                          {section.name}
+                                        </MenuItem>
+                                      ))}
+                                    </Select>
+                                  </FormControl>
+                                ) : (
+                                  <Typography variant="caption" color="text.secondary">Select student above</Typography>
+                                )}
+                              </TableCell>
                               <TableCell>
                                 <Chip label={student.preferred_method || 'QR'} size="small" />
                               </TableCell>

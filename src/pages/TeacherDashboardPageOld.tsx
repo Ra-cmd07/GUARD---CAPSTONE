@@ -8,7 +8,7 @@ import {
 } from '@mui/material';
 import {
   CheckCircle, Cancel, AccessTime, People, Menu, School,
-  Edit, Logout, Refresh, FileDownload, Dashboard, PhotoCamera,
+  Edit, Logout, Refresh, FileDownload, Dashboard, PhotoCamera, Description,
 } from '@mui/icons-material';
 import { format } from 'date-fns';
 import { useNavigate } from 'react-router-dom';

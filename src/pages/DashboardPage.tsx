@@ -173,6 +173,7 @@ export default function DashboardPage() {
           classTime={classTime}
           onClassTimeChange={setClassTime}
           onOpenGuardian={() => setGuardianDrawer(true)}
+          isAdmin={teacher?.role === 'admin'}
         />
 
         {/* Main */}

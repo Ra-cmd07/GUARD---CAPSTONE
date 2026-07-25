@@ -20,21 +20,24 @@ import api from '../api/client';
 import type { AdminStats, AttendanceRecord, Kiosk } from '../types';
 import AttendancePhotoDialog from '../components/AttendancePhotoDialog';
 import BLEPositioningMap from '../components/BLEPositioningMap';
+import TeacherClassSchedule from '../components/dashboard/TeacherClassSchedule';
 import theme from '../theme/professionalTheme';
 import ReportsPage from './ReportsPage';
 import KiosksPage from './KiosksPage';
+import SectionsPage from './SectionsPage';
 
 const NAV = [
   { id: 'dashboard', label: 'Dashboard',  icon: <Dashboard /> },
   { id: 'users',     label: 'Users',      icon: <People /> },
   { id: 'students',  label: 'Students',   icon: <School /> },
+  { id: 'enrollment', label: 'Sections & Enrollment', icon: <School /> },
   { id: 'kiosks',    label: 'Kiosks',     icon: <Router /> },
   { id: 'sms',       label: 'SMS Logs',   icon: <Sms /> },
   { id: 'reports',   label: 'Reports',    icon: <Assessment /> },
   { id: 'location',  label: 'Live Map',   icon: <LocationOn /> },
 ];
 
-type Tab = 'dashboard' | 'users' | 'students' | 'kiosks' | 'sms' | 'reports' | 'location';
+type Tab = 'dashboard' | 'users' | 'students' | 'enrollment' | 'kiosks' | 'sms' | 'reports' | 'location';
 
 function StatCard({ label, value, icon, color }: { label: string; value: any; icon: React.ReactNode; color: string }) {
   return (
@@ -201,9 +204,11 @@ function AddParentDialog({ open, onClose, student, onCreated }: {
 function CreateUserDialog({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: () => void }) {
   const [form, setForm] = useState({
     username: '', password: '', role: 'teacher', name: '',
-    gender: '', section: '', contact: '', address: '', lrn: '', grade: '',
+    gender: '', section: '', section_id: '', contact: '', address: '', lrn: '', grade: '',
     subject: '', room: '', schedule: '', relationship: '', employee_id: '',
   });
+  const [sections, setSections] = useState<any[]>([]);
+  const [loadingSections, setLoadingSections] = useState(false);
   const [parents, setParents] = useState([
     { username: '', password: '', name: '', relationship: 'Father', contact: '' },
     { username: '', password: '', name: '', relationship: 'Mother', contact: '' },
@@ -211,9 +216,29 @@ function CreateUserDialog({ open, onClose, onCreated }: { open: boolean; onClose
   ]);
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState('');
+  
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }));
   const setParent = (index: number, k: string, v: string) => {
     setParents(p => p.map((parent, i) => i === index ? { ...parent, [k]: v } : parent));
+  };
+
+  // Load sections when dialog opens
+  useEffect(() => {
+    if (open) {
+      loadSections();
+    }
+  }, [open]);
+
+  const loadSections = async () => {
+    setLoadingSections(true);
+    try {
+      const { data } = await api.get('/admin/sections');
+      setSections(data.sections || []);
+    } catch (err) {
+      console.error('Failed to load sections:', err);
+    } finally {
+      setLoadingSections(false);
+    }
   };
 
   const handleSubmit = async () => {
@@ -228,7 +253,7 @@ function CreateUserDialog({ open, onClose, onCreated }: { open: boolean; onClose
       await api.post('/admin/users', payload);
       onCreated();
       onClose();
-      setForm({ username:'', password:'', role:'teacher', name:'', gender:'', section:'', contact:'', address:'', lrn:'', grade:'', subject:'', room:'', schedule:'', relationship:'', employee_id:'' });
+      setForm({ username:'', password:'', role:'teacher', name:'', gender:'', section:'', section_id:'', contact:'', address:'', lrn:'', grade:'', subject:'', room:'', schedule:'', relationship:'', employee_id:'' });
       setParents([
         { username: '', password: '', name: '', relationship: 'Father', contact: '' },
         { username: '', password: '', name: '', relationship: 'Mother', contact: '' },
@@ -288,7 +313,24 @@ function CreateUserDialog({ open, onClose, onCreated }: { open: boolean; onClose
           {form.role === 'student' && <>
             <Grid size={{ xs: 12, sm: 6 }}><TextField label="LRN *" fullWidth value={form.lrn} onChange={e => set('lrn', e.target.value)} /></Grid>
             <Grid size={{ xs: 12, sm: 6 }}><TextField label="Grade" fullWidth value={form.grade} onChange={e => set('grade', e.target.value)} /></Grid>
-            <Grid size={{ xs: 12, sm: 6 }}><TextField label="Section" fullWidth value={form.section} onChange={e => set('section', e.target.value)} /></Grid>
+            <Grid size={{ xs: 12, sm: 6 }}>
+              <FormControl fullWidth>
+                <InputLabel>Section</InputLabel>
+                <Select 
+                  value={form.section_id} 
+                  label="Section"
+                  onChange={e => set('section_id', e.target.value)}
+                  disabled={loadingSections}
+                >
+                  <MenuItem value="">-- Select Section --</MenuItem>
+                  {sections.map(section => (
+                    <MenuItem key={section.id} value={section.id}>
+                      {section.name} (Grade {section.grade})
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Grid>
             
             {/* Parent Accounts Section */}
             <Grid size={{ xs: 12 }}>
@@ -387,6 +429,81 @@ function CreateUserDialog({ open, onClose, onCreated }: { open: boolean; onClose
   );
 }
 
+// Edit Student Dialog
+function EditStudentDialog({ 
+  open, 
+  onClose, 
+  student,
+  form,
+  onFormChange,
+  onSave,
+  sections,
+  loading
+}: {
+  open: boolean;
+  onClose: () => void;
+  student: any;
+  form: any;
+  onFormChange: (e: any) => void;
+  onSave: () => void;
+  sections: any[];
+  loading: boolean;
+}) {
+  if (!student) return null;
+
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+      <DialogTitle sx={{ bgcolor: '#3b82f6', color: '#fff', display: 'flex', justifyContent: 'space-between' }}>
+        <Box>
+          <Typography variant="h6">Edit Student</Typography>
+          <Typography variant="caption" sx={{ opacity: 0.9 }}>
+            Username: {student.username}
+          </Typography>
+        </Box>
+        <IconButton onClick={onClose} sx={{ color: '#fff' }}>
+          <Close />
+        </IconButton>
+      </DialogTitle>
+      <DialogContent sx={{ pt: 3 }}>
+        <Grid container spacing={2}>
+          <Grid size={{ xs: 12 }}>
+            <TextField
+              label="Name *"
+              fullWidth
+              value={form.name}
+              onChange={(e) => onFormChange({ target: { name: 'name', value: e.target.value } })}
+              placeholder="Student full name"
+            />
+          </Grid>
+          <Grid size={{ xs: 12 }}>
+            <FormControl fullWidth>
+              <InputLabel>Section *</InputLabel>
+              <Select
+                name="section_id"
+                value={form.section_id}
+                onChange={onFormChange}
+                label="Section *"
+              >
+                {sections.map((s: any) => (
+                  <MenuItem key={s.id} value={s.id}>
+                    {s.name} ({s.grade})
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          </Grid>
+        </Grid>
+      </DialogContent>
+      <DialogActions sx={{ px: 3, pb: 2 }}>
+        <Button onClick={onClose} variant="outlined">Cancel</Button>
+        <Button onClick={onSave} variant="contained" disabled={loading}>
+          {loading ? <CircularProgress size={20} /> : 'Save Changes'}
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+}
+
 export default function AdminDashboardPage() {
   const { user, logout } = useAuth();
   const navigate         = useNavigate();
@@ -400,7 +517,11 @@ export default function AdminDashboardPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [snack,      setSnack]      = useState({ open: false, msg: '', sev: 'success' as any });
   const [addParentOpen, setAddParentOpen] = useState(false);
+  const [editStudentOpen, setEditStudentOpen] = useState(false);
   const [selectedStudent, setSelectedStudent] = useState<any>(null);
+  const [editStudentForm, setEditStudentForm] = useState({ name: '', section_id: '' });
+  const [sections, setSections] = useState<any[]>([]);
+  const [editingStudentLoading, setEditingStudentLoading] = useState(false);
 
   // Photo viewer state
   const [photoDialog, setPhotoDialog] = useState({
@@ -448,9 +569,52 @@ export default function AdminDashboardPage() {
     } catch { /* silent */ }
   }, []);
 
+  const loadSectionsData = useCallback(async () => {
+    try {
+      const { data } = await api.get('/admin/sections');
+      setSections(data.sections || data || []);
+    } catch (err) {
+      console.error('Failed to load sections:', err);
+    }
+  }, []);
+
+  const handleEditStudent = async () => {
+    try {
+      setEditingStudentLoading(true);
+      if (!editStudentForm.name || !editStudentForm.section_id) {
+        showSnack('Please fill in all fields', 'error');
+        return;
+      }
+
+      const payload = {
+        name: editStudentForm.name,
+        section_id: Number(editStudentForm.section_id),
+      };
+
+      await api.patch(`/admin/students/${selectedStudent.profileId}`, payload);
+      showSnack('Student updated successfully');
+      setEditStudentOpen(false);
+      loadUsers();
+    } catch (err: any) {
+      showSnack(err.response?.data?.error || 'Failed to update student', 'error');
+    } finally {
+      setEditingStudentLoading(false);
+    }
+  };
+
   useEffect(() => { loadDashboard(); }, [loadDashboard]);
 
-  // Auto-refresh dashboard every 5 seconds when on dashboard tab
+  useEffect(() => {
+    if (editStudentOpen) {
+      loadSectionsData();
+      if (selectedStudent) {
+        setEditStudentForm({
+          name: selectedStudent.name || '',
+          section_id: selectedStudent.section_id || '',
+        });
+      }
+    }
+  }, [editStudentOpen, selectedStudent, loadSectionsData]);
   useEffect(() => {
     if (tab === 'dashboard') {
       const interval = setInterval(() => {
@@ -497,7 +661,8 @@ export default function AdminDashboardPage() {
         lrn: student.lrn,
         name: student.name,
         grade: student.grade,
-        section: student.section,
+        section_id: student.section_id,
+        section_name: student.section_name || student.section,
       });
 
       // Create a temporary container for the QR canvas
@@ -548,18 +713,29 @@ export default function AdminDashboardPage() {
   };
 
   return (
-    <Box sx={{ display: 'flex', height: '100vh', background: '#2563eb', overflow: 'hidden' }}>
+    <Box sx={{ 
+      display: 'flex', 
+      height: '100vh', 
+      background: '#2563eb', 
+      overflow: 'hidden',
+      flexDirection: { xs: 'column', sm: 'row' }
+    }}>
       {/* ── Sidebar ── */}
       <Box sx={{
-        width: sideOpen ? 240 : 0,
-        transition: 'width .25s',
-        overflow: 'hidden',
+        width: { xs: sideOpen ? '100%' : 0, sm: sideOpen ? 240 : 0 },
+        height: { xs: sideOpen ? 'auto' : 0, sm: '100%' },
+        maxHeight: { xs: sideOpen ? '70vh' : 0, sm: '100vh' },
+        transition: 'all .25s',
+        overflow: 'hidden auto',
         background: '#3b82f6',
         color: '#fff',
         display: 'flex', 
         flexDirection: 'column',
         flexShrink: 0,
-        borderRight: 'none',  // Remove any border
+        borderRight: { xs: 'none', sm: 'none' },
+        borderBottom: { xs: sideOpen ? '1px solid rgba(255,255,255,0.15)' : 'none', sm: 'none' },
+        zIndex: 100,
+        position: { xs: sideOpen ? 'relative' : 'absolute', sm: 'relative' },
       }}>
         <Box sx={{ p: 2.5, borderBottom: '1px solid rgba(255,255,255,0.15)' }}>
           <Typography variant="h6" fontWeight={800}>ATTENDBOX</Typography>
@@ -598,22 +774,26 @@ export default function AdminDashboardPage() {
         display: 'flex', 
         flexDirection: 'column', 
         overflow: 'hidden',
+        width: { xs: '100%', sm: 'auto' },
       }}>
         {/* Topbar */}
         <Box sx={{ 
           bgcolor: '#fff', 
-          px: 2, 
+          px: { xs: 1.5, sm: 2 }, 
           py: 1.5, 
           borderBottom: '1px solid #e0e0e0', 
           display: 'flex', 
           alignItems: 'center', 
-          gap: 2,
+          gap: 1,
           boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+          flexWrap: 'wrap',
         }}>
-          <IconButton onClick={() => setSideOpen(o => !o)}><Menu /></IconButton>
-          <Typography variant="h6" fontWeight={700} flex={1}>{NAV.find(n => n.id === tab)?.label}</Typography>
-          <Typography variant="body2" color="text.secondary">
-            📅 {format(new Date(), 'MMMM d, yyyy')}
+          <IconButton onClick={() => setSideOpen(o => !o)} size="small"><Menu /></IconButton>
+          <Typography variant="h6" fontWeight={700} flex={1} sx={{ fontSize: { xs: '1rem', sm: '1.25rem' } }}>
+            {NAV.find(n => n.id === tab)?.label}
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>
+            📅 {format(new Date(), 'MMM d, yyyy')}
           </Typography>
         </Box>
 
@@ -621,13 +801,13 @@ export default function AdminDashboardPage() {
         <Box sx={{ 
           flex: 1, 
           overflow: 'auto', 
-          p: 3,
+          p: { xs: 1.5, sm: 3 },
         }}>
 
           {/* ── Dashboard Tab ── */}
           {tab === 'dashboard' && (
             <>
-              <Grid container spacing={2.5} mb={3}>
+              <Grid container spacing={{ xs: 1.5, sm: 2.5 }} mb={3}>
                 <Grid size={{ xs: 12, sm: 6, md: 3 }}>
                   <StatCard label="Total Students" value={stats?.total_students} icon={<School />} color="#1565c0" />
                 </Grid>
@@ -642,19 +822,21 @@ export default function AdminDashboardPage() {
                 </Grid>
               </Grid>
 
-              <Paper elevation={2} sx={{ borderRadius: 2 }}>
+              <Paper elevation={2} sx={{ borderRadius: 2, overflow: 'hidden' }}>
                 <Box sx={{ 
-                  p: 2.5, 
+                  p: { xs: 1.5, sm: 2.5 }, 
                   background: theme.colors.primary.gradient,
                   color: '#fff',
                   display: 'flex', 
                   justifyContent: 'space-between', 
-                  alignItems: 'center' 
+                  alignItems: 'center',
+                  flexWrap: 'wrap',
+                  gap: 1,
                 }}>
                   <Box display="flex" alignItems="center" gap={1}>
                     <Typography 
                       fontWeight={theme.typography.fontWeight.bold}
-                      sx={{ fontFamily: theme.typography.fontFamily.display }}
+                      sx={{ fontFamily: theme.typography.fontFamily.display, fontSize: { xs: '0.9rem', sm: '1rem' } }}
                     >
                       Recent Attendance Logs
                     </Typography>
@@ -676,28 +858,28 @@ export default function AdminDashboardPage() {
                       }}
                     />
                   </Box>
-                  <Button size="small" variant="outlined" onClick={loadDashboard}>Refresh Now</Button>
+                  <Button size="small" variant="outlined" onClick={loadDashboard}>Refresh</Button>
                 </Box>
-                <TableContainer sx={{ maxHeight: 380 }}>
+                <TableContainer sx={{ maxHeight: 380, overflowX: 'auto' }}>
                   <Table stickyHeader size="small">
                     <TableHead>
                       <TableRow>
-                        <TableCell>Student</TableCell>
-                        <TableCell>Grade/Section</TableCell>
-                        <TableCell>Time</TableCell>
-                        <TableCell>Method</TableCell>
-                        <TableCell>Photo</TableCell>
-                        <TableCell>Status</TableCell>
+                        <TableCell sx={{ fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>Student</TableCell>
+                        <TableCell sx={{ fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>Grade/Section</TableCell>
+                        <TableCell sx={{ fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>Time</TableCell>
+                        <TableCell sx={{ fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>Method</TableCell>
+                        <TableCell sx={{ fontSize: { xs: '0.75rem', sm: '0.875rem' }, display: { xs: 'none', md: 'table-cell' } }}>Photo</TableCell>
+                        <TableCell sx={{ fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>Status</TableCell>
                       </TableRow>
                     </TableHead>
                     <TableBody>
                       {logs.length === 0 && (
-                        <TableRow><TableCell colSpan={6} align="center" sx={{ py: 4, color: 'text.secondary' }}>No records today</TableCell></TableRow>
+                        <TableRow><TableCell colSpan={6} align="center" sx={{ py: 4, color: 'text.secondary', fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>No records today</TableCell></TableRow>
                       )}
                       {logs.map(r => (
                         <TableRow key={r.id} hover>
                           <TableCell><b>{r.student_name}</b></TableCell>
-                          <TableCell>{r.grade} {r.section}</TableCell>
+                          <TableCell>{r.grade} {r.section_name || r.section}</TableCell>
                           <TableCell>{r.timestamp ? format(new Date(r.timestamp), 'hh:mm a') : '—'}</TableCell>
                           <TableCell><Chip label={r.scan_method || 'QR'} size="small" /></TableCell>
                           <TableCell>
@@ -836,15 +1018,40 @@ export default function AdminDashboardPage() {
                         <TableCell>{u.created_at ? format(new Date(u.created_at), 'MM/dd/yyyy') : '—'}</TableCell>
                         <TableCell align="center">
                           {tab === 'students' && (
-                            <Tooltip title="Download QR Code">
-                              <IconButton 
-                                size="small" 
-                                color="primary"
-                                onClick={() => handleDownloadQR(u)}
-                              >
-                                <Download />
-                              </IconButton>
-                            </Tooltip>
+                            <>
+                              <Tooltip title="Edit Student">
+                                <IconButton 
+                                  size="small" 
+                                  color="primary"
+                                  onClick={async () => {
+                                    try {
+                                      const { data } = await api.get(`/admin/users/${u.id}`);
+                                      setSelectedStudent({
+                                        ...u,
+                                        profileId: data.profile?.id,
+                                        name: data.profile?.name,
+                                        section_id: data.profile?.section_id,
+                                        section_name: data.profile?.section?.name,
+                                      });
+                                      setEditStudentOpen(true);
+                                    } catch (err) {
+                                      showSnack('Failed to load student details', 'error');
+                                    }
+                                  }}
+                                >
+                                  <Edit />
+                                </IconButton>
+                              </Tooltip>
+                              <Tooltip title="Download QR Code">
+                                <IconButton 
+                                  size="small" 
+                                  color="primary"
+                                  onClick={() => handleDownloadQR(u)}
+                                >
+                                  <Download />
+                                </IconButton>
+                              </Tooltip>
+                            </>
                           )}
                           <Tooltip title={u.is_active ? 'Deactivate' : 'Activate'}>
                             <IconButton size="small" color={u.is_active ? 'error' : 'success'}
@@ -869,6 +1076,16 @@ export default function AdminDashboardPage() {
           {/* ── Kiosks Tab ── */}
           {tab === 'kiosks' && (
             <KiosksPage />
+          )}
+
+          {/* ── Sections Tab ── */}
+          {tab === 'sections' && (
+            <SectionsPage />
+          )}
+
+          {/* ── Sections & Enrollment Tab ── */}
+          {tab === 'enrollment' && (
+            <TeacherClassSchedule readOnly={false} forAllTeachers={true} initialTab={1} />
           )}
 
           {/* ── SMS Logs Tab ── */}
@@ -1003,6 +1220,21 @@ export default function AdminDashboardPage() {
           setAddParentOpen(false);
           setSelectedStudent(null);
         }}
+      />
+
+      <EditStudentDialog
+        open={editStudentOpen}
+        onClose={() => {
+          setEditStudentOpen(false);
+          setSelectedStudent(null);
+          setEditStudentForm({ name: '', section_id: '' });
+        }}
+        student={selectedStudent}
+        form={editStudentForm}
+        onFormChange={(e) => setEditStudentForm(f => ({ ...f, [e.target.name]: e.target.value }))}
+        onSave={handleEditStudent}
+        sections={sections}
+        loading={editingStudentLoading}
       />
 
       {/* Photo Dialog */}

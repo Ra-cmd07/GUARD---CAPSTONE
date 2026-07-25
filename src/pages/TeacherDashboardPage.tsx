@@ -5,18 +5,20 @@ import {
   Select, MenuItem, TextField, CircularProgress, Snackbar, Alert,
   Tooltip, IconButton, Dialog, DialogTitle, DialogContent,
   DialogActions, Divider, Card, CardContent, FormControl, InputLabel,
-  List, ListItem, ListItemText, ListItemButton,
+  List, ListItem, ListItemText, ListItemButton, Tabs, Tab,
 } from '@mui/material';
 import {
   CheckCircle, Cancel, AccessTime, People, School,
   Edit, Logout, Refresh, Dashboard, Add, Note, EventAvailable,
-  TrendingUp, Class as ClassIcon,
+  TrendingUp, Class as ClassIcon, Description, Close, CalendarToday,
 } from '@mui/icons-material';
 import { format } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../api/client';
 import theme from '../theme/professionalTheme';
+import SF2ReportForm from '../components/dashboard/SF2ReportForm';
+import TeacherClassSchedule from '../components/dashboard/TeacherClassSchedule';
 
 interface TeacherProfile {
   name: string;
@@ -143,7 +145,18 @@ function ManualAttendanceDialog({
   };
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+    <Dialog 
+      open={open} 
+      onClose={onClose} 
+      maxWidth="sm" 
+      fullWidth
+      sx={{ 
+        '& .MuiDialog-paper': { 
+          margin: { xs: 1, sm: 2 },
+          width: { xs: 'calc(100% - 16px)', sm: 'auto' },
+        } 
+      }}
+    >
       <DialogTitle sx={{ 
         background: theme.colors.primary.gradient,
         color: '#fff',
@@ -162,7 +175,7 @@ function ManualAttendanceDialog({
             onChange={(e) => setSelectedStudent(e.target.value)}
             label="Student"
           >
-            {students.map((s) => (
+            {(students || []).map((s) => (
               <MenuItem key={s.id} value={s.id}>
                 {s.name} ({s.lrn})
               </MenuItem>
@@ -264,7 +277,18 @@ function ExcuseAbsenceDialog({
   };
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+    <Dialog 
+      open={open} 
+      onClose={onClose} 
+      maxWidth="sm" 
+      fullWidth
+      sx={{ 
+        '& .MuiDialog-paper': { 
+          margin: { xs: 1, sm: 2 },
+          width: { xs: 'calc(100% - 16px)', sm: 'auto' },
+        } 
+      }}
+    >
       <DialogTitle sx={{ 
         background: theme.colors.status.warning.main,
         color: '#fff',
@@ -283,7 +307,7 @@ function ExcuseAbsenceDialog({
             onChange={(e) => setSelectedStudent(e.target.value)}
             label="Student"
           >
-            {students.map((s) => (
+            {(students || []).map((s) => (
               <MenuItem key={s.id} value={s.id}>
                 {s.name} ({s.lrn})
               </MenuItem>
@@ -373,7 +397,18 @@ function AddNoteDialog({
   };
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+    <Dialog 
+      open={open} 
+      onClose={onClose} 
+      maxWidth="sm" 
+      fullWidth
+      sx={{ 
+        '& .MuiDialog-paper': { 
+          margin: { xs: 1, sm: 2 },
+          width: { xs: 'calc(100% - 16px)', sm: 'auto' },
+        } 
+      }}
+    >
       <DialogTitle sx={{ 
         background: theme.colors.secondary.main,
         color: '#fff',
@@ -427,6 +462,8 @@ export default function TeacherDashboardPageNew() {
   const profile = user?.profile as TeacherProfile | null;
 
   const [teacherData, setTeacherData] = useState<any>(null);
+  const [sections, setSections] = useState<any[]>([]);
+  const [selectedSection, setSelectedSection] = useState<number | string>('');
   const [students, setStudents] = useState<Student[]>([]);
   const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>([]);
   const [stats, setStats] = useState<AttendanceStats | null>(null);
@@ -437,36 +474,64 @@ export default function TeacherDashboardPageNew() {
   const [manualAttendanceOpen, setManualAttendanceOpen] = useState(false);
   const [excuseAbsenceOpen, setExcuseAbsenceOpen] = useState(false);
   const [addNoteOpen, setAddNoteOpen] = useState(false);
+  const [sf2ReportOpen, setSf2ReportOpen] = useState(false);
+  const [classScheduleOpen, setClassScheduleOpen] = useState(false);
   const [selectedRecord, setSelectedRecord] = useState<AttendanceRecord | null>(null);
   
   const [snack, setSnack] = useState({ open: false, msg: '', sev: 'success' as any });
 
   const showSnack = (msg: string, sev: any = 'success') => setSnack({ open: true, msg, sev });
 
+  // Fetch teacher's sections
+  const fetchSections = useCallback(async () => {
+    try {
+      const { data } = await api.get('/teacher/sections');
+      setSections(data.sections);
+      if (data.sections.length > 0 && !selectedSection) {
+        setSelectedSection(data.sections[0].id);
+      }
+    } catch (error) {
+      console.error('Failed to load sections:', error);
+      showSnack('Failed to load sections', 'error');
+    }
+  }, [selectedSection]);
+
   // Fetch teacher's classes
   const fetchClasses = useCallback(async () => {
     try {
-      const { data } = await api.get('/teacher/classes');
-      setTeacherData(data.teacher);
-      setStudents(data.students);
+      const params = selectedSection ? `?section_id=${selectedSection}` : '';
+      const { data } = await api.get(`/teacher/classes${params}`);
+      console.log('📚 Teacher classes response:', data);
+      setTeacherData(data.teacher || null);
+      setStudents(data.students || []);
     } catch (error) {
+      console.error('Failed to load class data:', error);
       showSnack('Failed to load class data', 'error');
+      setStudents([]);
     }
-  }, []);
+  }, [selectedSection]);
 
   // Fetch today's attendance
   const fetchAttendance = useCallback(async () => {
     setLoading(true);
     try {
-      const { data } = await api.get(`/teacher/attendance/today?date=${date}`);
-      setStats(data.stats);
-      setAttendanceRecords(data.attendance);
+      const params = selectedSection ? `&section_id=${selectedSection}` : '';
+      const { data } = await api.get(`/teacher/attendance/today?date=${date}${params}`);
+      console.log('📋 Attendance data:', data);
+      setStats(data.stats || null);
+      setAttendanceRecords(data.attendance || []);
     } catch (error) {
+      console.error('Failed to load attendance:', error);
       showSnack('Failed to load attendance', 'error');
+      setAttendanceRecords([]);
     } finally {
       setLoading(false);
     }
-  }, [date]);
+  }, [date, selectedSection]);
+
+  useEffect(() => {
+    fetchSections();
+  }, [fetchSections]);
 
   useEffect(() => {
     fetchClasses();
@@ -566,11 +631,51 @@ export default function TeacherDashboardPageNew() {
               bgcolor: 'rgba(255,255,255,0.2)',
               borderLeft: '3px solid #fff',
               '&:hover': { bgcolor: 'rgba(255,255,255,0.25)' },
+              mb: 1,
             }}
           >
             <Dashboard />
             <Typography variant="body2" sx={{ fontWeight: 700 }}>
               Dashboard
+            </Typography>
+          </Box>
+          <Box
+            onClick={() => setClassScheduleOpen(true)}
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 1.5,
+              px: 2,
+              py: 1.5,
+              cursor: 'pointer',
+              borderRadius: 1,
+              bgcolor: 'rgba(255,255,255,0.15)',
+              '&:hover': { bgcolor: 'rgba(255,255,255,0.25)' },
+              mb: 1,
+            }}
+          >
+            <CalendarToday />
+            <Typography variant="body2" sx={{ fontWeight: 700 }}>
+              My Classes
+            </Typography>
+          </Box>
+          <Box
+            onClick={() => setSf2ReportOpen(true)}
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 1.5,
+              px: 2,
+              py: 1.5,
+              cursor: 'pointer',
+              borderRadius: 1,
+              bgcolor: 'rgba(255,255,255,0.15)',
+              '&:hover': { bgcolor: 'rgba(255,255,255,0.25)' },
+            }}
+          >
+            <Description />
+            <Typography variant="body2" sx={{ fontWeight: 700 }}>
+              SF2 Report
             </Typography>
           </Box>
         </Box>
@@ -591,37 +696,61 @@ export default function TeacherDashboardPageNew() {
       </Box>
 
       {/* Main Content */}
-      <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <Box sx={{ 
+        flex: 1, 
+        display: 'flex', 
+        flexDirection: 'column', 
+        overflow: 'hidden',
+        width: { xs: '100%', sm: 'auto' },
+      }}>
         {/* Header */}
         <Box sx={{
           bgcolor: '#fff',
-          px: 3,
+          px: { xs: 1.5, sm: 3 },
           py: 2,
           borderBottom: '1px solid #e0e0e0',
           display: 'flex',
           alignItems: 'center',
-          gap: 2,
+          gap: 1,
           boxShadow: theme.shadows.elevation1,
+          flexWrap: 'wrap',
         }}>
-          <Typography variant="h6" flex={1} sx={{ fontFamily: theme.typography.fontFamily.display, fontWeight: 700 }}>
-            My Class Overview — {teacherData?.section || 'Loading...'}
+          {sections.length > 1 && (
+            <FormControl sx={{ minWidth: { xs: 150, sm: 200 }, order: { xs: 3, sm: 'unset' }, width: { xs: '100%', sm: 'auto' } }}>
+              <InputLabel size="small">Section</InputLabel>
+              <Select
+                size="small"
+                value={selectedSection}
+                onChange={(e) => setSelectedSection(e.target.value)}
+                label="Section"
+              >
+                {sections.map((section) => (
+                  <MenuItem key={section.id} value={section.id}>
+                    {section.name} ({section.student_count})
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          )}
+          <Typography variant="h6" flex={1} sx={{ fontFamily: theme.typography.fontFamily.display, fontWeight: 700, fontSize: { xs: '0.9rem', sm: '1.25rem' } }}>
+            Class Overview
           </Typography>
           <TextField
             type="date"
             size="small"
             value={date}
             onChange={(e) => setDate(e.target.value)}
-            sx={{ width: 160 }}
+            sx={{ width: { xs: '100%', sm: 160 }, order: { xs: 2, sm: 'unset' } }}
           />
-          <Button startIcon={<Refresh />} size="small" onClick={fetchAttendance} variant="outlined">
+          <Button startIcon={<Refresh />} size="small" onClick={fetchAttendance} variant="outlined" sx={{ order: { xs: 1, sm: 'unset' } }}>
             Refresh
           </Button>
         </Box>
 
         {/* Content */}
-        <Box sx={{ flex: 1, overflow: 'auto', p: 3 }}>
+        <Box sx={{ flex: 1, overflow: 'auto', p: { xs: 1.5, sm: 3 } }}>
           {/* Quick Stats */}
-          <Grid container spacing={2} mb={3}>
+          <Grid container spacing={{ xs: 1, sm: 2 }} mb={3}>
             <Grid size={{ xs: 6, md: 3 }}>
               <StatCard
                 label="Present"
@@ -710,15 +839,17 @@ export default function TeacherDashboardPageNew() {
           {/* Today's Attendance Table */}
           <Paper sx={{ borderRadius: 2, overflow: 'hidden' }}>
             <Box sx={{
-              p: 2.5,
+              p: { xs: 1.5, sm: 2.5 },
               background: theme.colors.primary.gradient,
               color: '#fff',
               display: 'flex',
               justifyContent: 'space-between',
               alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: 1,
             }}>
-              <Typography sx={{ fontFamily: theme.typography.fontFamily.display, fontWeight: 700, fontSize: 18 }}>
-                Today's Attendance — {format(new Date(date), 'MMM dd, yyyy')}
+              <Typography sx={{ fontFamily: theme.typography.fontFamily.display, fontWeight: 700, fontSize: { xs: 14, sm: 18 } }}>
+                Today's Attendance
               </Typography>
               <Chip
                 label={`${attendanceRecords.length} records`}
@@ -728,16 +859,17 @@ export default function TeacherDashboardPageNew() {
                   color: '#fff',
                   fontWeight: 600,
                   border: '1px solid rgba(255,255,255,0.3)',
+                  fontSize: { xs: '0.65rem', sm: '0.75rem' },
                 }}
               />
             </Box>
-            <TableContainer sx={{ maxHeight: 500 }}>
+            <TableContainer sx={{ maxHeight: 500, overflowX: 'auto' }}>
               <Table stickyHeader size="small">
                 <TableHead>
                   <TableRow>
-                    <TableCell sx={{ fontWeight: 700 }}>Student Name</TableCell>
-                    <TableCell sx={{ fontWeight: 700 }}>LRN</TableCell>
-                    <TableCell sx={{ fontWeight: 700 }}>Time</TableCell>
+                    <TableCell sx={{ fontWeight: 700, fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>Student Name</TableCell>
+                    <TableCell sx={{ fontWeight: 700, fontSize: { xs: '0.75rem', sm: '0.875rem' }, display: { xs: 'none', md: 'table-cell' } }}>LRN</TableCell>
+                    <TableCell sx={{ fontWeight: 700, fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>Time</TableCell>
                     <TableCell sx={{ fontWeight: 700 }}>Method</TableCell>
                     <TableCell sx={{ fontWeight: 700 }}>Status</TableCell>
                     <TableCell align="center" sx={{ fontWeight: 700 }}>Actions</TableCell>
@@ -824,6 +956,80 @@ export default function TeacherDashboardPageNew() {
         }}
         onSaved={handleDialogSuccess}
       />
+
+      {/* SF2 Report Dialog */}
+      <Dialog 
+        open={sf2ReportOpen} 
+        onClose={() => setSf2ReportOpen(false)}
+        maxWidth="lg"
+        fullWidth
+        PaperProps={{
+          sx: {
+            borderRadius: 2,
+            maxHeight: '90vh',
+          }
+        }}
+      >
+        <DialogTitle sx={{
+          background: theme.colors.primary.gradient,
+          color: '#fff',
+          fontFamily: theme.typography.fontFamily.display,
+          fontWeight: theme.typography.fontWeight.bold,
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          pr: 1,
+        }}>
+          SF2 Report
+          <IconButton
+            onClick={() => setSf2ReportOpen(false)}
+            sx={{ color: '#fff' }}
+            size="small"
+          >
+            <Close />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent sx={{ pt: 3, pb: 3 }}>
+          <SF2ReportForm />
+        </DialogContent>
+      </Dialog>
+
+      {/* Class Schedule Dialog */}
+      <Dialog 
+        open={classScheduleOpen} 
+        onClose={() => setClassScheduleOpen(false)}
+        maxWidth="lg"
+        fullWidth
+        PaperProps={{
+          sx: {
+            borderRadius: 2,
+            maxHeight: '90vh',
+          }
+        }}
+      >
+        <DialogTitle sx={{
+          background: theme.colors.primary.gradient,
+          color: '#fff',
+          fontFamily: theme.typography.fontFamily.display,
+          fontWeight: theme.typography.fontWeight.bold,
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          pr: 1,
+        }}>
+          My Class Schedule
+          <IconButton
+            onClick={() => setClassScheduleOpen(false)}
+            sx={{ color: '#fff' }}
+            size="small"
+          >
+            <Close />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent sx={{ pt: 0, pb: 0 }}>
+          <TeacherClassSchedule />
+        </DialogContent>
+      </Dialog>
 
       {/* Snackbar */}
       <Snackbar
