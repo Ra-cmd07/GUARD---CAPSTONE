@@ -1,6 +1,7 @@
 import express from 'express';
 import { protect } from '../middleware/authMiddleware';
 import {
+  getTeacherSections,
   getTeacherClasses,
   getTodayAttendanceSummary,
   markManualAttendance,
@@ -12,6 +13,9 @@ const router = express.Router();
 
 // All teacher routes require authentication
 router.use(protect);
+
+// Get teacher's assigned sections
+router.get('/sections', getTeacherSections);
 
 // Get teacher's assigned classes and students
 router.get('/classes', getTeacherClasses);

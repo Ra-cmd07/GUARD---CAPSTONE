@@ -9,6 +9,8 @@ const teacherController_1 = require("../controllers/teacherController");
 const router = express_1.default.Router();
 // All teacher routes require authentication
 router.use(authMiddleware_1.protect);
+// Get teacher's assigned sections
+router.get('/sections', teacherController_1.getTeacherSections);
 // Get teacher's assigned classes and students
 router.get('/classes', teacherController_1.getTeacherClasses);
 // Get today's attendance summary for teacher's class

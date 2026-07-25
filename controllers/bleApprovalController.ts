@@ -1,7 +1,9 @@
 import { Request, Response } from 'express';
 import pool from '../lib/db';
+import { format } from 'date-fns';
 import { savePhotoLocally } from '../utils/localPhotoUpload';
 import { uploadQueue } from '../utils/uploadQueue';
+import { getActiveClassForSection } from '../utils/teacherClassHelper';
 
 /**
  * Queue SMS for GSM module to send
@@ -116,7 +118,7 @@ export async function approveDetection(req: Request, res: Response): Promise<voi
       lrn: student.lrn,
       gender: student.gender,
       grade: student.grade,
-      section: student.section
+      section_id: student.section_id
     });
 
     // Handle photo upload to local storage if provided
@@ -186,27 +188,33 @@ export async function approveDetection(req: Request, res: Response): Promise<voi
       lrn: student.lrn,
       gender: student.gender,
       grade: student.grade,
-      section: student.section,
+      section_id: student.section_id,
       kiosk_id: detection.kiosk_id || null,
       scan_method: 'BLE',
       status: status,
       session: session
     });
     
+    // Get active teacher class for this section and time
+    const dayOfWeek = format(phTime, 'EEEE');
+    const timeHHmmss = format(phTime, 'HH:mm:ss');
+    const activeClassId = await getActiveClassForSection(student.section_id, timeHHmmss, dayOfWeek);
+    
     // Insert new attendance record (session-based)
     const [insertResult] = await pool.execute(
       `INSERT INTO attendance 
-       (student_id, student_name, lrn, gender, grade, section, kiosk_id, 
-        scan_method, status, session, date, time_in, time_out, photo_path, local_path) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'BLE', ?, ?, ?, ?, ?, ?, ?)`,
+       (student_id, student_name, lrn, gender, grade, section_id, kiosk_id, 
+        scan_method, status, session, date, time_in, time_out, photo_path, local_path, teacher_class_id) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'BLE', ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         student.id, student.name, student.lrn, student.gender,
-        student.grade, student.section, detection.kiosk_id || null,
+        student.grade, student.section_id, detection.kiosk_id || null,
         status, session, localDate,
         status === 'Time-In' || status === 'Late' ? localTime : null,
         status === 'Time-Out' ? localTime : null,
         photoPath,
-        photoPath  // local_path same as photo_path initially
+        photoPath,  // local_path same as photo_path initially
+        activeClassId, // Add teacher_class_id
       ]
     ) as any[];
     

@@ -17,6 +17,14 @@ exports.getSmsLogs = getSmsLogs;
 exports.getLoginLogs = getLoginLogs;
 exports.addParentToStudent = addParentToStudent;
 exports.clearSmsLogs = clearSmsLogs;
+exports.getSections = getSections;
+exports.getSectionById = getSectionById;
+exports.createSection = createSection;
+exports.updateSection = updateSection;
+exports.deleteSection = deleteSection;
+exports.getTeachers = getTeachers;
+exports.getClassSchedules = getClassSchedules;
+exports.updateStudent = updateStudent;
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
 const db_1 = __importDefault(require("../lib/db"));
 // ─── GET /api/admin/dashboard ─────────────────────────────────────────
@@ -27,13 +35,15 @@ async function getDashboardStats(_req, res) {
         a.id, 
         a.student_name, 
         a.grade, 
-        a.section, 
+        a.section_id,
+        sec.name AS section_name,
         a.timestamp,
         a.scan_method, 
         a.status, 
         a.photo_path,
         a.student_id
        FROM attendance a
+       LEFT JOIN sections sec ON a.section_id = sec.id
        INNER JOIN (
          SELECT student_id, MAX(timestamp) as max_timestamp
          FROM attendance
@@ -116,7 +126,7 @@ async function createUser(req, res) {
     const conn = await db_1.default.getConnection();
     try {
         await conn.beginTransaction();
-        const { username, password, role, name, age, gender, section, contact, address, subject, room, schedule, relationship, employee_id, lrn, grade, mac_address, rfid_uid, parents, // Array of parent accounts for students
+        const { username, password, role, name, age, gender, section, section_id, contact, address, subject, room, schedule, relationship, employee_id, lrn, grade, mac_address, rfid_uid, parents, // Array of parent accounts for students
          } = req.body;
         if (!username || !password || !role || !name) {
             res.status(400).json({ error: 'username, password, role, and name are required' });
@@ -153,10 +163,10 @@ async function createUser(req, res) {
                 res.status(400).json({ error: 'LRN is required for students' });
                 return;
             }
-            const [sr] = await conn.execute(`INSERT INTO students (user_id, lrn, name, gender, grade, section, mac_address, rfid_uid, created_by)
+            const [sr] = await conn.execute(`INSERT INTO students (user_id, lrn, name, gender, grade, section_id, mac_address, rfid_uid, created_by)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, [userId, lrn, name,
                 gender === 'Male' ? 'M' : gender === 'Female' ? 'F' : (gender || null),
-                grade || null, section || null, mac_address || null, rfid_uid || null, req.user.id]);
+                grade || null, section_id || null, mac_address || null, rfid_uid || null, req.user.id]);
             profileId = sr.insertId;
             // Create parent accounts if provided
             const createdParents = [];
@@ -220,7 +230,7 @@ async function updateUser(req, res) {
     try {
         await conn.beginTransaction();
         const { id } = req.params;
-        const { name, age, gender, section, contact, address, subject, room, schedule, relationship, employee_id, lrn, grade, mac_address, rfid_uid, is_active, } = req.body;
+        const { name, age, gender, section, section_id, contact, address, subject, room, schedule, relationship, employee_id, lrn, grade, mac_address, rfid_uid, is_active, } = req.body;
         const [rows] = await conn.execute(`SELECT u.id, r.name AS role FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = ?`, [id]);
         const user = rows[0];
         if (!user) {
@@ -240,10 +250,10 @@ async function updateUser(req, res) {
             await conn.execute('UPDATE parents SET name=?, relationship=?, contact=?, address=?, updated_by=? WHERE user_id=?', [name, relationship || null, contact || null, address || null, req.user.id, id]);
         }
         else if (user.role === 'student') {
-            await conn.execute(`UPDATE students SET name=?, lrn=?, gender=?, grade=?, section=?, mac_address=?, rfid_uid=?, updated_by=?
+            await conn.execute(`UPDATE students SET name=?, lrn=?, gender=?, grade=?, section_id=?, mac_address=?, rfid_uid=?, updated_by=?
          WHERE user_id=?`, [name, lrn || null,
                 gender === 'Male' ? 'M' : gender === 'Female' ? 'F' : (gender || null),
-                grade || null, section || null, mac_address || null, rfid_uid || null,
+                grade || null, section_id || null, mac_address || null, rfid_uid || null,
                 req.user.id, id]);
         }
         await conn.commit();
@@ -426,5 +436,286 @@ async function clearSmsLogs(req, res) {
     catch (err) {
         console.error('clearSmsLogs error:', err);
         res.status(500).json({ error: 'Failed to clear SMS history' });
+    }
+}
+// ─── GET /api/admin/sections ──────────────────────────────────────────
+async function getSections(_req, res) {
+    try {
+        const [sections] = await db_1.default.execute(`
+      SELECT 
+        s.id, 
+        s.name, 
+        s.grade, 
+        s.section_code, 
+        s.room_number, 
+        s.capacity, 
+        s.is_active,
+        s.created_at,
+        COUNT(st.id) as student_count
+      FROM sections s
+      LEFT JOIN students st ON st.section_id = s.id
+      GROUP BY s.id
+      ORDER BY s.grade, s.section_code
+    `);
+        res.json({ sections });
+    }
+    catch (err) {
+        console.error('getSections error:', err);
+        res.status(500).json({ error: 'Failed to fetch sections' });
+    }
+}
+// ─── GET /api/admin/sections/:id ──────────────────────────────────────
+async function getSectionById(req, res) {
+    try {
+        const { id } = req.params;
+        const [sections] = await db_1.default.execute(`SELECT * FROM sections WHERE id = ?`, [id]);
+        if (!sections || sections.length === 0) {
+            res.status(404).json({ error: 'Section not found' });
+            return;
+        }
+        res.json({ section: sections[0] });
+    }
+    catch (err) {
+        console.error('getSectionById error:', err);
+        res.status(500).json({ error: 'Failed to fetch section' });
+    }
+}
+// ─── POST /api/admin/sections ─────────────────────────────────────────
+async function createSection(req, res) {
+    try {
+        const { name, grade, section_code, room_number, capacity, is_active } = req.body;
+        // Validate required fields
+        if (!name || !grade || !section_code) {
+            res.status(400).json({ error: 'Section name, grade, and code are required' });
+            return;
+        }
+        // Check if section already exists
+        const [existing] = await db_1.default.execute(`SELECT id FROM sections WHERE name = ?`, [name]);
+        if (existing && existing.length > 0) {
+            res.status(409).json({ error: 'Section with this name already exists' });
+            return;
+        }
+        // Create section
+        const [result] = await db_1.default.execute(`INSERT INTO sections (name, grade, section_code, room_number, capacity, is_active)
+       VALUES (?, ?, ?, ?, ?, ?)`, [name, grade, section_code, room_number || null, capacity || null, is_active !== undefined ? is_active : 1]);
+        const sectionId = result.insertId;
+        console.log(`✅ Admin ${req.user?.username} created section: ${name}`);
+        res.json({
+            success: true,
+            message: 'Section created successfully',
+            section: {
+                id: sectionId,
+                name,
+                grade,
+                section_code,
+                room_number,
+                capacity,
+                is_active,
+            },
+        });
+    }
+    catch (err) {
+        console.error('createSection error:', err);
+        res.status(500).json({ error: 'Failed to create section' });
+    }
+}
+// ─── PATCH /api/admin/sections/:id ────────────────────────────────────
+async function updateSection(req, res) {
+    try {
+        const { id } = req.params;
+        const { name, grade, section_code, room_number, capacity, is_active } = req.body;
+        // Check if section exists
+        const [existing] = await db_1.default.execute(`SELECT * FROM sections WHERE id = ?`, [id]);
+        if (!existing || existing.length === 0) {
+            res.status(404).json({ error: 'Section not found' });
+            return;
+        }
+        const section = existing[0];
+        // Prepare update fields
+        const updates = [];
+        const values = [];
+        if (name !== undefined) {
+            updates.push('name = ?');
+            values.push(name);
+        }
+        if (grade !== undefined) {
+            updates.push('grade = ?');
+            values.push(grade);
+        }
+        if (section_code !== undefined) {
+            updates.push('section_code = ?');
+            values.push(section_code);
+        }
+        if (room_number !== undefined) {
+            updates.push('room_number = ?');
+            values.push(room_number || null);
+        }
+        if (capacity !== undefined) {
+            updates.push('capacity = ?');
+            values.push(capacity || null);
+        }
+        if (is_active !== undefined) {
+            updates.push('is_active = ?');
+            values.push(is_active);
+        }
+        if (updates.length === 0) {
+            res.status(400).json({ error: 'No fields to update' });
+            return;
+        }
+        values.push(id);
+        // Update section
+        await db_1.default.execute(`UPDATE sections SET ${updates.join(', ')} WHERE id = ?`, values);
+        console.log(`✅ Admin ${req.user?.username} updated section: ${section.name}`);
+        res.json({
+            success: true,
+            message: 'Section updated successfully',
+            section: {
+                id,
+                name: name || section.name,
+                grade: grade || section.grade,
+                section_code: section_code || section.section_code,
+                room_number,
+                capacity,
+                is_active: is_active !== undefined ? is_active : section.is_active,
+            },
+        });
+    }
+    catch (err) {
+        console.error('updateSection error:', err);
+        res.status(500).json({ error: 'Failed to update section' });
+    }
+}
+// ─── DELETE /api/admin/sections/:id ───────────────────────────────────
+async function deleteSection(req, res) {
+    try {
+        const { id } = req.params;
+        // Check if section exists
+        const [existing] = await db_1.default.execute(`SELECT * FROM sections WHERE id = ?`, [id]);
+        if (!existing || existing.length === 0) {
+            res.status(404).json({ error: 'Section not found' });
+            return;
+        }
+        const section = existing[0];
+        // Check if section has students
+        const [studentCount] = await db_1.default.execute(`SELECT COUNT(*) as count FROM students WHERE section = ?`, [section.name]);
+        const count = studentCount[0].count;
+        if (count > 0) {
+            res.status(409).json({
+                error: `Cannot delete section with ${count} student(s). Please reassign students first.`
+            });
+            return;
+        }
+        // Delete section
+        await db_1.default.execute(`DELETE FROM sections WHERE id = ?`, [id]);
+        // Also delete teacher-section links
+        await db_1.default.execute(`DELETE FROM teacher_sections WHERE section_id = ?`, [id]);
+        console.log(`✅ Admin ${req.user?.username} deleted section: ${section.name}`);
+        res.json({
+            success: true,
+            message: 'Section deleted successfully',
+        });
+    }
+    catch (err) {
+        console.error('deleteSection error:', err);
+        res.status(500).json({ error: 'Failed to delete section' });
+    }
+}
+// ─── GET /api/admin/teachers ─────────────────────────────────────────
+async function getTeachers(_req, res) {
+    try {
+        const [teachers] = await db_1.default.execute(`
+      SELECT 
+        t.id, 
+        t.user_id,
+        t.name, 
+        t.employee_id,
+        t.subject,
+        u.username,
+        u.is_active,
+        COUNT(tc.id) as class_count
+      FROM teachers t
+      JOIN users u ON t.user_id = u.id
+      LEFT JOIN teacher_classes tc ON tc.teacher_id = t.id AND tc.is_active = 1
+      GROUP BY t.id
+      ORDER BY t.name
+    `);
+        res.json({ teachers });
+    }
+    catch (err) {
+        console.error('getTeachers error:', err);
+        res.status(500).json({ error: 'Failed to fetch teachers' });
+    }
+}
+// ─── GET /api/admin/class-schedules ──────────────────────────────────
+async function getClassSchedules(_req, res) {
+    try {
+        const [classes] = await db_1.default.execute(`
+      SELECT 
+        tc.id,
+        tc.teacher_id,
+        tc.section_id,
+        tc.subject,
+        tc.time_start,
+        tc.time_end,
+        tc.day_of_week,
+        tc.room_number,
+        tc.capacity,
+        tc.is_active,
+        tc.created_at,
+        s.name as section_name,
+        s.grade,
+        s.section_code,
+        t.name as teacher_name,
+        COUNT(DISTINCT st.id) as enrolled_students
+      FROM teacher_classes tc
+      JOIN sections s ON tc.section_id = s.id
+      JOIN teachers t ON tc.teacher_id = t.id
+      LEFT JOIN students st ON st.section_id = tc.section_id
+      WHERE tc.is_active = 1
+      GROUP BY tc.id
+      ORDER BY tc.day_of_week, tc.time_start, t.name
+    `);
+        res.json({ classes });
+    }
+    catch (err) {
+        console.error('getClassSchedules error:', err);
+        res.status(500).json({ error: 'Failed to fetch class schedules' });
+    }
+}
+// ─── PATCH /api/admin/students/:id ────────────────────────────────────
+async function updateStudent(req, res) {
+    const conn = await db_1.default.getConnection();
+    try {
+        const { id: studentId } = req.params;
+        const { name, section_id } = req.body;
+        if (!name || !section_id) {
+            res.status(400).json({ error: 'Name and section_id are required' });
+            return;
+        }
+        // Verify student exists
+        const [studentCheck] = await conn.execute('SELECT id FROM students WHERE id = ?', [studentId]);
+        if (studentCheck.length === 0) {
+            res.status(404).json({ error: 'Student not found' });
+            return;
+        }
+        // Verify section exists
+        const [sectionCheck] = await conn.execute('SELECT id FROM sections WHERE id = ?', [section_id]);
+        if (sectionCheck.length === 0) {
+            res.status(404).json({ error: 'Section not found' });
+            return;
+        }
+        // Update student
+        await conn.execute('UPDATE students SET name = ?, section_id = ? WHERE id = ?', [name, section_id, studentId]);
+        res.json({
+            message: 'Student updated successfully',
+            studentId
+        });
+    }
+    catch (err) {
+        console.error('updateStudent error:', err);
+        res.status(500).json({ error: 'Server error' });
+    }
+    finally {
+        conn.release();
     }
 }

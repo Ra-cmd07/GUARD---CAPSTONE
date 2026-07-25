@@ -27,6 +27,7 @@ import reportsRoutes    from './routes/reportsRoutes';
 import kiosksRoutes     from './routes/kiosksRoutes';
 import gsmRoutes        from './routes/gsmRoutes';
 import teacherRoutes    from './routes/teacherRoutes';
+import teacherClassRoutes from './routes/teacherClassRoutes';
 
 import { errorHandler } from './middleware/errorMiddleware';
 
@@ -86,7 +87,8 @@ app.use('/api/location',    locationRoutes);
 app.use('/api/reports',     reportsRoutes);
 app.use('/api/kiosks',      kiosksRoutes);
 app.use('/api/gsm',         gsmRoutes);
-app.use('/api/teacher',     teacherRoutes);
+app.use('/api/teacher/classes', teacherClassRoutes);  // Register class routes FIRST for precedence
+app.use('/api/teacher',     teacherRoutes);           // Then teacher routes
 
 // ─── Health Check ─────────────────────────────────────────────────────
 app.get('/api/health', (_req, res) => {
@@ -95,6 +97,7 @@ app.get('/api/health', (_req, res) => {
 
 // ─── 404 Handler ──────────────────────────────────────────────────────
 app.use((_req, res) => {
+  console.log(`❌ 404: ${_req.method} ${_req.originalUrl}`);
   res.status(404).json({ error: 'Route not found' });
 });
 

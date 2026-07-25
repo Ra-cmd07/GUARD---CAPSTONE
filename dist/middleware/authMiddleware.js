@@ -6,18 +6,22 @@ const auth_1 = require("../lib/auth");
 /** Verify JWT and attach req.user */
 function protect(req, res, next) {
     const header = req.headers['authorization'];
+    console.log('🔐 Auth header:', header ? 'present' : 'MISSING');
     if (!header || !header.startsWith('Bearer ')) {
+        console.log('❌ No valid Bearer token');
         res.status(401).json({ error: 'Unauthorized — no token provided' });
         return;
     }
     const token = header.slice(7);
     try {
         const payload = (0, auth_1.verifyToken)(token);
+        console.log('✅ Token valid for user:', payload.id);
         req.user = payload;
         req.teacher = payload; // backwards-compat
         next();
     }
-    catch {
+    catch (e) {
+        console.log('❌ Token invalid:', e.message);
         res.status(401).json({ error: 'Unauthorized — invalid or expired token' });
     }
 }

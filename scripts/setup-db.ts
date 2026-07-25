@@ -77,6 +77,36 @@ async function setup() {
       CONSTRAINT fk_teachers_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
     ) ENGINE=InnoDB`,
     
+    `CREATE TABLE IF NOT EXISTS sections (
+      id           INT UNSIGNED NOT NULL AUTO_INCREMENT,
+      name         VARCHAR(100) NOT NULL,
+      grade        VARCHAR(20)  DEFAULT NULL,
+      section_code VARCHAR(50)  DEFAULT NULL,
+      room_number  VARCHAR(50)  DEFAULT NULL,
+      capacity     INT UNSIGNED DEFAULT NULL,
+      is_active    TINYINT(1)   NOT NULL DEFAULT 1,
+      created_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      created_by   INT UNSIGNED DEFAULT NULL,
+      updated_by   INT UNSIGNED DEFAULT NULL,
+      PRIMARY KEY (id),
+      UNIQUE KEY uq_sections_name (name),
+      KEY idx_sections_grade (grade)
+    ) ENGINE=InnoDB`,
+    
+    `CREATE TABLE IF NOT EXISTS teacher_sections (
+      id         INT UNSIGNED NOT NULL AUTO_INCREMENT,
+      teacher_id INT UNSIGNED NOT NULL,
+      section_id INT UNSIGNED NOT NULL,
+      is_primary TINYINT(1)   NOT NULL DEFAULT 0,
+      created_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      UNIQUE KEY uq_teacher_section (teacher_id, section_id),
+      KEY idx_ts_section_id (section_id),
+      CONSTRAINT fk_ts_teacher FOREIGN KEY (teacher_id) REFERENCES teachers (id) ON DELETE CASCADE,
+      CONSTRAINT fk_ts_section FOREIGN KEY (section_id) REFERENCES sections (id) ON DELETE CASCADE
+    ) ENGINE=InnoDB`,
+    
     `CREATE TABLE IF NOT EXISTS students (
       id          INT UNSIGNED  NOT NULL AUTO_INCREMENT,
       user_id     INT UNSIGNED  DEFAULT NULL,

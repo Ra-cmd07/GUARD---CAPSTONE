@@ -17,10 +17,11 @@ export async function getStudents(req: AuthRequest, res: Response): Promise<void
       
       // Get students linked to this parent from parent_student junction table
       const [studentLinks] = await pool.execute(
-        `SELECT s.id, s.lrn, s.name, s.gender, s.grade, s.section, 
+        `SELECT s.id, s.lrn, s.name, s.gender, s.grade, s.section_id, sec.name AS section_name,
                 s.mac_address, s.rfid_uid, s.preferred_method, s.is_active, s.created_at
          FROM parent_student ps
          INNER JOIN students s ON ps.student_id = s.id
+         LEFT JOIN sections sec ON s.section_id = sec.id
          WHERE ps.parent_id = ? AND s.is_active = 1`,
         [profileId]
       ) as any[];
@@ -33,18 +34,18 @@ export async function getStudents(req: AuthRequest, res: Response): Promise<void
     // Original logic for other roles
     let query = `
       SELECT
-        s.id, s.lrn, s.name, s.gender, s.grade, s.section,
+        s.id, s.lrn, s.name, s.gender, s.grade, s.section_id, sec.name AS section_name,
         s.mac_address, s.rfid_uid, s.preferred_method, s.is_active, s.created_at
       FROM students s
+      LEFT JOIN sections sec ON s.section_id = sec.id
     `;
     const params: any[] = [];
 
     if (role === 'teacher' && profileId) {
-      const [tRows] = await pool.execute(
-        'SELECT section FROM teachers WHERE id = ?', [profileId]
-      ) as any[];
-      const sec = (tRows as any[])[0]?.section;
-      if (sec) { query += ' WHERE s.section = ?'; params.push(sec); }
+      query += ` WHERE s.section_id IN (
+        SELECT section_id FROM teacher_sections WHERE teacher_id = ?
+      )`;
+      params.push(profileId);
     } else if (role === 'student' && profileId) {
       query += ' WHERE s.id = ?';
       params.push(profileId);
@@ -86,7 +87,7 @@ export async function createStudent(req: AuthRequest, res: Response): Promise<vo
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
-    const { lrn, name, gender, grade, section, mac_address, rfid_uid, preferred_method, parents_guardians } = req.body;
+    const { lrn, name, gender, grade, section_id, mac_address, rfid_uid, preferred_method, parents_guardians } = req.body;
 
     if (!lrn || !name || !gender) {
       res.status(400).json({ error: 'lrn, name, and gender are required' });
@@ -94,11 +95,11 @@ export async function createStudent(req: AuthRequest, res: Response): Promise<vo
     }
 
     const [result] = await conn.execute(
-      `INSERT INTO students (lrn, name, gender, grade, section, mac_address, rfid_uid, preferred_method, created_by)
+      `INSERT INTO students (lrn, name, gender, grade, section_id, mac_address, rfid_uid, preferred_method, created_by)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [lrn, name,
        gender === 'Male' ? 'M' : gender === 'Female' ? 'F' : gender,
-       grade || null, section || null, mac_address || null, rfid_uid || null,
+       grade || null, section_id || null, mac_address || null, rfid_uid || null,
        preferred_method || 'QR',
        req.user?.id || null]
     ) as any[];
@@ -155,14 +156,14 @@ export async function getStudentById(req: Request, res: Response): Promise<void>
 export async function updateStudent(req: AuthRequest, res: Response): Promise<void> {
   try {
     const { id } = req.params;
-    const { name, gender, grade, section, mac_address, rfid_uid, preferred_method } = req.body;
+    const { name, gender, grade, section_id, mac_address, rfid_uid, preferred_method } = req.body;
 
     await pool.execute(
-      `UPDATE students SET name=?, gender=?, grade=?, section=?, mac_address=?, rfid_uid=?, preferred_method=?, updated_by=?
+      `UPDATE students SET name=?, gender=?, grade=?, section_id=?, mac_address=?, rfid_uid=?, preferred_method=?, updated_by=?
        WHERE id=?`,
       [name,
        gender === 'Male' ? 'M' : gender === 'Female' ? 'F' : (gender || null),
-       grade || null, section || null, mac_address || null, rfid_uid || null,
+       grade || null, section_id || null, mac_address || null, rfid_uid || null,
        preferred_method || 'QR',
        req.user!.id, id]
     );

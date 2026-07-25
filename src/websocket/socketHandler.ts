@@ -63,7 +63,7 @@ export function emitAttendanceEvent(data: {
   studentId: number;
   studentName: string;
   status: string;
-  section: string;
+  section_id: number;
   grade: string;
   parentId?: number;
   method: 'RFID' | 'QR' | 'BLE';
@@ -76,14 +76,14 @@ export function emitAttendanceEvent(data: {
 
   console.log('📡 Broadcasting attendance event:', data);
 
-  // Notify teachers in the section
-  if (data.section) {
-    io.to(`section:${data.section}`).emit('attendance:new', {
+  // Notify teachers in the section using section_id
+  if (data.section_id) {
+    io.to(`section:${data.section_id}`).emit('attendance:new', {
       type: 'new_attendance',
       student: {
         id: data.studentId,
         name: data.studentName,
-        section: data.section,
+        section_id: data.section_id,
         grade: data.grade,
       },
       attendance: {
@@ -92,7 +92,7 @@ export function emitAttendanceEvent(data: {
         timestamp: data.timestamp,
       },
     });
-    console.log(`  → Sent to teachers in section:${data.section}`);
+    console.log(`  → Sent to teachers in section:${data.section_id}`);
   }
 
   // Notify parent
@@ -102,7 +102,7 @@ export function emitAttendanceEvent(data: {
       student: {
         id: data.studentId,
         name: data.studentName,
-        section: data.section,
+        section_id: data.section_id,
         grade: data.grade,
       },
       attendance: {
@@ -131,7 +131,7 @@ export function emitAttendanceEvent(data: {
     student: {
       id: data.studentId,
       name: data.studentName,
-      section: data.section,
+      section_id: data.section_id,
       grade: data.grade,
     },
     attendance: {

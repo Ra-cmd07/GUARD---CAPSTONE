@@ -20,37 +20,28 @@ async function getAttendance(req, res) {
         const now = new Date();
         const phTime = new Date(now.getTime() + (8 * 60 * 60 * 1000));
         const date = req.query.date || phTime.toISOString().split('T')[0];
-        const section = req.query.section;
-        console.log('🔍 getAttendance called:', { role, userId, profileId, date, section });
+        const sectionId = req.query.section_id;
+        console.log('🔍 getAttendance called:', { role, userId, profileId, date, sectionId });
         let query = `
       SELECT a.id, a.student_id, a.student_name, a.lrn, a.gender,
-             a.grade, a.section, a.teacher_id, a.teacher_name,
+             a.grade, a.section_id, sec.name AS section_name, 
+             a.teacher_id, a.teacher_name,
              a.kiosk_id, a.scan_method, a.status, a.session,
              a.date, a.time_in, a.time_out, a.timestamp,
              a.photo_path, a.by_whom, a.notes, a.is_overridden,
              a.created_at, a.updated_at
       FROM attendance a
+      LEFT JOIN sections sec ON a.section_id = sec.id
       WHERE a.date = ?
     `;
         const params = [date];
         if (role === 'teacher' && profileId) {
-            // Teacher sees only their assigned section
-            const [tRows] = await db_1.default.execute('SELECT section FROM teachers WHERE id = ?', [profileId]);
-            const teacherSection = tRows[0]?.section;
-            console.log('👨‍🏫 Teacher section:', teacherSection);
-            if (teacherSection) {
-                // Flexible matching: works with both "Grade 7 - section 1" and "section 1" formats
-                // Extract the section number/identifier from teacher's section (e.g., "section 1" from "Grade 7 - section 1")
-                const sectionPart = teacherSection.split('-').pop()?.trim() || teacherSection;
-                console.log('📝 Section part extracted:', sectionPart);
-                query += ' AND (a.section = ? OR a.section = ? OR a.section LIKE ? OR a.teacher_id = ?)';
-                params.push(teacherSection, sectionPart, `%${sectionPart}%`, profileId);
-                console.log('🔍 Query params:', params);
-            }
-            else {
-                query += ' AND a.teacher_id = ?';
-                params.push(profileId);
-            }
+            // Teacher sees only their assigned section(s) via teacher_sections junction
+            query += ` AND a.section_id IN (
+        SELECT section_id FROM teacher_sections WHERE teacher_id = ?
+      )`;
+            params.push(profileId);
+            console.log('👨‍🏫 Teacher viewing own sections');
         }
         else if (role === 'parent' && profileId) {
             // Parent sees only their children
@@ -64,10 +55,10 @@ async function getAttendance(req, res) {
             params.push(profileId);
         }
         else if (role === 'admin') {
-            // Admin can filter by section
-            if (section) {
-                query += ' AND a.section = ?';
-                params.push(section);
+            // Admin can filter by section_id
+            if (sectionId) {
+                query += ' AND a.section_id = ?';
+                params.push(sectionId);
             }
         }
         query += ' ORDER BY a.timestamp DESC';
@@ -89,7 +80,7 @@ async function getAttendance(req, res) {
 async function createAttendance(req, res) {
     try {
         const { role, profileId } = req.user;
-        const { student_id, student_name, lrn, gender, grade, section, teacher_id, teacher_name, kiosk_id, scan_method, status, session, date, time_in, time_out, photo_path, qr_data, by_whom, notes, } = req.body;
+        const { student_id, student_name, lrn, gender, grade, section_id, teacher_id, teacher_name, kiosk_id, scan_method, status, session, date, time_in, time_out, photo_path, qr_data, by_whom, notes, } = req.body;
         if (!student_name || !status || !date) {
             res.status(400).json({ error: 'student_name, status, and date are required' });
             return;
@@ -106,13 +97,13 @@ async function createAttendance(req, res) {
         const session_ = session || (new Date().getHours() < 12 ? 'AM' : 'PM');
         const scanMethod = scan_method || 'QR';
         const [result] = await db_1.default.execute(`INSERT INTO attendance
-         (student_id, student_name, lrn, gender, grade, section,
+         (student_id, student_name, lrn, gender, grade, section_id,
           teacher_id, teacher_name, kiosk_id, scan_method,
           status, session, date, time_in, time_out,
           photo_path, qr_data, by_whom, notes)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
             student_id || null, student_name,
-            lrn || null, gender || null, grade || null, section || null,
+            lrn || null, gender || null, grade || null, section_id || null,
             resolvedTeacherId, resolvedTeacherName,
             kiosk_id || null, scanMethod,
             status, session_, date,

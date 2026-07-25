@@ -47,6 +47,44 @@ CREATE TABLE IF NOT EXISTS `users` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ──────────────────────────────────────────────────────────
+-- 3. SECTIONS (Normalized section data)
+-- ──────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS `sections` (
+  `id`           INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `name`         VARCHAR(100) NOT NULL COMMENT 'e.g., Grade 7 - Section A',
+  `grade`        VARCHAR(20)  DEFAULT NULL,
+  `section_code` VARCHAR(50)  DEFAULT NULL COMMENT 'e.g., G7-A',
+  `room_number`  VARCHAR(50)  DEFAULT NULL,
+  `capacity`     INT UNSIGNED DEFAULT NULL,
+  `is_active`    TINYINT(1)   NOT NULL DEFAULT 1,
+  `created_at`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `created_by`   INT UNSIGNED DEFAULT NULL,
+  `updated_by`   INT UNSIGNED DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_sections_name` (`name`),
+  KEY `idx_sections_grade` (`grade`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ──────────────────────────────────────────────────────────
+-- 4. TEACHER ↔ SECTIONS (many-to-many)
+-- ──────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS `teacher_sections` (
+  `id`         INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `teacher_id` INT UNSIGNED NOT NULL,
+  `section_id` INT UNSIGNED NOT NULL,
+  `is_primary` TINYINT(1)   NOT NULL DEFAULT 0 COMMENT 'True if primary advisor',
+  `created_at` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_teacher_section` (`teacher_id`, `section_id`),
+  KEY `idx_ts_section_id` (`section_id`),
+  CONSTRAINT `fk_ts_teacher`
+    FOREIGN KEY (`teacher_id`) REFERENCES `teachers` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_ts_section`
+    FOREIGN KEY (`section_id`) REFERENCES `sections` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ──────────────────────────────────────────────────────────
 -- 3. TEACHERS
 -- ──────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS `teachers` (
@@ -56,7 +94,7 @@ CREATE TABLE IF NOT EXISTS `teachers` (
   `employee_id`  VARCHAR(50)  DEFAULT NULL,
   `age`          TINYINT UNSIGNED DEFAULT NULL,
   `gender`       ENUM('Male','Female','Other') DEFAULT NULL,
-  `section`      VARCHAR(100) DEFAULT NULL COMMENT 'Grade/section assigned',
+  `section`      VARCHAR(100) DEFAULT NULL COMMENT 'Grade/section assigned (deprecated - use teacher_sections)',
   `subject`      VARCHAR(100) DEFAULT NULL,
   `room`         VARCHAR(50)  DEFAULT NULL,
   `schedule`     VARCHAR(100) DEFAULT NULL,

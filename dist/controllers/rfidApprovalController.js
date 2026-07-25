@@ -9,6 +9,7 @@ exports.approveRFID = approveRFID;
 exports.rejectRFID = rejectRFID;
 const db_1 = __importDefault(require("../lib/db"));
 const localPhotoUpload_1 = require("../utils/localPhotoUpload");
+const uploadQueue_1 = require("../utils/uploadQueue");
 // Lightweight SMS helper
 async function sendSms(phone, message) {
     try {
@@ -188,10 +189,13 @@ async function approveRFID(req, res) {
                     const base64Data = photo_base64.replace(/^data:image\/\w+;base64,/, '');
                     const photoPath = await (0, localPhotoUpload_1.savePhotoLocally)(base64Data, student.name, 'rfid');
                     console.log('📸 RFID photo saved locally:', photoPath);
-                    // Update attendance record with photo path
-                    await db_1.default.execute('UPDATE attendance SET photo_path = ? WHERE id = ?', [photoPath, attendanceId]);
+                    // Update attendance record with photo path (both local_path and photo_path for compatibility)
+                    await db_1.default.execute('UPDATE attendance SET local_path = ?, photo_path = ? WHERE id = ?', [photoPath, photoPath, attendanceId]);
                     // Log photo
-                    await db_1.default.execute('INSERT INTO scan_photos (attendance_id, student_name, status, photo_path) VALUES (?, ?, ?, ?)', [attendanceId, student.name, status, photoPath]);
+                    await db_1.default.execute('INSERT INTO scan_photos (attendance_id, student_name, status, photo_path, local_path) VALUES (?, ?, ?, ?, ?)', [attendanceId, student.name, status, photoPath, photoPath]);
+                    // Queue Cloudinary upload (background, non-blocking)
+                    uploadQueue_1.uploadQueue.enqueue(attendanceId, photoPath, student.name);
+                    console.log('📤 RFID photo queued for Cloudinary upload');
                 }
                 catch (err) {
                     console.error('Background RFID photo upload failed:', err);

@@ -8,8 +8,11 @@ exports.kioskPing = kioskPing;
 exports.getKioskList = getKioskList;
 exports.getRecentScans = getRecentScans;
 const db_1 = __importDefault(require("../lib/db"));
+const date_fns_1 = require("date-fns");
 const socketHandler_1 = require("../src/websocket/socketHandler");
 const localPhotoUpload_1 = require("../utils/localPhotoUpload");
+const uploadQueue_1 = require("../utils/uploadQueue");
+const teacherClassHelper_1 = require("../utils/teacherClassHelper");
 /**
  * Queue SMS for GSM module to send
  * Converts phone numbers to international format (+63...)
@@ -122,19 +125,24 @@ async function kioskScan(req, res) {
             status = (hour > 8 || (hour === 8 && min > 0)) ? 'Late' : 'Time-In';
         }
         // REMOVED: Duplicate check - now allows unlimited check-ins/outs per day
+        // ── Get active teacher class for this section and time ──────────────
+        const dayOfWeek = (0, date_fns_1.format)(phTime, 'EEEE'); // Get day name from phTime (already in PH time)
+        const timeHHmmss = (0, date_fns_1.format)(phTime, 'HH:mm:ss');
+        const activeClassId = await (0, teacherClassHelper_1.getActiveClassForSection)(student.section_id, timeHHmmss, dayOfWeek);
         // ── Insert attendance IMMEDIATELY (don't wait for photo) ──────────
         const [attResult] = await db_1.default.execute(`INSERT INTO attendance
-         (student_id, student_name, lrn, gender, grade, section,
+         (student_id, student_name, lrn, gender, grade, section_id,
           kiosk_id, scan_method, status, session, date, time_in, time_out,
-          photo_path, qr_data)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+          photo_path, qr_data, teacher_class_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
             student.id, student.name, student.lrn, student.gender,
-            student.grade, student.section,
+            student.grade, student.section_id,
             kiosk_id || null, scan_method, status, session, today,
             status === 'Time-In' || status === 'Late' ? timeStr : null,
             status === 'Time-Out' ? timeStr : null,
             null, // Photo path will be updated later
             qr_data || null,
+            activeClassId, // Add teacher_class_id
         ]);
         const attendanceId = attResult.insertId;
         // ── Upload photo to local storage in BACKGROUND (async) ─────────────
@@ -145,10 +153,13 @@ async function kioskScan(req, res) {
                     const base64Data = photo_base64.replace(/^data:image\/\w+;base64,/, '');
                     const photoPath = await (0, localPhotoUpload_1.savePhotoLocally)(base64Data, student.name, 'scan');
                     console.log('📸 Photo saved locally:', photoPath);
-                    // Update attendance record with photo path
-                    await db_1.default.execute('UPDATE attendance SET photo_path = ? WHERE id = ?', [photoPath, attendanceId]);
+                    // Update attendance record with photo path (both local_path and photo_path for compatibility)
+                    await db_1.default.execute('UPDATE attendance SET local_path = ?, photo_path = ? WHERE id = ?', [photoPath, photoPath, attendanceId]);
                     // Log to scan_photos table
-                    await db_1.default.execute('INSERT INTO scan_photos (attendance_id, student_name, status, photo_path) VALUES (?, ?, ?, ?)', [attendanceId, student.name, status, photoPath]);
+                    await db_1.default.execute('INSERT INTO scan_photos (attendance_id, student_name, status, photo_path, local_path) VALUES (?, ?, ?, ?, ?)', [attendanceId, student.name, status, photoPath, photoPath]);
+                    // Queue Cloudinary upload (background, non-blocking)
+                    uploadQueue_1.uploadQueue.enqueue(attendanceId, photoPath, student.name);
+                    console.log('📤 Queued for Cloudinary upload');
                 }
                 catch (err) {
                     console.error('Background photo upload failed:', err);
@@ -186,7 +197,7 @@ async function kioskScan(req, res) {
             studentId: student.id,
             studentName: student.name,
             status,
-            section: student.section,
+            section_id: student.section_id,
             grade: student.grade,
             parentId,
             method: scan_method,

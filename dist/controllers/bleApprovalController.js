@@ -7,7 +7,10 @@ exports.getPendingDetections = getPendingDetections;
 exports.approveDetection = approveDetection;
 exports.rejectDetection = rejectDetection;
 const db_1 = __importDefault(require("../lib/db"));
+const date_fns_1 = require("date-fns");
 const localPhotoUpload_1 = require("../utils/localPhotoUpload");
+const uploadQueue_1 = require("../utils/uploadQueue");
+const teacherClassHelper_1 = require("../utils/teacherClassHelper");
 /**
  * Queue SMS for GSM module to send
  * Converts phone numbers to international format (+63...)
@@ -95,7 +98,7 @@ async function approveDetection(req, res) {
             lrn: student.lrn,
             gender: student.gender,
             grade: student.grade,
-            section: student.section
+            section_id: student.section_id
         });
         // Handle photo upload to local storage if provided
         let photoPath = null;
@@ -155,26 +158,37 @@ async function approveDetection(req, res) {
             lrn: student.lrn,
             gender: student.gender,
             grade: student.grade,
-            section: student.section,
+            section_id: student.section_id,
             kiosk_id: detection.kiosk_id || null,
             scan_method: 'BLE',
             status: status,
             session: session
         });
+        // Get active teacher class for this section and time
+        const dayOfWeek = (0, date_fns_1.format)(phTime, 'EEEE');
+        const timeHHmmss = (0, date_fns_1.format)(phTime, 'HH:mm:ss');
+        const activeClassId = await (0, teacherClassHelper_1.getActiveClassForSection)(student.section_id, timeHHmmss, dayOfWeek);
         // Insert new attendance record (session-based)
         const [insertResult] = await db_1.default.execute(`INSERT INTO attendance 
-       (student_id, student_name, lrn, gender, grade, section, kiosk_id, 
-        scan_method, status, session, date, time_in, time_out, photo_path) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'BLE', ?, ?, ?, ?, ?, ?)`, [
+       (student_id, student_name, lrn, gender, grade, section_id, kiosk_id, 
+        scan_method, status, session, date, time_in, time_out, photo_path, local_path, teacher_class_id) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'BLE', ?, ?, ?, ?, ?, ?, ?, ?)`, [
             student.id, student.name, student.lrn, student.gender,
-            student.grade, student.section, detection.kiosk_id || null,
+            student.grade, student.section_id, detection.kiosk_id || null,
             status, session, localDate,
             status === 'Time-In' || status === 'Late' ? localTime : null,
             status === 'Time-Out' ? localTime : null,
-            photoPath
+            photoPath,
+            photoPath, // local_path same as photo_path initially
+            activeClassId, // Add teacher_class_id
         ]);
         attendanceId = insertResult.insertId;
         attendanceStatus = status;
+        // Queue Cloudinary upload (background, non-blocking)
+        if (photoPath) {
+            uploadQueue_1.uploadQueue.enqueue(attendanceId, photoPath, student.name);
+            console.log('📤 BLE photo queued for Cloudinary upload');
+        }
         console.log(`✅ Attendance APPROVED (${session}): ${student.name} ${status === 'Late' ? 'LATE' : status}`);
         // Send SMS notification to parents/guardians
         const [guardians] = await db_1.default.execute(`SELECT p.name, p.contact, ps.relationship

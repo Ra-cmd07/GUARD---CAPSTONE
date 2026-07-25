@@ -11,41 +11,31 @@ export async function getAttendance(req: AuthRequest, res: Response): Promise<vo
     const now = new Date();
     const phTime = new Date(now.getTime() + (8 * 60 * 60 * 1000));
     const date = (req.query.date as string) || phTime.toISOString().split('T')[0];
-    const section = req.query.section as string | undefined;
+    const sectionId = req.query.section_id as string | undefined;
 
-    console.log('🔍 getAttendance called:', { role, userId, profileId, date, section });
+    console.log('🔍 getAttendance called:', { role, userId, profileId, date, sectionId });
 
     let query = `
       SELECT a.id, a.student_id, a.student_name, a.lrn, a.gender,
-             a.grade, a.section, a.teacher_id, a.teacher_name,
+             a.grade, a.section_id, sec.name AS section_name, 
+             a.teacher_id, a.teacher_name,
              a.kiosk_id, a.scan_method, a.status, a.session,
              a.date, a.time_in, a.time_out, a.timestamp,
              a.photo_path, a.by_whom, a.notes, a.is_overridden,
              a.created_at, a.updated_at
       FROM attendance a
+      LEFT JOIN sections sec ON a.section_id = sec.id
       WHERE a.date = ?
     `;
     const params: any[] = [date];
 
     if (role === 'teacher' && profileId) {
-      // Teacher sees only their assigned section
-      const [tRows] = await pool.execute(
-        'SELECT section FROM teachers WHERE id = ?', [profileId]
-      ) as any[];
-      const teacherSection = (tRows as any[])[0]?.section;
-      console.log('👨‍🏫 Teacher section:', teacherSection);
-      if (teacherSection) {
-        // Flexible matching: works with both "Grade 7 - section 1" and "section 1" formats
-        // Extract the section number/identifier from teacher's section (e.g., "section 1" from "Grade 7 - section 1")
-        const sectionPart = teacherSection.split('-').pop()?.trim() || teacherSection;
-        console.log('📝 Section part extracted:', sectionPart);
-        query += ' AND (a.section = ? OR a.section = ? OR a.section LIKE ? OR a.teacher_id = ?)';
-        params.push(teacherSection, sectionPart, `%${sectionPart}%`, profileId);
-        console.log('🔍 Query params:', params);
-      } else {
-        query += ' AND a.teacher_id = ?';
-        params.push(profileId);
-      }
+      // Teacher sees only their assigned section(s) via teacher_sections junction
+      query += ` AND a.section_id IN (
+        SELECT section_id FROM teacher_sections WHERE teacher_id = ?
+      )`;
+      params.push(profileId);
+      console.log('👨‍🏫 Teacher viewing own sections');
     } else if (role === 'parent' && profileId) {
       // Parent sees only their children
       query += ` AND a.student_id IN (
@@ -56,8 +46,8 @@ export async function getAttendance(req: AuthRequest, res: Response): Promise<vo
       query += ' AND a.student_id = ?';
       params.push(profileId);
     } else if (role === 'admin') {
-      // Admin can filter by section
-      if (section) { query += ' AND a.section = ?'; params.push(section); }
+      // Admin can filter by section_id
+      if (sectionId) { query += ' AND a.section_id = ?'; params.push(sectionId); }
     }
 
     query += ' ORDER BY a.timestamp DESC';
@@ -82,7 +72,7 @@ export async function createAttendance(req: AuthRequest, res: Response): Promise
   try {
     const { role, profileId } = req.user!;
     const {
-      student_id, student_name, lrn, gender, grade, section,
+      student_id, student_name, lrn, gender, grade, section_id,
       teacher_id, teacher_name, kiosk_id, scan_method,
       status, session, date, time_in, time_out,
       photo_path, qr_data, by_whom, notes,
@@ -111,14 +101,14 @@ export async function createAttendance(req: AuthRequest, res: Response): Promise
 
     const [result] = await pool.execute(
       `INSERT INTO attendance
-         (student_id, student_name, lrn, gender, grade, section,
+         (student_id, student_name, lrn, gender, grade, section_id,
           teacher_id, teacher_name, kiosk_id, scan_method,
           status, session, date, time_in, time_out,
           photo_path, qr_data, by_whom, notes)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         student_id || null, student_name,
-        lrn || null, gender || null, grade || null, section || null,
+        lrn || null, gender || null, grade || null, section_id || null,
         resolvedTeacherId, resolvedTeacherName,
         kiosk_id || null, scanMethod,
         status, session_, date,

@@ -3,6 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.getTeacherSections = getTeacherSections;
 exports.getTeacherClasses = getTeacherClasses;
 exports.getTodayAttendanceSummary = getTodayAttendanceSummary;
 exports.markManualAttendance = markManualAttendance;
@@ -10,43 +11,105 @@ exports.addAttendanceNote = addAttendanceNote;
 exports.excuseAbsence = excuseAbsence;
 const db_1 = __importDefault(require("../lib/db"));
 const date_fns_1 = require("date-fns");
-// Get teacher's assigned classes
-async function getTeacherClasses(req, res) {
+// Get teacher's assigned sections
+async function getTeacherSections(req, res) {
     try {
+        console.log('📚 getTeacherSections called for user:', req.user?.id);
         const teacherId = req.user?.id;
         if (!teacherId) {
             return res.status(401).json({ error: 'Unauthorized' });
         }
-        // Get teacher's profile to find their section/class
-        const [teacher] = await db_1.default.query(`SELECT u.id, u.username, 
-              JSON_UNQUOTE(JSON_EXTRACT(u.profile, '$.name')) as name,
-              JSON_UNQUOTE(JSON_EXTRACT(u.profile, '$.section')) as section,
-              JSON_UNQUOTE(JSON_EXTRACT(u.profile, '$.subject')) as subject,
-              JSON_UNQUOTE(JSON_EXTRACT(u.profile, '$.room')) as room,
-              JSON_UNQUOTE(JSON_EXTRACT(u.profile, '$.schedule')) as schedule
-       FROM users u
-       WHERE u.id = ? AND u.role = 'teacher'`, [teacherId]);
+        // Get teacher's assigned sections
+        const [sections] = await db_1.default.query(`SELECT s.id, s.name, s.grade, s.section_code, s.room_number, s.capacity,
+              ts.is_primary,
+              COUNT(st.id) as student_count
+       FROM sections s
+       JOIN teacher_sections ts ON s.id = ts.section_id
+       JOIN teachers t ON ts.teacher_id = t.id
+       LEFT JOIN students st ON st.section_id = s.id
+       WHERE t.user_id = ?
+       GROUP BY s.id
+       ORDER BY ts.is_primary DESC, s.name`, [teacherId]);
+        res.json({
+            sections: sections,
+            total: sections.length,
+        });
+    }
+    catch (error) {
+        console.error('Error getting teacher sections:', error);
+        res.status(500).json({ error: 'Failed to load sections' });
+    }
+}
+// Get teacher's assigned classes from all sections
+async function getTeacherClasses(req, res) {
+    try {
+        console.log('🎓 getTeacherClasses called for user:', req.user?.id);
+        const teacherId = req.user?.id;
+        const selectedSectionId = req.query.section_id;
+        if (!teacherId) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+        // Get teacher's profile from teachers table
+        const [teacher] = await db_1.default.query(`SELECT t.id
+       FROM teachers t
+       WHERE t.user_id = ?`, [teacherId]);
         if (!teacher || teacher.length === 0) {
             return res.status(404).json({ error: 'Teacher not found' });
         }
-        const teacherData = teacher[0];
-        // Get students in teacher's section
-        const [students] = await db_1.default.query(`SELECT s.id, s.lrn, s.name, s.grade, s.section, s.preferred_method,
-              COUNT(DISTINCT DATE(a.date)) as days_present,
-              (SELECT COUNT(DISTINCT DATE(a2.date)) 
-               FROM attendance_logs a2 
-               WHERE a2.student_id = s.id 
-               AND a2.date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
-               AND a2.status IN ('Time-In', 'Late')) as attendance_30d
-       FROM students s
-       LEFT JOIN attendance_logs a ON a.student_id = s.id 
-         AND a.status IN ('Time-In', 'Late')
-         AND a.date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
-       WHERE s.section = ?
-       GROUP BY s.id
-       ORDER BY s.name`, [teacherData.section]);
+        const dbTeacherId = teacher[0].id;
+        // Get teacher's assigned sections
+        const [sections] = await db_1.default.query(`SELECT s.id, s.name, s.grade, s.section_code
+       FROM sections s
+       JOIN teacher_sections ts ON s.id = ts.section_id
+       WHERE ts.teacher_id = ?
+       ORDER BY s.name`, [dbTeacherId]);
+        // Determine which section to fetch students from
+        let activeSectionId = selectedSectionId ? parseInt(selectedSectionId) : (sections.length > 0 ? sections[0].id : null);
+        const activeSection = activeSectionId ? sections.find((s) => s.id === activeSectionId) : null;
+        // Get students from the selected section (or all sections if none selected)
+        let students = [];
+        if (activeSectionId) {
+            const [sectionStudents] = await db_1.default.query(`SELECT s.id, s.lrn, s.name, s.grade,
+                COUNT(DISTINCT DATE(a.date)) as days_present,
+                (SELECT COUNT(DISTINCT DATE(a2.date)) 
+                 FROM attendance a2 
+                 WHERE a2.student_id = s.id 
+                 AND a2.date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+                 AND a2.status IN ('Time-In', 'Late')) as attendance_30d
+         FROM students s
+         LEFT JOIN attendance a ON a.student_id = s.id 
+           AND a.status IN ('Time-In', 'Late')
+           AND a.date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+         WHERE s.section_id = ?
+         GROUP BY s.id
+         ORDER BY s.name`, [activeSectionId]);
+            students = sectionStudents;
+        }
+        else {
+            // Fallback to all students in sections assigned to this teacher
+            const [allStudents] = await db_1.default.query(`SELECT s.id, s.lrn, s.name, s.grade,
+                COUNT(DISTINCT DATE(a.date)) as days_present,
+                (SELECT COUNT(DISTINCT DATE(a2.date)) 
+                 FROM attendance a2 
+                 WHERE a2.student_id = s.id 
+                 AND a2.date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+                 AND a2.status IN ('Time-In', 'Late')) as attendance_30d
+         FROM students s
+         LEFT JOIN attendance a ON a.student_id = s.id 
+           AND a.status IN ('Time-In', 'Late')
+           AND a.date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+         WHERE s.section_id IN (
+           SELECT s2.id FROM sections s2
+           JOIN teacher_sections ts ON s2.id = ts.section_id
+           WHERE ts.teacher_id = ?
+         )
+         GROUP BY s.id
+         ORDER BY s.name`, [dbTeacherId]);
+            students = allStudents;
+        }
         res.json({
-            teacher: teacherData,
+            sections: sections,
+            activeSection: activeSection,
             students: students,
             totalStudents: students.length,
         });
@@ -56,33 +119,48 @@ async function getTeacherClasses(req, res) {
         res.status(500).json({ error: 'Failed to load classes' });
     }
 }
-// Get today's attendance summary for teacher's class
+// Get today's attendance summary for teacher's classes (with section filtering)
+// Get today's attendance summary for teacher's classes (with section filtering)
 async function getTodayAttendanceSummary(req, res) {
     try {
+        console.log('📊 getTodayAttendanceSummary called for user:', req.user?.id);
         const teacherId = req.user?.id;
         const date = req.query.date || (0, date_fns_1.format)(new Date(), 'yyyy-MM-dd');
+        const selectedSectionId = req.query.section_id;
         if (!teacherId) {
             return res.status(401).json({ error: 'Unauthorized' });
         }
-        // Get teacher's section
-        const [teacher] = await db_1.default.query(`SELECT JSON_UNQUOTE(JSON_EXTRACT(u.profile, '$.section')) as section
-       FROM users u
-       WHERE u.id = ? AND u.role = 'teacher'`, [teacherId]);
+        // Get teacher's ID from teachers table
+        const [teacher] = await db_1.default.query(`SELECT id FROM teachers WHERE user_id = ?`, [teacherId]);
         if (!teacher || teacher.length === 0) {
             return res.status(404).json({ error: 'Teacher not found' });
         }
-        const section = teacher[0].section;
-        // Get attendance records for today
-        const [attendance] = await db_1.default.query(`SELECT a.*, s.name as student_name, s.lrn, s.grade, s.section
-       FROM attendance_logs a
+        const dbTeacherId = teacher[0].id;
+        // Get teacher's assigned sections
+        const [sections] = await db_1.default.query(`SELECT s.id, s.name, s.grade, s.section_code
+       FROM sections s
+       JOIN teacher_sections ts ON s.id = ts.section_id
+       WHERE ts.teacher_id = ?
+       ORDER BY s.name`, [dbTeacherId]);
+        if (!sections || sections.length === 0) {
+            return res.status(404).json({ error: 'No sections assigned to teacher' });
+        }
+        // Determine active section
+        let activeSectionId = selectedSectionId ? parseInt(selectedSectionId) : sections[0].id;
+        const activeSection = sections.find((s) => s.id === activeSectionId) || sections[0];
+        console.log('📚 Active section:', activeSection.name);
+        // Get attendance records for the selected section
+        const [attendance] = await db_1.default.query(`SELECT a.*, s.name as student_name, s.lrn, s.grade
+       FROM attendance a
        JOIN students s ON a.student_id = s.id
-       WHERE s.section = ? AND DATE(a.date) = ?
-       ORDER BY a.timestamp DESC`, [section, date]);
-        // Get all students in section
-        const [allStudents] = await db_1.default.query(`SELECT id, lrn, name, grade, section, preferred_method
+       WHERE a.section_id = ? AND DATE(a.date) = ?
+       ORDER BY a.timestamp DESC`, [activeSection.id, date]);
+        console.log('📋 Attendance records found:', attendance.length);
+        // Get all enrolled students in the selected section
+        const [allStudents] = await db_1.default.query(`SELECT id, lrn, name, grade
        FROM students
-       WHERE section = ?
-       ORDER BY name`, [section]);
+       WHERE section_id = ?
+       ORDER BY name`, [activeSection.id]);
         // Calculate stats
         const presentStudents = new Set();
         const lateStudents = new Set();
@@ -108,14 +186,15 @@ async function getTodayAttendanceSummary(req, res) {
         };
         res.json({
             date,
-            section,
+            section: activeSection.name,
+            sections: sections,
             stats,
             attendance,
             allStudents,
         });
     }
     catch (error) {
-        console.error('Error getting attendance summary:', error);
+        console.error('❌ Error getting attendance summary:', error);
         res.status(500).json({ error: 'Failed to load attendance summary' });
     }
 }
@@ -123,25 +202,30 @@ async function getTodayAttendanceSummary(req, res) {
 async function markManualAttendance(req, res) {
     try {
         const teacherId = req.user?.id;
-        const { student_id, status, session, reason } = req.body;
+        const { student_id, section_id, status, session, reason } = req.body;
         if (!teacherId) {
             return res.status(401).json({ error: 'Unauthorized' });
         }
-        // Verify teacher has permission to mark this student
-        const [teacher] = await db_1.default.query(`SELECT JSON_UNQUOTE(JSON_EXTRACT(u.profile, '$.section')) as section
-       FROM users u
-       WHERE u.id = ? AND u.role = 'teacher'`, [teacherId]);
-        const [student] = await db_1.default.query(`SELECT id, name, section FROM students WHERE id = ?`, [student_id]);
+        // Get teacher ID from teachers table
+        const [teacher] = await db_1.default.query(`SELECT id FROM teachers WHERE user_id = ?`, [teacherId]);
+        if (!teacher || teacher.length === 0) {
+            return res.status(404).json({ error: 'Teacher not found' });
+        }
+        const dbTeacherId = teacher[0].id;
+        // Verify teacher has permission for this section
+        const [permission] = await db_1.default.query(`SELECT ts.section_id FROM teacher_sections ts
+       WHERE ts.teacher_id = ? AND ts.section_id = ?`, [dbTeacherId, section_id]);
+        if (!permission || permission.length === 0) {
+            return res.status(403).json({ error: 'Cannot mark attendance for students in sections you do not teach' });
+        }
+        const [student] = await db_1.default.query(`SELECT id, name FROM students WHERE id = ? AND section_id = ?`, [student_id, section_id]);
         if (!student || student.length === 0) {
             return res.status(404).json({ error: 'Student not found' });
         }
-        if (teacher[0].section !== student[0].section) {
-            return res.status(403).json({ error: 'Cannot mark attendance for students outside your class' });
-        }
         // Insert manual attendance record
-        const [result] = await db_1.default.query(`INSERT INTO attendance_logs 
-       (student_id, date, status, session, scan_method, is_overridden, override_reason, override_by)
-       VALUES (?, CURDATE(), ?, ?, 'Manual', 1, ?, ?)`, [student_id, status, session || 'AM', reason || 'Manually marked by teacher', teacherId]);
+        const [result] = await db_1.default.query(`INSERT INTO attendance 
+       (student_id, section_id, date, status, scan_method, override_reason, override_by)
+       VALUES (?, ?, CURDATE(), ?, 'Manual', ?, ?)`, [student_id, section_id, status, reason || 'Manually marked by teacher', dbTeacherId]);
         res.json({
             success: true,
             message: `Attendance marked for ${student[0].name}`,
@@ -157,30 +241,32 @@ async function markManualAttendance(req, res) {
 async function addAttendanceNote(req, res) {
     try {
         const teacherId = req.user?.id;
-        const { attendance_id, student_id, note, excuse_type } = req.body;
+        const { attendance_id, student_id, section_id, note, excuse_type } = req.body;
         if (!teacherId) {
             return res.status(401).json({ error: 'Unauthorized' });
         }
-        // Verify teacher has permission
-        const [teacher] = await db_1.default.query(`SELECT JSON_UNQUOTE(JSON_EXTRACT(u.profile, '$.section')) as section
-       FROM users u
-       WHERE u.id = ? AND u.role = 'teacher'`, [teacherId]);
-        const [student] = await db_1.default.query(`SELECT section FROM students WHERE id = ?`, [student_id]);
+        // Get teacher ID from teachers table
+        const [teacher] = await db_1.default.query(`SELECT id FROM teachers WHERE user_id = ?`, [teacherId]);
+        if (!teacher || teacher.length === 0) {
+            return res.status(404).json({ error: 'Teacher not found' });
+        }
+        const dbTeacherId = teacher[0].id;
+        // Verify teacher has permission for this section
+        const [permission] = await db_1.default.query(`SELECT ts.section_id FROM teacher_sections ts
+       WHERE ts.teacher_id = ? AND ts.section_id = ?`, [dbTeacherId, section_id]);
+        if (!permission || permission.length === 0) {
+            return res.status(403).json({ error: 'Cannot add notes for students in sections you do not teach' });
+        }
+        const [student] = await db_1.default.query(`SELECT id FROM students WHERE id = ? AND section_id = ?`, [student_id, section_id]);
         if (!student || student.length === 0) {
             return res.status(404).json({ error: 'Student not found' });
         }
-        if (teacher[0].section !== student[0].section) {
-            return res.status(403).json({ error: 'Cannot add notes for students outside your class' });
-        }
         // Update attendance record with note
         if (attendance_id) {
-            await db_1.default.query(`UPDATE attendance_logs 
+            await db_1.default.query(`UPDATE attendance 
          SET override_reason = CONCAT(IFNULL(override_reason, ''), '\n', ?)
          WHERE id = ?`, [note, attendance_id]);
         }
-        // Create a teacher note record (for tracking)
-        await db_1.default.query(`INSERT INTO teacher_notes (teacher_id, student_id, attendance_id, note, excuse_type, created_at)
-       VALUES (?, ?, ?, ?, ?, NOW())`, [teacherId, student_id, attendance_id, note, excuse_type || 'general']);
         res.json({
             success: true,
             message: 'Note added successfully',
@@ -188,19 +274,6 @@ async function addAttendanceNote(req, res) {
     }
     catch (error) {
         console.error('Error adding attendance note:', error);
-        // If teacher_notes table doesn't exist, just update attendance_logs
-        if (error.code === 'ER_NO_SUCH_TABLE') {
-            try {
-                const { attendance_id, note } = req.body;
-                await db_1.default.query(`UPDATE attendance_logs 
-           SET override_reason = CONCAT(IFNULL(override_reason, ''), '\n', ?)
-           WHERE id = ?`, [note, attendance_id]);
-                return res.json({ success: true, message: 'Note added to attendance record' });
-            }
-            catch (err) {
-                return res.status(500).json({ error: 'Failed to add note' });
-            }
-        }
         res.status(500).json({ error: 'Failed to add note' });
     }
 }
@@ -208,39 +281,42 @@ async function addAttendanceNote(req, res) {
 async function excuseAbsence(req, res) {
     try {
         const teacherId = req.user?.id;
-        const { student_id, date, reason } = req.body;
+        const { student_id, section_id, date, reason } = req.body;
         if (!teacherId) {
             return res.status(401).json({ error: 'Unauthorized' });
         }
-        // Verify teacher has permission
-        const [teacher] = await db_1.default.query(`SELECT JSON_UNQUOTE(JSON_EXTRACT(u.profile, '$.section')) as section,
-              JSON_UNQUOTE(JSON_EXTRACT(u.profile, '$.name')) as teacher_name
-       FROM users u
-       WHERE u.id = ? AND u.role = 'teacher'`, [teacherId]);
-        const [student] = await db_1.default.query(`SELECT id, name, section FROM students WHERE id = ?`, [student_id]);
+        // Get teacher ID from teachers table
+        const [teacher] = await db_1.default.query(`SELECT id FROM teachers WHERE user_id = ?`, [teacherId]);
+        if (!teacher || teacher.length === 0) {
+            return res.status(404).json({ error: 'Teacher not found' });
+        }
+        const dbTeacherId = teacher[0].id;
+        // Verify teacher has permission for this section
+        const [permission] = await db_1.default.query(`SELECT ts.section_id FROM teacher_sections ts
+       WHERE ts.teacher_id = ? AND ts.section_id = ?`, [dbTeacherId, section_id]);
+        if (!permission || permission.length === 0) {
+            return res.status(403).json({ error: 'Cannot excuse students in sections you do not teach' });
+        }
+        const [student] = await db_1.default.query(`SELECT id, name FROM students WHERE id = ? AND section_id = ?`, [student_id, section_id]);
         if (!student || student.length === 0) {
             return res.status(404).json({ error: 'Student not found' });
         }
-        if (teacher[0].section !== student[0].section) {
-            return res.status(403).json({ error: 'Cannot excuse students outside your class' });
-        }
         // Check if attendance record exists
-        const [existing] = await db_1.default.query(`SELECT id FROM attendance_logs 
-       WHERE student_id = ? AND DATE(date) = ?`, [student_id, date]);
+        const [existing] = await db_1.default.query(`SELECT id FROM attendance 
+       WHERE student_id = ? AND section_id = ? AND DATE(date) = ?`, [student_id, section_id, date]);
         if (existing.length > 0) {
             // Update existing record
-            await db_1.default.query(`UPDATE attendance_logs 
+            await db_1.default.query(`UPDATE attendance 
          SET status = 'Excused', 
-             is_overridden = 1, 
              override_reason = ?, 
              override_by = ?
-         WHERE id = ?`, [reason || `Excused by ${teacher[0].teacher_name}`, teacherId, existing[0].id]);
+         WHERE id = ?`, [reason || 'Excused by teacher', dbTeacherId, existing[0].id]);
         }
         else {
             // Create new excused record
-            await db_1.default.query(`INSERT INTO attendance_logs 
-         (student_id, date, status, session, scan_method, is_overridden, override_reason, override_by)
-         VALUES (?, ?, 'Excused', 'AM', 'Manual', 1, ?, ?)`, [student_id, date, reason || `Excused by ${teacher[0].teacher_name}`, teacherId]);
+            await db_1.default.query(`INSERT INTO attendance 
+         (student_id, section_id, date, status, scan_method, override_reason, override_by)
+         VALUES (?, ?, ?, 'Excused', 'Manual', ?, ?)`, [student_id, section_id, date, reason || 'Excused by teacher', dbTeacherId]);
         }
         res.json({
             success: true,
@@ -253,6 +329,7 @@ async function excuseAbsence(req, res) {
     }
 }
 exports.default = {
+    getTeacherSections,
     getTeacherClasses,
     getTodayAttendanceSummary,
     markManualAttendance,

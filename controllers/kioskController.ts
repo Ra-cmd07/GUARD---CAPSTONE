@@ -2,9 +2,11 @@ import { Request, Response } from 'express';
 import path from 'path';
 import fs from 'fs';
 import pool from '../lib/db';
+import { format } from 'date-fns';
 import { emitAttendanceEvent } from '../src/websocket/socketHandler';
 import { savePhotoLocally } from '../utils/localPhotoUpload';
 import { uploadQueue } from '../utils/uploadQueue';
+import { getActiveClassForSection } from '../utils/teacherClassHelper';
 
 /**
  * Queue SMS for GSM module to send
@@ -148,21 +150,27 @@ export async function kioskScan(req: Request, res: Response): Promise<void> {
 
     // REMOVED: Duplicate check - now allows unlimited check-ins/outs per day
 
+    // ── Get active teacher class for this section and time ──────────────
+    const dayOfWeek = format(phTime, 'EEEE'); // Get day name from phTime (already in PH time)
+    const timeHHmmss = format(phTime, 'HH:mm:ss');
+    const activeClassId = await getActiveClassForSection(student.section_id, timeHHmmss, dayOfWeek);
+
     // ── Insert attendance IMMEDIATELY (don't wait for photo) ──────────
     const [attResult] = await pool.execute(
       `INSERT INTO attendance
-         (student_id, student_name, lrn, gender, grade, section,
+         (student_id, student_name, lrn, gender, grade, section_id,
           kiosk_id, scan_method, status, session, date, time_in, time_out,
-          photo_path, qr_data)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          photo_path, qr_data, teacher_class_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         student.id, student.name, student.lrn, student.gender,
-        student.grade, student.section,
+        student.grade, student.section_id,
         kiosk_id || null, scan_method, status, session, today,
         status === 'Time-In' || status === 'Late' ? timeStr : null,
         status === 'Time-Out' ? timeStr : null,
         null, // Photo path will be updated later
         qr_data || null,
+        activeClassId, // Add teacher_class_id
       ]
     ) as any[];
     const attendanceId = (attResult as any).insertId;
@@ -241,7 +249,7 @@ export async function kioskScan(req: Request, res: Response): Promise<void> {
       studentId: student.id,
       studentName: student.name,
       status,
-      section: student.section,
+      section_id: student.section_id,
       grade: student.grade,
       parentId,
       method: scan_method,
