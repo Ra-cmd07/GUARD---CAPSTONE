@@ -4,7 +4,9 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import path from 'path';
 import dotenv from 'dotenv';
-import { createServer } from 'http';
+import { createServer as createHttpServer } from 'http';
+import { createServer as createHttpsServer } from 'https';
+import fs from 'fs';
 import { initializeWebSocket } from './src/websocket/socketHandler';
 import { uploadQueue } from './utils/uploadQueue';
 
@@ -102,14 +104,35 @@ app.use((_req, res) => {
 app.use(errorHandler);
 
 // ─── Start Server ─────────────────────────────────────────────────────
-const httpServer = createServer(app);
+// Check if HTTPS certificates exist
+const certPath = path.resolve(__dirname, 'certs/localhost.pem');
+const keyPath  = path.resolve(__dirname, 'certs/localhost-key.pem');
+const httpsEnabled = fs.existsSync(certPath) && fs.existsSync(keyPath);
+
+let server;
+
+if (httpsEnabled) {
+  // HTTPS mode - enables camera on phone
+  const httpsOptions = {
+    key:  fs.readFileSync(keyPath),
+    cert: fs.readFileSync(certPath),
+  };
+  server = createHttpsServer(httpsOptions, app);
+  console.log('🔒 HTTPS mode enabled');
+} else {
+  // HTTP fallback
+  server = createHttpServer(app);
+  console.log('⚠️  HTTP mode (no certificates found)');
+}
 
 // Initialize WebSocket
-const io = initializeWebSocket(httpServer);
+const io = initializeWebSocket(server);
 
-httpServer.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 AttendBox API running at http://0.0.0.0:${PORT}`);
-  console.log(`   Local:   http://localhost:${PORT}`);
+server.listen(PORT, '0.0.0.0', () => {
+  const proto = httpsEnabled ? 'https' : 'http';
+  console.log(`🚀 AttendBox API running at ${proto}://0.0.0.0:${PORT}`);
+  console.log(`   Local:   ${proto}://localhost:${PORT}`);
+  console.log(`   Network: ${proto}://192.168.1.29:${PORT}`);
   console.log(`🔌 WebSocket server ready for real-time updates`);
   console.log(`📤 Background upload queue initialized`);
 });

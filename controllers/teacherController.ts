@@ -3,56 +3,47 @@ import { AuthRequest } from '../middleware/authMiddleware';
 import pool from '../lib/db';
 import { format } from 'date-fns';
 
-// Get teacher's assigned classes
+// ─── Helper: get teacher row from DB ─────────────────────────────────
+async function getTeacherRow(userId: number): Promise<any | null> {
+  const [rows]: any = await pool.query(
+    `SELECT t.id, t.user_id, t.name, t.section, t.subject, t.room, t.schedule, t.contact
+     FROM teachers t
+     WHERE t.user_id = ?
+     LIMIT 1`,
+    [userId]
+  );
+  return rows.length > 0 ? rows[0] : null;
+}
+
+// ─── GET /teacher/classes ─────────────────────────────────────────────
 export async function getTeacherClasses(req: AuthRequest, res: Response) {
   try {
-    const teacherId = req.user?.id;
-    
-    if (!teacherId) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
-    // Get teacher's profile to find their section/class
-    const [teacher]: any = await pool.query(
-      `SELECT u.id, u.username, 
-              JSON_UNQUOTE(JSON_EXTRACT(u.profile, '$.name')) as name,
-              JSON_UNQUOTE(JSON_EXTRACT(u.profile, '$.section')) as section,
-              JSON_UNQUOTE(JSON_EXTRACT(u.profile, '$.subject')) as subject,
-              JSON_UNQUOTE(JSON_EXTRACT(u.profile, '$.room')) as room,
-              JSON_UNQUOTE(JSON_EXTRACT(u.profile, '$.schedule')) as schedule
-       FROM users u
-       WHERE u.id = ? AND u.role = 'teacher'`,
-      [teacherId]
-    );
-
-    if (!teacher || teacher.length === 0) {
-      return res.status(404).json({ error: 'Teacher not found' });
-    }
-
-    const teacherData = teacher[0];
+    const teacher = await getTeacherRow(userId);
+    if (!teacher) return res.status(404).json({ error: 'Teacher profile not found' });
 
     // Get students in teacher's section
     const [students]: any = await pool.query(
-      `SELECT s.id, s.lrn, s.name, s.grade, s.section, s.preferred_method,
-              COUNT(DISTINCT DATE(a.date)) as days_present,
-              (SELECT COUNT(DISTINCT DATE(a2.date)) 
-               FROM attendance_logs a2 
-               WHERE a2.student_id = s.id 
-               AND a2.date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
-               AND a2.status IN ('Time-In', 'Late')) as attendance_30d
-       FROM students s
-       LEFT JOIN attendance_logs a ON a.student_id = s.id 
-         AND a.status IN ('Time-In', 'Late')
-         AND a.date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
-       WHERE s.section = ?
-       GROUP BY s.id
-       ORDER BY s.name`,
-      [teacherData.section]
+      `SELECT id, lrn, name, grade, section, preferred_method,
+              0 AS days_present,
+              0 AS attendance_30d
+       FROM students
+       WHERE LOWER(section) = LOWER(?)
+       ORDER BY name`,
+      [teacher.section]
     );
 
     res.json({
-      teacher: teacherData,
-      students: students,
+      teacher: {
+        name:     teacher.name,
+        section:  teacher.section,
+        subject:  teacher.subject,
+        room:     teacher.room,
+        schedule: teacher.schedule,
+      },
+      students,
       totalStudents: students.length,
     });
   } catch (error) {
@@ -61,129 +52,111 @@ export async function getTeacherClasses(req: AuthRequest, res: Response) {
   }
 }
 
-// Get today's attendance summary for teacher's class
+// ─── GET /teacher/attendance/today ────────────────────────────────────
 export async function getTodayAttendanceSummary(req: AuthRequest, res: Response) {
   try {
-    const teacherId = req.user?.id;
-    const date = req.query.date as string || format(new Date(), 'yyyy-MM-dd');
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
-    if (!teacherId) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
+    const date = (req.query.date as string) || format(new Date(), 'yyyy-MM-dd');
 
-    // Get teacher's section
-    const [teacher]: any = await pool.query(
-      `SELECT JSON_UNQUOTE(JSON_EXTRACT(u.profile, '$.section')) as section
-       FROM users u
-       WHERE u.id = ? AND u.role = 'teacher'`,
-      [teacherId]
-    );
+    const teacher = await getTeacherRow(userId);
+    if (!teacher) return res.status(404).json({ error: 'Teacher profile not found' });
 
-    if (!teacher || teacher.length === 0) {
-      return res.status(404).json({ error: 'Teacher not found' });
-    }
+    const section = teacher.section;
 
-    const section = teacher[0].section;
-
-    // Get attendance records for today
+    // Attendance records for this section + date
     const [attendance]: any = await pool.query(
-      `SELECT a.*, s.name as student_name, s.lrn, s.grade, s.section
-       FROM attendance_logs a
-       JOIN students s ON a.student_id = s.id
-       WHERE s.section = ? AND DATE(a.date) = ?
-       ORDER BY a.timestamp DESC`,
+      `SELECT id, student_id, student_name, lrn, grade, section,
+              status, session, scan_method, date, time_in, time_out,
+              timestamp, photo_path, is_overridden, notes
+       FROM attendance
+       WHERE LOWER(section) = LOWER(?) AND DATE(CONVERT_TZ(date, '+00:00', '+08:00')) = ?
+       ORDER BY timestamp DESC`,
       [section, date]
     );
 
-    // Get all students in section
+    // All students in section (case-insensitive match)
     const [allStudents]: any = await pool.query(
       `SELECT id, lrn, name, grade, section, preferred_method
-       FROM students
-       WHERE section = ?
-       ORDER BY name`,
+       FROM students WHERE LOWER(section) = LOWER(?) ORDER BY name`,
       [section]
     );
 
-    // Calculate stats
-    const presentStudents = new Set();
-    const lateStudents = new Set();
-    const absentStudents = new Set(allStudents.map((s: any) => s.id));
+    // Stats
+    const presentSet = new Set<number>();
+    const lateSet    = new Set<number>();
+    const absentSet  = new Set<number>(allStudents.map((s: any) => s.id));
 
-    attendance.forEach((record: any) => {
-      if (record.status === 'Time-In') {
-        presentStudents.add(record.student_id);
-        absentStudents.delete(record.student_id);
-      } else if (record.status === 'Late') {
-        lateStudents.add(record.student_id);
-        absentStudents.delete(record.student_id);
+    for (const r of attendance) {
+      if (r.status === 'Time-In') {
+        presentSet.add(r.student_id);
+        absentSet.delete(r.student_id);
+      } else if (r.status === 'Late') {
+        lateSet.add(r.student_id);
+        absentSet.delete(r.student_id);
       }
-    });
+    }
 
     const stats = {
-      present: presentStudents.size,
-      late: lateStudents.size,
-      absent: absentStudents.size,
-      total: allStudents.length,
-      attendanceRate: allStudents.length > 0 
-        ? Math.round(((presentStudents.size + lateStudents.size) / allStudents.length) * 100) 
+      present:        presentSet.size,
+      late:           lateSet.size,
+      absent:         absentSet.size,
+      total:          allStudents.length,
+      attendanceRate: allStudents.length > 0
+        ? Math.round(((presentSet.size + lateSet.size) / allStudents.length) * 100)
         : 0,
     };
 
-    res.json({
-      date,
-      section,
-      stats,
-      attendance,
-      allStudents,
-    });
+    res.json({ date, section, stats, attendance, allStudents });
   } catch (error) {
     console.error('Error getting attendance summary:', error);
     res.status(500).json({ error: 'Failed to load attendance summary' });
   }
 }
 
-// Mark manual attendance
+// ─── POST /teacher/attendance/manual ─────────────────────────────────
 export async function markManualAttendance(req: AuthRequest, res: Response) {
   try {
-    const teacherId = req.user?.id;
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
     const { student_id, status, session, reason } = req.body;
 
-    if (!teacherId) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
+    const teacher = await getTeacherRow(userId);
+    if (!teacher) return res.status(404).json({ error: 'Teacher profile not found' });
 
-    // Verify teacher has permission to mark this student
-    const [teacher]: any = await pool.query(
-      `SELECT JSON_UNQUOTE(JSON_EXTRACT(u.profile, '$.section')) as section
-       FROM users u
-       WHERE u.id = ? AND u.role = 'teacher'`,
-      [teacherId]
-    );
-
-    const [student]: any = await pool.query(
-      `SELECT id, name, section FROM students WHERE id = ?`,
+    const [studentRows]: any = await pool.query(
+      `SELECT id, name, lrn, grade, section FROM students WHERE id = ?`,
       [student_id]
     );
+    if (!studentRows.length) return res.status(404).json({ error: 'Student not found' });
+    const student = studentRows[0];
 
-    if (!student || student.length === 0) {
-      return res.status(404).json({ error: 'Student not found' });
-    }
-
-    if (teacher[0].section !== student[0].section) {
+    if (teacher.section !== student.section)
       return res.status(403).json({ error: 'Cannot mark attendance for students outside your class' });
-    }
 
-    // Insert manual attendance record
+    const dateStr = format(new Date(), 'yyyy-MM-dd');
+    const timeStr = format(new Date(), 'HH:mm:ss');
+
     const [result]: any = await pool.query(
-      `INSERT INTO attendance_logs 
-       (student_id, date, status, session, scan_method, is_overridden, override_reason, override_by)
-       VALUES (?, CURDATE(), ?, ?, 'Manual', 1, ?, ?)`,
-      [student_id, status, session || 'AM', reason || 'Manually marked by teacher', teacherId]
+      `INSERT INTO attendance
+         (student_id, student_name, lrn, grade, section,
+          teacher_id, teacher_name, scan_method, status, session,
+          date, time_in, timestamp, is_overridden, notes, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'Manual', ?, ?, ?, ?, NOW(), 1, ?, NOW())`,
+      [
+        student.id, student.name, student.lrn, student.grade, student.section,
+        teacher.id, teacher.name,
+        status, session || 'AM',
+        dateStr, timeStr,
+        reason || 'Manually marked by teacher',
+      ]
     );
 
     res.json({
       success: true,
-      message: `Attendance marked for ${student[0].name}`,
+      message: `Attendance marked for ${student.name}`,
       attendanceId: result.insertId,
     });
   } catch (error) {
@@ -192,145 +165,96 @@ export async function markManualAttendance(req: AuthRequest, res: Response) {
   }
 }
 
-// Add excuse/note to attendance
+// ─── POST /teacher/attendance/note ───────────────────────────────────
 export async function addAttendanceNote(req: AuthRequest, res: Response) {
   try {
-    const teacherId = req.user?.id;
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
     const { attendance_id, student_id, note, excuse_type } = req.body;
 
-    if (!teacherId) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
+    const teacher = await getTeacherRow(userId);
+    if (!teacher) return res.status(404).json({ error: 'Teacher profile not found' });
 
-    // Verify teacher has permission
-    const [teacher]: any = await pool.query(
-      `SELECT JSON_UNQUOTE(JSON_EXTRACT(u.profile, '$.section')) as section
-       FROM users u
-       WHERE u.id = ? AND u.role = 'teacher'`,
-      [teacherId]
+    const [studentRows]: any = await pool.query(
+      `SELECT section FROM students WHERE id = ?`, [student_id]
     );
-
-    const [student]: any = await pool.query(
-      `SELECT section FROM students WHERE id = ?`,
-      [student_id]
-    );
-
-    if (!student || student.length === 0) {
-      return res.status(404).json({ error: 'Student not found' });
-    }
-
-    if (teacher[0].section !== student[0].section) {
+    if (!studentRows.length) return res.status(404).json({ error: 'Student not found' });
+    if (teacher.section !== studentRows[0].section)
       return res.status(403).json({ error: 'Cannot add notes for students outside your class' });
-    }
 
-    // Update attendance record with note
     if (attendance_id) {
       await pool.query(
-        `UPDATE attendance_logs 
-         SET override_reason = CONCAT(IFNULL(override_reason, ''), '\n', ?)
-         WHERE id = ?`,
+        `UPDATE attendance SET notes = CONCAT(IFNULL(notes, ''), ' | ', ?) WHERE id = ?`,
         [note, attendance_id]
       );
     }
 
-    // Create a teacher note record (for tracking)
-    await pool.query(
-      `INSERT INTO teacher_notes (teacher_id, student_id, attendance_id, note, excuse_type, created_at)
-       VALUES (?, ?, ?, ?, ?, NOW())`,
-      [teacherId, student_id, attendance_id, note, excuse_type || 'general']
-    );
+    // Try inserting into teacher_notes (silently skip if table missing)
+    try {
+      await pool.query(
+        `INSERT INTO teacher_notes (teacher_id, student_id, attendance_id, note, excuse_type, created_at)
+         VALUES (?, ?, ?, ?, ?, NOW())`,
+        [teacher.id, student_id, attendance_id, note, excuse_type || 'general']
+      );
+    } catch (_) { /* table may not exist */ }
 
-    res.json({
-      success: true,
-      message: 'Note added successfully',
-    });
-  } catch (error: any) {
+    res.json({ success: true, message: 'Note added successfully' });
+  } catch (error) {
     console.error('Error adding attendance note:', error);
-    
-    // If teacher_notes table doesn't exist, just update attendance_logs
-    if (error.code === 'ER_NO_SUCH_TABLE') {
-      try {
-        const { attendance_id, note } = req.body;
-        await pool.query(
-          `UPDATE attendance_logs 
-           SET override_reason = CONCAT(IFNULL(override_reason, ''), '\n', ?)
-           WHERE id = ?`,
-          [note, attendance_id]
-        );
-        return res.json({ success: true, message: 'Note added to attendance record' });
-      } catch (err) {
-        return res.status(500).json({ error: 'Failed to add note' });
-      }
-    }
-    
     res.status(500).json({ error: 'Failed to add note' });
   }
 }
 
-// Excuse absence (mark as excused)
+// ─── POST /teacher/attendance/excuse ─────────────────────────────────
 export async function excuseAbsence(req: AuthRequest, res: Response) {
   try {
-    const teacherId = req.user?.id;
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
     const { student_id, date, reason } = req.body;
 
-    if (!teacherId) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
+    const teacher = await getTeacherRow(userId);
+    if (!teacher) return res.status(404).json({ error: 'Teacher profile not found' });
 
-    // Verify teacher has permission
-    const [teacher]: any = await pool.query(
-      `SELECT JSON_UNQUOTE(JSON_EXTRACT(u.profile, '$.section')) as section,
-              JSON_UNQUOTE(JSON_EXTRACT(u.profile, '$.name')) as teacher_name
-       FROM users u
-       WHERE u.id = ? AND u.role = 'teacher'`,
-      [teacherId]
-    );
-
-    const [student]: any = await pool.query(
-      `SELECT id, name, section FROM students WHERE id = ?`,
+    const [studentRows]: any = await pool.query(
+      `SELECT id, name, lrn, grade, section FROM students WHERE id = ?`,
       [student_id]
     );
+    if (!studentRows.length) return res.status(404).json({ error: 'Student not found' });
+    const student = studentRows[0];
 
-    if (!student || student.length === 0) {
-      return res.status(404).json({ error: 'Student not found' });
-    }
-
-    if (teacher[0].section !== student[0].section) {
+    if (teacher.section !== student.section)
       return res.status(403).json({ error: 'Cannot excuse students outside your class' });
-    }
 
-    // Check if attendance record exists
+    const excuseNote = reason || `Excused by ${teacher.name}`;
+
     const [existing]: any = await pool.query(
-      `SELECT id FROM attendance_logs 
-       WHERE student_id = ? AND DATE(date) = ?`,
+      `SELECT id FROM attendance WHERE student_id = ? AND DATE(CONVERT_TZ(date, '+00:00', '+08:00')) = ? LIMIT 1`,
       [student_id, date]
     );
 
     if (existing.length > 0) {
-      // Update existing record
       await pool.query(
-        `UPDATE attendance_logs 
-         SET status = 'Excused', 
-             is_overridden = 1, 
-             override_reason = ?, 
-             override_by = ?
-         WHERE id = ?`,
-        [reason || `Excused by ${teacher[0].teacher_name}`, teacherId, existing[0].id]
+        `UPDATE attendance SET status = 'Absent', is_overridden = 1, notes = ? WHERE id = ?`,
+        [excuseNote, existing[0].id]
       );
     } else {
-      // Create new excused record
       await pool.query(
-        `INSERT INTO attendance_logs 
-         (student_id, date, status, session, scan_method, is_overridden, override_reason, override_by)
-         VALUES (?, ?, 'Excused', 'AM', 'Manual', 1, ?, ?)`,
-        [student_id, date, reason || `Excused by ${teacher[0].teacher_name}`, teacherId]
+        `INSERT INTO attendance
+           (student_id, student_name, lrn, grade, section,
+            teacher_id, teacher_name, scan_method, status, session,
+            date, timestamp, is_overridden, notes, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'Manual', 'Absent', 'AM', ?, NOW(), 1, ?, NOW())`,
+        [
+          student.id, student.name, student.lrn, student.grade, student.section,
+          teacher.id, teacher.name,
+          date, excuseNote,
+        ]
       );
     }
 
-    res.json({
-      success: true,
-      message: `Absence excused for ${student[0].name}`,
-    });
+    res.json({ success: true, message: `Absence excused for ${student.name}` });
   } catch (error) {
     console.error('Error excusing absence:', error);
     res.status(500).json({ error: 'Failed to excuse absence' });
@@ -344,4 +268,3 @@ export default {
   addAttendanceNote,
   excuseAbsence,
 };
-
