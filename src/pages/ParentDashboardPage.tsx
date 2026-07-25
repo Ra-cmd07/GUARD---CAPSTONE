@@ -3,10 +3,11 @@ import {
   Box, Paper, Typography, Chip, Avatar, IconButton,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Button, CircularProgress, Snackbar, Alert, Divider, List, ListItem, ListItemIcon, ListItemText,
+  Drawer, useMediaQuery, useTheme, AppBar, Toolbar, Menu, MenuItem,
 } from '@mui/material';
 import {
   Logout, School, CheckCircle, Cancel, Dashboard as DashboardIcon,
-  CalendarToday, LocationOn, Sms as SmsIcon, PhotoCamera, Delete,
+  CalendarToday, LocationOn, Sms as SmsIcon, PhotoCamera, Delete, Menu as MenuIcon,
 } from '@mui/icons-material';
 import { format } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
@@ -24,6 +25,8 @@ export default function ParentDashboardPage() {
   const { user, logout } = useAuth();
   const navigate         = useNavigate();
   const profile          = user?.profile as ParentProfile | null;
+  const muiTheme         = useTheme();
+  const isMobile         = useMediaQuery(muiTheme.breakpoints.down('md'));
 
   const [tab,        setTab]        = useState<Tab>('overview');
   const [children,   setChildren]   = useState<Student[]>([]);
@@ -33,6 +36,7 @@ export default function ParentDashboardPage() {
   const [locationHistory, setLocationHistory] = useState<any[]>([]);
   const [loading,    setLoading]    = useState(false);
   const [snack,      setSnack]      = useState({ open: false, msg: '', sev: 'info' as any });
+  const [mobileOpen, setMobileOpen] = useState(false);
   
   // Photo viewer state
   const [photoDialog, setPhotoDialog] = useState({
@@ -284,136 +288,216 @@ export default function ParentDashboardPage() {
     { id: 'sms',         label: 'SMS history',    icon: <SmsIcon /> },
   ];
 
-  return (
-    <Box sx={{ display: 'flex', height: '100vh', background: '#2563eb' }}>
-      {/* Sidebar */}
-      <Box sx={{
-        width: 240, 
-        background: '#3b82f6',
-        color: '#fff',
-        display: 'flex', flexDirection: 'column', flexShrink: 0,
-        boxShadow: theme.shadows.elevation3,
-      }}>
-        <Box sx={{ p: 2.5, borderBottom: '1px solid rgba(255,255,255,0.15)' }}>
-          <Box display="flex" alignItems="center" gap={1} mb={0.5}>
-            <School sx={{ color: theme.colors.secondary.main }} />
-            <Typography 
-              variant="h6" 
-              sx={{
-                fontFamily: theme.typography.fontFamily.display,
-                fontWeight: theme.typography.fontWeight.extrabold,
-                color: '#fff',
-              }}
-            >
-              AttendBox
-            </Typography>
-          </Box>
+  const handleDrawerToggle = () => setMobileOpen(!mobileOpen);
+
+  // Sidebar content (shared between mobile drawer and desktop sidebar)
+  const sidebarContent = (
+    <>
+      <Box sx={{ p: 2.5, borderBottom: '1px solid rgba(255,255,255,0.15)' }}>
+        <Box display="flex" alignItems="center" gap={1} mb={0.5}>
+          <School sx={{ color: theme.colors.secondary.main }} />
+          <Typography 
+            variant="h6" 
+            sx={{
+              fontFamily: theme.typography.fontFamily.display,
+              fontWeight: theme.typography.fontWeight.extrabold,
+              color: '#fff',
+            }}
+          >
+            AttendBox
+          </Typography>
+        </Box>
+        <Typography 
+          variant="caption" 
+          sx={{ 
+            opacity: 0.9, 
+            color: '#fff',
+            fontFamily: theme.typography.fontFamily.primary,
+          }}
+        >
+          Parent Portal
+        </Typography>
+      </Box>
+
+      <Box sx={{ flex: 1, py: 2 }}>
+        <Box sx={{ px: 2, mb: 2 }}>
           <Typography 
             variant="caption" 
             sx={{ 
-              opacity: 0.9, 
+              opacity: 0.7, 
+              textTransform: 'uppercase', 
+              fontSize: 10, 
+              color: '#fff',
+              fontFamily: theme.typography.fontFamily.primary,
+              fontWeight: theme.typography.fontWeight.semibold,
+            }}
+          >
+            Logged in as
+          </Typography>
+          <Typography 
+            sx={{
+              fontWeight: theme.typography.fontWeight.bold,
+              fontSize: '0.9rem',
               color: '#fff',
               fontFamily: theme.typography.fontFamily.primary,
             }}
           >
-            Parent Portal
+            {profile?.name || user?.username}
+          </Typography>
+          <Typography 
+            variant="caption" 
+            sx={{ 
+              opacity: 0.8, 
+              color: '#fff',
+              fontFamily: theme.typography.fontFamily.primary,
+            }}
+          >
+            {user?.username}
           </Typography>
         </Box>
 
-        <Box sx={{ flex: 1, py: 2 }}>
-          <Box sx={{ px: 2, mb: 2 }}>
+        <Divider sx={{ borderColor: 'rgba(255,255,255,0.2)', my: 1 }} />
+
+        {NAV.map(n => (
+          <Box
+            key={n.id}
+            onClick={() => {
+              setTab(n.id as Tab);
+              if (isMobile) setMobileOpen(false);
+            }}
+            sx={{
+              display: 'flex', alignItems: 'center', gap: 1.5,
+              px: 2.5, py: 1.5, cursor: 'pointer', mx: 1, 
+              borderRadius: theme.borderRadius.base,
+              bgcolor: tab === n.id ? 'rgba(255,255,255,0.2)' : 'transparent',
+              borderLeft: tab === n.id ? '3px solid #fff' : '3px solid transparent',
+              '&:hover': { bgcolor: 'rgba(255,255,255,0.15)' },
+              transition: theme.transitions.button,
+              color: '#fff',
+            }}>
+            <Box sx={{ color: '#fff' }}>{n.icon}</Box>
             <Typography 
-              variant="caption" 
-              sx={{ 
-                opacity: 0.7, 
-                textTransform: 'uppercase', 
-                fontSize: 10, 
-                color: '#fff',
-                fontFamily: theme.typography.fontFamily.primary,
-                fontWeight: theme.typography.fontWeight.semibold,
-              }}
-            >
-              Logged in as
-            </Typography>
-            <Typography 
+              variant="body2" 
               sx={{
-                fontWeight: theme.typography.fontWeight.bold,
-                fontSize: '0.9rem',
+                fontWeight: tab === n.id ? theme.typography.fontWeight.bold : theme.typography.fontWeight.normal,
                 color: '#fff',
                 fontFamily: theme.typography.fontFamily.primary,
               }}
             >
-              {profile?.name || user?.username}
-            </Typography>
-            <Typography 
-              variant="caption" 
-              sx={{ 
-                opacity: 0.8, 
-                color: '#fff',
-                fontFamily: theme.typography.fontFamily.primary,
-              }}
-            >
-              {user?.username}
+              {n.label}
             </Typography>
           </Box>
+        ))}
+      </Box>
 
-          <Divider sx={{ borderColor: 'rgba(255,255,255,0.2)', my: 1 }} />
+      <Box sx={{ p: 2, borderTop: '1px solid rgba(255,255,255,0.15)' }}>
+        <Button 
+          fullWidth 
+          variant="contained" 
+          startIcon={<Logout />} 
+          onClick={handleLogout}
+          sx={{ 
+            ...theme.components.button.secondary,
+            bgcolor: theme.colors.status.error.main,
+            color: '#fff',
+            '&:hover': { bgcolor: theme.colors.status.error.dark },
+          }}
+        >
+          Logout
+        </Button>
+      </Box>
+    </>
+  );
 
-          {NAV.map(n => (
-            <Box
-              key={n.id}
-              onClick={() => setTab(n.id as Tab)}
-              sx={{
-                display: 'flex', alignItems: 'center', gap: 1.5,
-                px: 2.5, py: 1.5, cursor: 'pointer', mx: 1, 
-                borderRadius: theme.borderRadius.base,
-                bgcolor: tab === n.id ? 'rgba(255,255,255,0.2)' : 'transparent',
-                borderLeft: tab === n.id ? '3px solid #fff' : '3px solid transparent',
-                '&:hover': { bgcolor: 'rgba(255,255,255,0.15)' },
-                transition: theme.transitions.button,
-                color: '#fff',
-              }}>
-              <Box sx={{ color: '#fff' }}>{n.icon}</Box>
-              <Typography 
-                variant="body2" 
-                sx={{
-                  fontWeight: tab === n.id ? theme.typography.fontWeight.bold : theme.typography.fontWeight.normal,
-                  color: '#fff',
-                  fontFamily: theme.typography.fontFamily.primary,
-                }}
-              >
-                {n.label}
-              </Typography>
-            </Box>
-          ))}
-        </Box>
+  return (
+    <Box sx={{ display: 'flex', height: '100vh', background: '#2563eb' }}>
 
-        <Box sx={{ p: 2, borderTop: '1px solid rgba(255,255,255,0.15)' }}>
-          <Button 
-            fullWidth 
-            variant="contained" 
-            startIcon={<Logout />} 
-            onClick={handleLogout}
-            sx={{ 
-              ...theme.components.button.secondary,
-              bgcolor: theme.colors.status.error.main,
-              color: '#fff',
-              '&:hover': { bgcolor: theme.colors.status.error.dark },
+      {/* Mobile App Bar - CSS hidden on desktop */}
+      <AppBar
+        position="fixed"
+        sx={{
+          bgcolor: theme.colors.primary.main,
+          boxShadow: theme.shadows.elevation2,
+          display: { xs: 'flex', md: 'none' },
+          zIndex: (t) => t.zIndex.drawer + 1,
+        }}
+      >
+        <Toolbar>
+          <IconButton
+            color="inherit"
+            aria-label="open drawer"
+            edge="start"
+            onClick={handleDrawerToggle}
+            sx={{ mr: 2 }}
+          >
+            <MenuIcon />
+          </IconButton>
+          <School sx={{ mr: 1 }} />
+          <Typography
+            variant="h6"
+            noWrap
+            component="div"
+            sx={{
+              fontFamily: theme.typography.fontFamily.display,
+              fontWeight: theme.typography.fontWeight.bold,
             }}
           >
-            Logout
-          </Button>
-        </Box>
+            AttendBox
+          </Typography>
+        </Toolbar>
+      </AppBar>
+
+      {/* Mobile Drawer - CSS hidden on desktop */}
+      <Drawer
+        variant="temporary"
+        open={mobileOpen}
+        onClose={handleDrawerToggle}
+        ModalProps={{ keepMounted: true }}
+        sx={{
+          display: { xs: 'block', md: 'none' },
+          '& .MuiDrawer-paper': {
+            width: 240,
+            background: '#3b82f6',
+            color: '#fff',
+            boxSizing: 'border-box',
+            boxShadow: theme.shadows.elevation3,
+          },
+        }}
+      >
+        {sidebarContent}
+      </Drawer>
+
+      {/* Desktop Sidebar - CSS hidden on mobile */}
+      <Box sx={{
+        width: 240,
+        background: '#3b82f6',
+        color: '#fff',
+        display: { xs: 'none', md: 'flex' },
+        flexDirection: 'column',
+        flexShrink: 0,
+        boxShadow: theme.shadows.elevation3,
+      }}>
+        {sidebarContent}
       </Box>
 
       {/* Main Content */}
-      <Box sx={{ flex: 1, overflow: 'auto' }}>
+      <Box sx={{
+        flex: 1,
+        overflow: 'auto',
+        mt: { xs: '64px', md: 0 }, // top margin for mobile app bar
+      }}>
         {/* Top Bar */}
         <Box sx={{
-          bgcolor: '#fff', px: 3, py: 2,
+          bgcolor: '#fff', 
+          px: { xs: 2, sm: 3 }, 
+          py: 2,
           borderBottom: `1px solid ${theme.colors.neutral[200]}`,
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          display: 'flex', 
+          alignItems: 'center', 
+          justifyContent: 'space-between',
           boxShadow: theme.shadows.elevation1,
+          flexWrap: 'wrap',
+          gap: 1,
         }}>
           <Typography 
             variant="h6" 
@@ -421,6 +505,7 @@ export default function ParentDashboardPage() {
               fontFamily: theme.typography.fontFamily.display,
               fontWeight: theme.typography.fontWeight.bold,
               color: theme.colors.neutral[900],
+              fontSize: { xs: '1rem', sm: '1.25rem' },
             }}
           >
             {selected ? `My child's attendance` : 'Parent Dashboard'}
@@ -431,13 +516,14 @@ export default function ParentDashboardPage() {
               opacity: 0.7, 
               color: theme.colors.neutral[600],
               fontFamily: theme.typography.fontFamily.primary,
+              fontSize: { xs: '0.75rem', sm: '0.875rem' },
             }}
           >
             👤 {user?.username}
           </Typography>
         </Box>
 
-        <Box sx={{ p: 3, bgcolor: 'transparent' }}>
+        <Box sx={{ p: { xs: 2, sm: 3 }, bgcolor: 'transparent' }}>
           {selected ? (
             <>
               {/* Child Selector - Show if parent has multiple children */}
@@ -487,26 +573,29 @@ export default function ParentDashboardPage() {
                   {/* Child Profile Card */}
                   <Paper sx={{
                     ...theme.components.card.default,
-                    p: 3, mb: 3,
+                    p: { xs: 2, sm: 3 }, 
+                    mb: 3,
                     '&:hover': theme.components.card.default.hover,
                   }}>
-                    <Box display="flex" alignItems="center" gap={2}>
+                    <Box display="flex" alignItems="center" gap={2} flexWrap="wrap">
                       <Avatar sx={{
-                        width: 64, height: 64,
+                        width: { xs: 48, sm: 64 }, 
+                        height: { xs: 48, sm: 64 },
                         bgcolor: theme.colors.primary.main, 
-                        fontSize: 28, 
+                        fontSize: { xs: 20, sm: 28 }, 
                         fontWeight: theme.typography.fontWeight.extrabold,
                         fontFamily: theme.typography.fontFamily.display,
                       }}>
                         {selected.name.split(' ').map(n => n[0]).join('').slice(0, 2)}
                       </Avatar>
-                      <Box flex={1}>
+                      <Box flex={1} minWidth="200px">
                         <Typography 
                           variant="h5" 
                           sx={{
                             fontFamily: theme.typography.fontFamily.display,
                             fontWeight: theme.typography.fontWeight.extrabold,
                             color: theme.colors.neutral[900],
+                            fontSize: { xs: '1.25rem', sm: '1.5rem' },
                           }}
                           gutterBottom
                         >
@@ -517,6 +606,7 @@ export default function ParentDashboardPage() {
                           sx={{ 
                             color: theme.colors.neutral[600],
                             fontFamily: theme.typography.fontFamily.primary,
+                            fontSize: { xs: '0.75rem', sm: '0.875rem' },
                           }}
                         >
                           {selected.grade} — Section {selected.section} · Iponan National High School
@@ -527,9 +617,9 @@ export default function ParentDashboardPage() {
                         label={onCampus ? 'On campus' : 'Off campus'}
                         sx={{
                           ...theme.components.badge[onCampus ? 'success' : 'error'],
-                          fontSize: '0.95rem', 
-                          px: 2, 
-                          py: 2.5,
+                          fontSize: { xs: '0.75rem', sm: '0.95rem' }, 
+                          px: { xs: 1, sm: 2 }, 
+                          py: { xs: 2, sm: 2.5 },
                         }}
                       />
                     </Box>
@@ -555,8 +645,8 @@ export default function ParentDashboardPage() {
                         Attendance this week
                       </Typography>
                     </Box>
-                    <TableContainer>
-                      <Table>
+                    <TableContainer sx={{ overflowX: 'auto' }}>
+                      <Table size={isMobile ? "small" : "medium"}>
                         <TableHead>
                           <TableRow sx={{ 
                             background: theme.colors.primary.gradient,
@@ -565,6 +655,7 @@ export default function ParentDashboardPage() {
                               color: '#fff', 
                               fontFamily: theme.typography.fontFamily.primary,
                               fontWeight: theme.typography.fontWeight.bold,
+                              fontSize: { xs: '0.75rem', sm: '0.875rem' },
                             }}>
                               Date
                             </TableCell>
@@ -572,6 +663,7 @@ export default function ParentDashboardPage() {
                               color: '#fff', 
                               fontFamily: theme.typography.fontFamily.primary,
                               fontWeight: theme.typography.fontWeight.bold,
+                              fontSize: { xs: '0.75rem', sm: '0.875rem' },
                             }}>
                               Time in
                             </TableCell>
@@ -579,6 +671,7 @@ export default function ParentDashboardPage() {
                               color: '#fff', 
                               fontFamily: theme.typography.fontFamily.primary,
                               fontWeight: theme.typography.fontWeight.bold,
+                              fontSize: { xs: '0.75rem', sm: '0.875rem' },
                             }}>
                               Time out
                             </TableCell>
@@ -586,6 +679,7 @@ export default function ParentDashboardPage() {
                               color: '#fff', 
                               fontFamily: theme.typography.fontFamily.primary,
                               fontWeight: theme.typography.fontWeight.bold,
+                              fontSize: { xs: '0.75rem', sm: '0.875rem' },
                             }}>
                               Status
                             </TableCell>

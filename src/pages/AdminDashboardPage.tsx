@@ -5,6 +5,7 @@ import {
   Button, TextField, Select, MenuItem, FormControl, InputLabel,
   Alert, CircularProgress, Snackbar, Switch,
   Dialog, DialogTitle, DialogContent, DialogActions, Tooltip,
+  Drawer, AppBar, Toolbar, useMediaQuery, useTheme as useMuiTheme,
 } from '@mui/material';
 import {
   People, School, Router, Sms, Dashboard, Logout, Add, Edit,
@@ -390,8 +391,11 @@ function CreateUserDialog({ open, onClose, onCreated }: { open: boolean; onClose
 export default function AdminDashboardPage() {
   const { user, logout } = useAuth();
   const navigate         = useNavigate();
+  const muiTheme         = useMuiTheme();
+  const isMobile         = useMediaQuery(muiTheme.breakpoints.down('md'));
   const [tab,        setTab]        = useState<Tab>('dashboard');
   const [sideOpen,   setSideOpen]   = useState(true);
+  const [mobileOpen, setMobileOpen] = useState(false);
   const [stats,      setStats]      = useState<AdminStats | null>(null);
   const [logs,       setLogs]       = useState<AttendanceRecord[]>([]);
   const [kiosks,     setKiosks]     = useState<Kiosk[]>([]);
@@ -547,72 +551,105 @@ export default function AdminDashboardPage() {
     'Time-In': 'success', 'Time-Out': 'info', Late: 'warning', Absent: 'error',
   };
 
+  const sidebarContent = (
+    <>
+      <Box sx={{ p: 2.5, borderBottom: '1px solid rgba(255,255,255,0.15)' }}>
+        <Typography variant="h6" fontWeight={800}>ATTENDBOX</Typography>
+        <Typography variant="caption" sx={{ opacity: 0.7 }}>Administrator</Typography>
+      </Box>
+      <Box sx={{ flex: 1, py: 1 }}>
+        {NAV.map(n => (
+          <Box key={n.id}
+            onClick={() => { setTab(n.id as Tab); setMobileOpen(false); }}
+            sx={{
+              display: 'flex', alignItems: 'center', gap: 1.5,
+              px: 2.5, py: 1.5, cursor: 'pointer',
+              bgcolor: tab === n.id ? 'rgba(255,255,255,0.2)' : 'transparent',
+              borderLeft: tab === n.id ? '4px solid #fbc02d' : '4px solid transparent',
+              '&:hover': { bgcolor: 'rgba(255,255,255,0.1)' },
+            }}>
+            {n.icon}
+            <Typography variant="body2" fontWeight={tab === n.id ? 700 : 400}>{n.label}</Typography>
+          </Box>
+        ))}
+      </Box>
+      <Box sx={{ p: 2, borderTop: '1px solid rgba(255,255,255,0.15)' }}>
+        <Typography variant="caption" sx={{ opacity: 0.7 }} display="block" mb={1}>
+          👤 {(user?.profile as any)?.name || user?.username}
+        </Typography>
+        <Button fullWidth variant="contained" startIcon={<Logout />} onClick={handleLogout}
+          sx={{ bgcolor: '#dc3545', '&:hover': { bgcolor: '#b02a37' } }}>
+          Logout
+        </Button>
+      </Box>
+    </>
+  );
+
   return (
     <Box sx={{ display: 'flex', height: '100vh', background: '#2563eb', overflow: 'hidden' }}>
-      {/* ── Sidebar ── */}
+
+      {/* ── Mobile: Temporary Drawer (CSS hidden on desktop) ── */}
+      <Drawer
+        variant="temporary"
+        open={mobileOpen}
+        onClose={() => setMobileOpen(false)}
+        ModalProps={{ keepMounted: true }}
+        sx={{
+          display: { xs: 'block', md: 'none' },
+          '& .MuiDrawer-paper': {
+            width: 240,
+            background: '#3b82f6',
+            color: '#fff',
+            boxSizing: 'border-box',
+          },
+        }}
+      >
+        {sidebarContent}
+      </Drawer>
+
+      {/* ── Desktop: Permanent Sidebar (CSS hidden on mobile) ── */}
       <Box sx={{
         width: sideOpen ? 240 : 0,
         transition: 'width .25s',
         overflow: 'hidden',
         background: '#3b82f6',
         color: '#fff',
-        display: 'flex', 
+        display: { xs: 'none', md: 'flex' },
         flexDirection: 'column',
         flexShrink: 0,
-        borderRight: 'none',  // Remove any border
       }}>
-        <Box sx={{ p: 2.5, borderBottom: '1px solid rgba(255,255,255,0.15)' }}>
-          <Typography variant="h6" fontWeight={800}>ATTENDBOX</Typography>
-          <Typography variant="caption" sx={{ opacity: 0.7 }}>Administrator</Typography>
-        </Box>
-        <Box sx={{ flex: 1, py: 1 }}>
-          {NAV.map(n => (
-            <Box key={n.id}
-              onClick={() => setTab(n.id as Tab)}
-              sx={{
-                display: 'flex', alignItems: 'center', gap: 1.5,
-                px: 2.5, py: 1.5, cursor: 'pointer',
-                bgcolor: tab === n.id ? 'rgba(255,255,255,0.2)' : 'transparent',
-                borderLeft: tab === n.id ? '4px solid #fbc02d' : '4px solid transparent',
-                '&:hover': { bgcolor: 'rgba(255,255,255,0.1)' },
-              }}>
-              {n.icon}
-              <Typography variant="body2" fontWeight={tab === n.id ? 700 : 400}>{n.label}</Typography>
-            </Box>
-          ))}
-        </Box>
-        <Box sx={{ p: 2, borderTop: '1px solid rgba(255,255,255,0.15)' }}>
-          <Typography variant="caption" sx={{ opacity: 0.7 }} display="block" mb={1}>
-            👤 {(user?.profile as any)?.name || user?.username}
-          </Typography>
-          <Button fullWidth variant="contained" startIcon={<Logout />} onClick={handleLogout}
-            sx={{ bgcolor: '#dc3545', '&:hover': { bgcolor: '#b02a37' } }}>
-            Logout
-          </Button>
-        </Box>
+        {sidebarContent}
       </Box>
 
       {/* ── Main Content Area ── */}
-      <Box sx={{ 
-        flex: 1, 
-        display: 'flex', 
-        flexDirection: 'column', 
-        overflow: 'hidden',
-      }}>
+      <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         {/* Topbar */}
-        <Box sx={{ 
-          bgcolor: '#fff', 
-          px: 2, 
-          py: 1.5, 
-          borderBottom: '1px solid #e0e0e0', 
-          display: 'flex', 
-          alignItems: 'center', 
-          gap: 2,
+        <Box sx={{
+          bgcolor: '#fff',
+          px: { xs: 1.5, sm: 2 },
+          py: 1.5,
+          borderBottom: '1px solid #e0e0e0',
+          display: 'flex', alignItems: 'center', gap: 1.5,
           boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+          position: 'sticky', top: 0, zIndex: 1100,
         }}>
-          <IconButton onClick={() => setSideOpen(o => !o)}><Menu /></IconButton>
-          <Typography variant="h6" fontWeight={700} flex={1}>{NAV.find(n => n.id === tab)?.label}</Typography>
-          <Typography variant="body2" color="text.secondary">
+          {/* Mobile: opens drawer; Desktop: toggles sidebar width */}
+          <IconButton
+            onClick={() => setMobileOpen(o => !o)}
+            sx={{ display: { xs: 'inline-flex', md: 'none' } }}
+          >
+            <Menu />
+          </IconButton>
+          <IconButton
+            onClick={() => setSideOpen(o => !o)}
+            sx={{ display: { xs: 'none', md: 'inline-flex' } }}
+          >
+            <Menu />
+          </IconButton>
+          <Typography variant="h6" fontWeight={700} flex={1} sx={{ fontSize: { xs: '1rem', sm: '1.25rem' } }}>
+            {NAV.find(n => n.id === tab)?.label}
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ display: { xs: 'none', sm: 'block' } }}>
             📅 {format(new Date(), 'MMMM d, yyyy')}
           </Typography>
         </Box>
@@ -621,7 +658,7 @@ export default function AdminDashboardPage() {
         <Box sx={{ 
           flex: 1, 
           overflow: 'auto', 
-          p: 3,
+          p: { xs: 2, sm: 3 },
         }}>
 
           {/* ── Dashboard Tab ── */}

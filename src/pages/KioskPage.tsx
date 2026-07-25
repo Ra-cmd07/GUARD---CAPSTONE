@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Box, Typography, Button, CircularProgress, Alert, Fade, Slide, Divider,
+  useMediaQuery, useTheme as useMuiTheme,
 } from '@mui/material';
 import {
   QrCodeScanner, CreditCard, Bluetooth, CheckCircle,
@@ -65,6 +66,9 @@ function LiveClock() {
 
 // ─── Main Kiosk Page ─────────────────────────────────────────────────
 export default function KioskPage() {
+  const muiTheme = useMuiTheme();
+  const isMobile = useMediaQuery(muiTheme.breakpoints.down('md')); // Below 900px = mobile
+  
   const webcamRef       = useRef<Webcam>(null);
   const scanIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const rfidPollingRef  = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -80,6 +84,29 @@ export default function KioskPage() {
   const [errorMsg,    setErrorMsg]    = useState('');
   const [countdown,   setCountdown]   = useState(0);
   const [kioskInfo,   setKioskInfo]   = useState({ name: 'Main Entrance', gate: 'Gate 1' });
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [cameraReady, setCameraReady] = useState(false);
+
+  // Handle camera errors
+  const handleCameraError = (error: any) => {
+    console.error('📷 Camera error:', error);
+    if (error.name === 'NotAllowedError') {
+      setCameraError('Camera permission denied. Please allow camera access in browser settings.');
+    } else if (error.name === 'NotFoundError') {
+      setCameraError('No camera found on this device.');
+    } else if (error.name === 'NotReadableError') {
+      setCameraError('Camera is being used by another application.');
+    } else {
+      setCameraError('Failed to access camera: ' + error.message);
+    }
+  };
+
+  // Handle camera ready
+  const handleCameraReady = () => {
+    console.log('✅ Camera is ready!');
+    setCameraReady(true);
+    setCameraError(null);
+  };
 
   // Fetch kiosk info on mount
   useEffect(() => {
@@ -583,65 +610,84 @@ export default function KioskPage() {
       <Box sx={{
         background: theme.colors.primary.gradient,
         color: '#fff',
-        px: 3,
-        py: 1.5,
+        px: { xs: 1.5, sm: 2, md: 3 },
+        py: { xs: 1, sm: 1.5 },
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
         boxShadow: theme.shadows.elevation3,
+        flexWrap: isMobile ? 'wrap' : 'nowrap',
       }}>
         {/* Left: Time */}
         <Typography sx={{ 
-          fontSize: '1rem', 
+          fontSize: { xs: '0.85rem', sm: '0.95rem', md: '1rem' },
           fontWeight: theme.typography.fontWeight.semibold, 
-          fontFamily: theme.typography.fontFamily.mono 
+          fontFamily: theme.typography.fontFamily.mono,
+          minWidth: { xs: '70px', sm: '80px' },
         }}>
           {format(new Date(), 'h:mm a').toUpperCase()}
         </Typography>
 
         {/* Center: Branding */}
-        <Box textAlign="center">
+        <Box textAlign="center" sx={{ flex: isMobile ? '1 1 100%' : '0 0 auto', order: isMobile ? 3 : 2 }}>
           <Typography sx={{ 
-            fontSize: '1.5rem', 
+            fontSize: { xs: '1.1rem', sm: '1.3rem', md: '1.5rem' },
             fontWeight: theme.typography.fontWeight.extrabold, 
             fontFamily: theme.typography.fontFamily.display,
-            letterSpacing: '0.05em' 
+            letterSpacing: '0.05em',
           }}>
             AttendBox
           </Typography>
         </Box>
 
         {/* Right: Location & Status Icons */}
-        <Box display="flex" alignItems="center" gap={2}>
+        <Box display="flex" alignItems="center" gap={{ xs: 1, sm: 1.5, md: 2 }} sx={{ order: isMobile ? 2 : 3 }}>
           <Typography sx={{ 
-            fontSize: '0.95rem', 
+            fontSize: { xs: '0.7rem', sm: '0.85rem', md: '0.95rem' },
             fontWeight: theme.typography.fontWeight.medium,
             fontFamily: theme.typography.fontFamily.primary,
+            display: { xs: 'none', sm: 'block' },
           }}>
             {SCHOOL_NAME} — {kioskInfo.gate}
           </Typography>
-          <Box display="flex" gap={1}>
-            <Wifi sx={{ fontSize: 20, opacity: 0.9 }} />
-            <SignalCellularAlt sx={{ fontSize: 20, opacity: 0.9 }} />
+          {/* Mobile: Only show gate name */}
+          <Typography sx={{ 
+            fontSize: '0.75rem',
+            fontWeight: theme.typography.fontWeight.medium,
+            fontFamily: theme.typography.fontFamily.primary,
+            display: { xs: 'block', sm: 'none' },
+          }}>
+            {kioskInfo.gate}
+          </Typography>
+          <Box display="flex" gap={0.5}>
+            <Wifi sx={{ fontSize: { xs: 16, sm: 18, md: 20 }, opacity: 0.9 }} />
+            <SignalCellularAlt sx={{ fontSize: { xs: 16, sm: 18, md: 20 }, opacity: 0.9 }} />
           </Box>
         </Box>
       </Box>
 
-      {/* Main Content - Split Screen */}
-      <Box sx={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+      {/* Main Content - Split Screen on Desktop, Stacked on Mobile */}
+      <Box sx={{ 
+        flex: 1, 
+        display: 'flex',
+        flexDirection: { xs: 'column', md: 'row' }, // Stack on mobile, side-by-side on desktop
+        overflow: 'hidden',
+      }}>
         
         {/* ═══════════════════════════════════════════════════════════ */}
-        {/* LEFT PANEL - Clock & Camera */}
+        {/* LEFT PANEL (TOP on mobile) - Clock & Camera */}
         {/* ═══════════════════════════════════════════════════════════ */}
         <Box sx={{
-          width: '50%',
+          width: { xs: '100%', md: '50%' },
+          height: { xs: '50%', md: '100%' }, // Half height on mobile, full on desktop
           bgcolor: theme.colors.neutral[800],
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
-          justifyContent: 'flex-start',  // Changed from 'center' to allow expansion
-          p: 4,
-          borderRight: `2px solid ${theme.colors.neutral[700]}`,
+          justifyContent: 'flex-start',
+          p: { xs: 2, sm: 3, md: 4 },
+          borderRight: { xs: 'none', md: `2px solid ${theme.colors.neutral[700]}` },
+          borderBottom: { xs: `2px solid ${theme.colors.neutral[700]}`, md: 'none' },
         }}>
           {/* Live Clock */}
           {scanState === 'idle' && <LiveClock />}
@@ -661,22 +707,29 @@ export default function KioskPage() {
             position: 'relative',
             boxShadow: theme.shadows.elevation2,
           }}>
-            {/* Webcam for scanning and photo capture */}
+            {/* Webcam for scanning and photo capture - ALWAYS VISIBLE */}
             <Webcam
               ref={webcamRef}
               audio={false}
               screenshotFormat="image/jpeg"
-              videoConstraints={{ facingMode: 'user' }}
+              videoConstraints={{ 
+                facingMode: 'user',
+                width: { ideal: 1280 },
+                height: { ideal: 720 }
+              }}
+              onUserMedia={handleCameraReady}
+              onUserMediaError={handleCameraError}
               style={{
                 width: '100%',
                 height: '100%',
                 objectFit: 'cover',
-                display: scanState === 'scanning' || scanState === 'processing' ? 'block' : 'none',
+                // Hide webcam when showing captured photo
+                display: (scanState === 'success' && capturedB64) ? 'none' : 'block',
               }}
             />
 
-            {/* Camera Icon Overlay (when idle) */}
-            {scanState === 'idle' && (
+            {/* Camera Loading Overlay */}
+            {!cameraReady && !cameraError && (
               <Box sx={{
                 position: 'absolute',
                 inset: 0,
@@ -684,17 +737,71 @@ export default function KioskPage() {
                 flexDirection: 'column',
                 alignItems: 'center',
                 justifyContent: 'center',
-                bgcolor: 'rgba(0,0,0,0.6)',
+                bgcolor: 'rgba(0,0,0,0.8)',
                 color: '#fff',
               }}>
-                <CameraAlt sx={{ fontSize: 80, mb: 2, opacity: 0.7 }} />
+                <CircularProgress size={60} sx={{ color: theme.colors.primary.light, mb: 2 }} />
                 <Typography sx={{ 
                   fontSize: '1.1rem', 
                   fontWeight: theme.typography.fontWeight.semibold,
                   fontFamily: theme.typography.fontFamily.primary,
                 }}>
-                  Camera — visual verification active
+                  Starting camera...
                 </Typography>
+                <Typography sx={{ 
+                  fontSize: '0.9rem', 
+                  color: theme.colors.neutral[400],
+                  mt: 1,
+                  fontFamily: theme.typography.fontFamily.primary,
+                }}>
+                  Please allow camera access if prompted
+                </Typography>
+              </Box>
+            )}
+
+            {/* Camera Error Overlay */}
+            {cameraError && (
+              <Box sx={{
+                position: 'absolute',
+                inset: 0,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                bgcolor: 'rgba(0,0,0,0.9)',
+                color: '#fff',
+                p: 3,
+              }}>
+                <ErrorOutline sx={{ fontSize: 80, color: theme.colors.status.error.main, mb: 2 }} />
+                <Typography sx={{ 
+                  fontSize: '1.2rem', 
+                  fontWeight: theme.typography.fontWeight.bold,
+                  fontFamily: theme.typography.fontFamily.primary,
+                  color: theme.colors.status.error.main,
+                  mb: 2,
+                  textAlign: 'center',
+                }}>
+                  Camera Access Error
+                </Typography>
+                <Typography sx={{ 
+                  fontSize: '0.95rem', 
+                  fontFamily: theme.typography.fontFamily.primary,
+                  textAlign: 'center',
+                  maxWidth: '400px',
+                  mb: 3,
+                }}>
+                  {cameraError}
+                </Typography>
+                <Button
+                  variant="contained"
+                  onClick={() => window.location.reload()}
+                  sx={{
+                    bgcolor: theme.colors.primary.main,
+                    '&:hover': { bgcolor: theme.colors.primary.dark },
+                  }}
+                >
+                  Reload Page
+                </Button>
               </Box>
             )}
 
@@ -712,14 +819,16 @@ export default function KioskPage() {
         </Box>
 
         {/* ═══════════════════════════════════════════════════════════ */}
-        {/* RIGHT PANEL - Controls */}
+        {/* RIGHT PANEL (BOTTOM on mobile) - Controls */}
         {/* ═══════════════════════════════════════════════════════════ */}
         <Box sx={{
-          width: '50%',
+          width: { xs: '100%', md: '50%' },
+          height: { xs: '50%', md: '100%' }, // Half height on mobile, full on desktop
           bgcolor: theme.colors.neutral[700],
           display: 'flex',
           flexDirection: 'column',
-          p: 4,
+          p: { xs: 2, sm: 3, md: 4 },
+          overflowY: 'auto', // Allow scrolling on mobile if content is too long
         }}>
           
           {/* ─────────────────────────────────────────────────────── */}
@@ -729,18 +838,23 @@ export default function KioskPage() {
             <Fade in timeout={300}>
               <Box>
                 <Typography sx={{
-                  fontSize: '1.5rem',
+                  fontSize: { xs: '1.1rem', sm: '1.3rem', md: '1.5rem' },
                   fontFamily: theme.typography.fontFamily.display,
                   fontWeight: theme.typography.fontWeight.semibold,
                   color: '#fff',
-                  mb: 3,
+                  mb: { xs: 2, md: 3 },
                   textAlign: 'center',
                 }}>
                   Select your attendance method
                 </Typography>
 
                 {/* Method Buttons */}
-                <Box sx={{ display: 'flex', gap: 2, mb: 4 }}>
+                <Box sx={{ 
+                  display: 'flex', 
+                  flexDirection: { xs: 'column', sm: 'row' }, // Stack on mobile, row on tablet+
+                  gap: 2, 
+                  mb: { xs: 2, md: 4 },
+                }}>
                   {/* RFID Card Button - FIRST */}
                   <Button
                     onClick={() => { 
@@ -750,7 +864,7 @@ export default function KioskPage() {
                     }}
                     sx={{
                       flex: 1,
-                      py: 3,
+                      py: { xs: 2, sm: 2.5, md: 3 },
                       bgcolor: method === 'RFID' ? theme.colors.primary.light : theme.colors.neutral[600],
                       color: method === 'RFID' ? '#fff' : theme.colors.neutral[200],
                       border: method === 'RFID' ? `3px solid ${theme.colors.primary.main}` : `2px solid ${theme.colors.neutral[500]}`,
@@ -768,9 +882,9 @@ export default function KioskPage() {
                       transition: theme.transitions.button,
                     }}
                   >
-                    <CreditCard sx={{ fontSize: 48 }} />
+                    <CreditCard sx={{ fontSize: { xs: 36, sm: 42, md: 48 } }} />
                     <Typography sx={{ 
-                      fontSize: '1.1rem', 
+                      fontSize: { xs: '0.9rem', sm: '1rem', md: '1.1rem' },
                       fontWeight: theme.typography.fontWeight.bold,
                       fontFamily: theme.typography.fontFamily.primary,
                     }}>
@@ -787,7 +901,7 @@ export default function KioskPage() {
                     }}
                     sx={{
                       flex: 1,
-                      py: 3,
+                      py: { xs: 2, sm: 2.5, md: 3 },
                       bgcolor: method === 'QR' ? theme.colors.primary.light : theme.colors.neutral[600],
                       color: method === 'QR' ? '#fff' : theme.colors.neutral[200],
                       border: method === 'QR' ? `3px solid ${theme.colors.primary.main}` : `2px solid ${theme.colors.neutral[500]}`,
@@ -805,9 +919,9 @@ export default function KioskPage() {
                       transition: theme.transitions.button,
                     }}
                   >
-                    <QrCodeScanner sx={{ fontSize: 48 }} />
+                    <QrCodeScanner sx={{ fontSize: { xs: 36, sm: 42, md: 48 } }} />
                     <Typography sx={{ 
-                      fontSize: '1.1rem', 
+                      fontSize: { xs: '0.9rem', sm: '1rem', md: '1.1rem' },
                       fontWeight: theme.typography.fontWeight.bold,
                       fontFamily: theme.typography.fontFamily.primary,
                     }}>
@@ -824,7 +938,7 @@ export default function KioskPage() {
                     }}
                     sx={{
                       flex: 1,
-                      py: 3,
+                      py: { xs: 2, sm: 2.5, md: 3 },
                       bgcolor: method === 'BLE' ? theme.colors.primary.light : theme.colors.neutral[600],
                       color: method === 'BLE' ? '#fff' : theme.colors.neutral[200],
                       border: method === 'BLE' ? `3px solid ${theme.colors.primary.main}` : `2px solid ${theme.colors.neutral[500]}`,
@@ -842,9 +956,9 @@ export default function KioskPage() {
                       transition: theme.transitions.button,
                     }}
                   >
-                    <Bluetooth sx={{ fontSize: 48 }} />
+                    <Bluetooth sx={{ fontSize: { xs: 36, sm: 42, md: 48 } }} />
                     <Typography sx={{ 
-                      fontSize: '1.1rem', 
+                      fontSize: { xs: '0.9rem', sm: '1rem', md: '1.1rem' },
                       fontWeight: theme.typography.fontWeight.bold,
                       fontFamily: theme.typography.fontFamily.primary,
                     }}>
@@ -861,22 +975,22 @@ export default function KioskPage() {
           {/* ─────────────────────────────────────────────────────── */}
           {scanState === 'scanning' && (
             <Slide direction="up" in timeout={300}>
-              <Box sx={{ textAlign: 'center', mt: 8 }}>
+              <Box sx={{ textAlign: 'center', mt: { xs: 3, md: 8 } }}>
                 <Box sx={{
                   width: '100%',
-                  p: 6,
+                  p: { xs: 3, sm: 4, md: 6 },
                   bgcolor: theme.colors.neutral[800],
                   border: `3px dashed ${theme.colors.primary.main}`,
                   borderRadius: theme.borderRadius.lg,
-                  mb: 4,
+                  mb: { xs: 2, md: 4 },
                   boxShadow: theme.shadows.elevation2,
                 }}>
-                  {method === 'RFID' && <CreditCard sx={{ fontSize: 80, color: theme.colors.primary.light, mb: 2 }} />}
-                  {method === 'QR' && <QrCodeScanner sx={{ fontSize: 80, color: theme.colors.primary.light, mb: 2 }} />}
-                  {method === 'BLE' && <Bluetooth sx={{ fontSize: 80, color: theme.colors.primary.light, mb: 2 }} />}
+                  {method === 'RFID' && <CreditCard sx={{ fontSize: { xs: 60, sm: 70, md: 80 }, color: theme.colors.primary.light, mb: 2 }} />}
+                  {method === 'QR' && <QrCodeScanner sx={{ fontSize: { xs: 60, sm: 70, md: 80 }, color: theme.colors.primary.light, mb: 2 }} />}
+                  {method === 'BLE' && <Bluetooth sx={{ fontSize: { xs: 60, sm: 70, md: 80 }, color: theme.colors.primary.light, mb: 2 }} />}
                   
                   <Typography sx={{ 
-                    fontSize: '1.3rem', 
+                    fontSize: { xs: '1rem', sm: '1.2rem', md: '1.3rem' },
                     fontFamily: theme.typography.fontFamily.primary,
                     fontWeight: theme.typography.fontWeight.semibold, 
                     color: '#fff', 
@@ -889,7 +1003,7 @@ export default function KioskPage() {
                   
                   {(method === 'RFID' || method === 'QR' || method === 'BLE') && (
                     <Typography sx={{ 
-                      fontSize: '1rem', 
+                      fontSize: { xs: '0.85rem', sm: '0.95rem', md: '1rem' },
                       color: theme.colors.secondary.light, 
                       mt: 2, 
                       fontFamily: theme.typography.fontFamily.primary,
@@ -902,14 +1016,14 @@ export default function KioskPage() {
 
                 <Button
                   variant="contained"
-                  size="large"
+                  size={isMobile ? 'medium' : 'large'}
                   onClick={resetAll}
                   sx={{
                     bgcolor: theme.colors.status.error.main,
                     color: '#fff',
-                    px: 6,
-                    py: 1.5,
-                    fontSize: '1.1rem',
+                    px: { xs: 4, md: 6 },
+                    py: { xs: 1.2, md: 1.5 },
+                    fontSize: { xs: '0.95rem', md: '1.1rem' },
                     fontWeight: theme.typography.fontWeight.bold,
                     fontFamily: theme.typography.fontFamily.primary,
                     borderRadius: theme.borderRadius.base,

@@ -6,17 +6,19 @@ import {
   Tooltip, IconButton, Dialog, DialogTitle, DialogContent,
   DialogActions, Divider, Card, CardContent, FormControl, InputLabel,
   List, ListItem, ListItemText, ListItemButton,
+  Drawer, AppBar, Toolbar, useMediaQuery, useTheme as useMuiTheme,
 } from '@mui/material';
 import {
   CheckCircle, Cancel, AccessTime, People, School,
   Edit, Logout, Refresh, Dashboard, Add, Note, EventAvailable,
-  TrendingUp, Class as ClassIcon,
+  TrendingUp, Class as ClassIcon, Menu as MenuIcon, PhotoCamera,
 } from '@mui/icons-material';
 import { format } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../api/client';
 import theme from '../theme/professionalTheme';
+import AttendancePhotoDialog from '../components/AttendancePhotoDialog';
 
 interface TeacherProfile {
   name: string;
@@ -425,6 +427,9 @@ export default function TeacherDashboardPageNew() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const profile = user?.profile as TeacherProfile | null;
+  const muiTheme = useMuiTheme();
+  const isMobile = useMediaQuery(muiTheme.breakpoints.down('md'));
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   const [teacherData, setTeacherData] = useState<any>(null);
   const [students, setStudents] = useState<Student[]>([]);
@@ -433,11 +438,20 @@ export default function TeacherDashboardPageNew() {
   const [date, setDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [loading, setLoading] = useState(false);
   
-  // Dialog states
   const [manualAttendanceOpen, setManualAttendanceOpen] = useState(false);
   const [excuseAbsenceOpen, setExcuseAbsenceOpen] = useState(false);
   const [addNoteOpen, setAddNoteOpen] = useState(false);
   const [selectedRecord, setSelectedRecord] = useState<AttendanceRecord | null>(null);
+  
+  // Photo dialog state
+  const [photoDialog, setPhotoDialog] = useState<{
+    open: boolean;
+    photoUrl: string | null;
+    studentName: string;
+    status: string;
+    timestamp: string;
+    method: string;
+  }>({ open: false, photoUrl: null, studentName: '', status: '', timestamp: '', method: '' });
   
   const [snack, setSnack] = useState({ open: false, msg: '', sev: 'success' as any });
 
@@ -497,97 +511,94 @@ export default function TeacherDashboardPageNew() {
     setAddNoteOpen(true);
   };
 
+  const sidebarContent = (
+    <>
+      <Box sx={{ p: 2.5, borderBottom: '1px solid rgba(255,255,255,0.15)' }}>
+        <Box display="flex" alignItems="center" gap={1} mb={0.5}>
+          <School sx={{ color: '#fff' }} />
+          <Typography variant="h6" sx={{ fontFamily: theme.typography.fontFamily.display, fontWeight: 800 }}>
+            AttendBox
+          </Typography>
+        </Box>
+        <Typography variant="caption" sx={{ opacity: 0.9 }}>Teacher Portal</Typography>
+      </Box>
+
+      {/* Teacher Info */}
+      <Box sx={{ p: 2 }}>
+        <Typography variant="caption" sx={{ opacity: 0.7, textTransform: 'uppercase', fontSize: 10, display: 'block', mb: 0.5 }}>
+          Logged in as
+        </Typography>
+        <Box sx={{ bgcolor: 'rgba(255,255,255,0.15)', p: 1.5, borderRadius: 1, mb: 2, borderLeft: '3px solid rgba(255,255,255,0.5)' }}>
+          <Typography sx={{ fontWeight: 700 }}>{teacherData?.name || user?.username}</Typography>
+          <Typography variant="caption" sx={{ opacity: 0.9 }}>{teacherData?.section || '—'}</Typography>
+        </Box>
+        {teacherData?.subject && <Typography variant="caption" display="block" sx={{ opacity: 0.9, mb: 0.5 }}>📚 {teacherData.subject}</Typography>}
+        {teacherData?.room && <Typography variant="caption" display="block" sx={{ opacity: 0.9, mb: 0.5 }}>🏫 Room: {teacherData.room}</Typography>}
+        {teacherData?.schedule && <Typography variant="caption" display="block" sx={{ opacity: 0.9 }}>⏰ {teacherData.schedule}</Typography>}
+      </Box>
+
+      <Divider sx={{ borderColor: 'rgba(255,255,255,0.2)', my: 1 }} />
+
+      {/* Navigation */}
+      <Box sx={{ px: 2, pb: 2 }}>
+        <Box
+          onClick={() => { navigate('/teacher'); setMobileOpen(false); }}
+          sx={{
+            display: 'flex', alignItems: 'center', gap: 1.5,
+            px: 2, py: 1.5, cursor: 'pointer', borderRadius: 1,
+            bgcolor: 'rgba(255,255,255,0.2)', borderLeft: '3px solid #fff',
+            '&:hover': { bgcolor: 'rgba(255,255,255,0.25)' },
+          }}
+        >
+          <Dashboard />
+          <Typography variant="body2" sx={{ fontWeight: 700 }}>Dashboard</Typography>
+        </Box>
+      </Box>
+
+      <Box flex={1} />
+
+      <Box sx={{ p: 2, borderTop: '1px solid rgba(255,255,255,0.15)' }}>
+        <Button fullWidth variant="contained" startIcon={<Logout />} onClick={handleLogout}
+          sx={{ bgcolor: '#c62828', '&:hover': { bgcolor: '#b71c1c' } }}>
+          Logout
+        </Button>
+      </Box>
+    </>
+  );
+
   return (
     <Box sx={{ display: 'flex', height: '100vh', background: '#f5f5f5' }}>
-      {/* Sidebar */}
+
+      {/* ── Mobile: Temporary Drawer (hidden on desktop via CSS) ── */}
+      <Drawer
+        variant="temporary"
+        open={mobileOpen}
+        onClose={() => setMobileOpen(false)}
+        ModalProps={{ keepMounted: true }}
+        sx={{
+          display: { xs: 'block', md: 'none' },
+          '& .MuiDrawer-paper': {
+            width: 260,
+            background: theme.colors.primary.gradient,
+            color: '#fff',
+            boxSizing: 'border-box',
+          },
+        }}
+      >
+        {sidebarContent}
+      </Drawer>
+
+      {/* ── Desktop: Permanent Sidebar (hidden on mobile via CSS) ── */}
       <Box sx={{
         width: 260,
         background: theme.colors.primary.gradient,
         color: '#fff',
-        display: 'flex',
+        display: { xs: 'none', md: 'flex' },
         flexDirection: 'column',
         flexShrink: 0,
         boxShadow: theme.shadows.elevation3,
       }}>
-        <Box sx={{ p: 2.5, borderBottom: '1px solid rgba(255,255,255,0.15)' }}>
-          <Box display="flex" alignItems="center" gap={1} mb={0.5}>
-            <School sx={{ color: '#fff' }} />
-            <Typography variant="h6" sx={{ fontFamily: theme.typography.fontFamily.display, fontWeight: 800 }}>
-              AttendBox
-            </Typography>
-          </Box>
-          <Typography variant="caption" sx={{ opacity: 0.9 }}>
-            Teacher Portal
-          </Typography>
-        </Box>
-
-        {/* Teacher Info */}
-        <Box sx={{ p: 2 }}>
-          <Typography variant="caption" sx={{ opacity: 0.7, textTransform: 'uppercase', fontSize: 10, display: 'block', mb: 0.5 }}>
-            Logged in as
-          </Typography>
-          <Box sx={{ bgcolor: 'rgba(255,255,255,0.15)', p: 1.5, borderRadius: 1, mb: 2, borderLeft: '3px solid rgba(255,255,255,0.5)' }}>
-            <Typography sx={{ fontWeight: 700 }}>{teacherData?.name || user?.username}</Typography>
-            <Typography variant="caption" sx={{ opacity: 0.9 }}>
-              {teacherData?.section || '—'}
-            </Typography>
-          </Box>
-          {teacherData?.subject && (
-            <Typography variant="caption" display="block" sx={{ opacity: 0.9, mb: 0.5 }}>
-              📚 {teacherData.subject}
-            </Typography>
-          )}
-          {teacherData?.room && (
-            <Typography variant="caption" display="block" sx={{ opacity: 0.9, mb: 0.5 }}>
-              🏫 Room: {teacherData.room}
-            </Typography>
-          )}
-          {teacherData?.schedule && (
-            <Typography variant="caption" display="block" sx={{ opacity: 0.9 }}>
-              ⏰ {teacherData.schedule}
-            </Typography>
-          )}
-        </Box>
-
-        <Divider sx={{ borderColor: 'rgba(255,255,255,0.2)', my: 1 }} />
-
-        {/* Navigation */}
-        <Box sx={{ px: 2, pb: 2 }}>
-          <Box
-            onClick={() => navigate('/teacher')}
-            sx={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 1.5,
-              px: 2,
-              py: 1.5,
-              cursor: 'pointer',
-              borderRadius: 1,
-              bgcolor: 'rgba(255,255,255,0.2)',
-              borderLeft: '3px solid #fff',
-              '&:hover': { bgcolor: 'rgba(255,255,255,0.25)' },
-            }}
-          >
-            <Dashboard />
-            <Typography variant="body2" sx={{ fontWeight: 700 }}>
-              Dashboard
-            </Typography>
-          </Box>
-        </Box>
-
-        <Box flex={1} />
-
-        <Box sx={{ p: 2, borderTop: '1px solid rgba(255,255,255,0.15)' }}>
-          <Button
-            fullWidth
-            variant="contained"
-            startIcon={<Logout />}
-            onClick={handleLogout}
-            sx={{ bgcolor: '#c62828', '&:hover': { bgcolor: '#b71c1c' } }}
-          >
-            Logout
-          </Button>
-        </Box>
+        {sidebarContent}
       </Box>
 
       {/* Main Content */}
@@ -595,23 +606,30 @@ export default function TeacherDashboardPageNew() {
         {/* Header */}
         <Box sx={{
           bgcolor: '#fff',
-          px: 3,
+          px: { xs: 1.5, sm: 3 },
           py: 2,
           borderBottom: '1px solid #e0e0e0',
           display: 'flex',
           alignItems: 'center',
-          gap: 2,
+          gap: { xs: 1, sm: 2 },
           boxShadow: theme.shadows.elevation1,
+          flexWrap: 'wrap',
         }}>
-          <Typography variant="h6" flex={1} sx={{ fontFamily: theme.typography.fontFamily.display, fontWeight: 700 }}>
-            My Class Overview — {teacherData?.section || 'Loading...'}
+          <IconButton
+            onClick={() => setMobileOpen(true)}
+            sx={{ mr: 0.5, display: { xs: 'inline-flex', md: 'none' } }}
+          >
+            <MenuIcon />
+          </IconButton>
+          <Typography variant="h6" flex={1} sx={{ fontFamily: theme.typography.fontFamily.display, fontWeight: 700, fontSize: { xs: '0.95rem', sm: '1.25rem' } }}>
+            My Class — {teacherData?.section || 'Loading...'}
           </Typography>
           <TextField
             type="date"
             size="small"
             value={date}
             onChange={(e) => setDate(e.target.value)}
-            sx={{ width: 160 }}
+            sx={{ width: { xs: 140, sm: 160 } }}
           />
           <Button startIcon={<Refresh />} size="small" onClick={fetchAttendance} variant="outlined">
             Refresh
@@ -619,7 +637,7 @@ export default function TeacherDashboardPageNew() {
         </Box>
 
         {/* Content */}
-        <Box sx={{ flex: 1, overflow: 'auto', p: 3 }}>
+        <Box sx={{ flex: 1, overflow: 'auto', p: { xs: 2, sm: 3 } }}>
           {/* Quick Stats */}
           <Grid container spacing={2} mb={3}>
             <Grid size={{ xs: 6, md: 3 }}>
@@ -739,6 +757,7 @@ export default function TeacherDashboardPageNew() {
                     <TableCell sx={{ fontWeight: 700 }}>LRN</TableCell>
                     <TableCell sx={{ fontWeight: 700 }}>Time</TableCell>
                     <TableCell sx={{ fontWeight: 700 }}>Method</TableCell>
+                    <TableCell align="center" sx={{ fontWeight: 700 }}>Photo</TableCell>
                     <TableCell sx={{ fontWeight: 700 }}>Status</TableCell>
                     <TableCell align="center" sx={{ fontWeight: 700 }}>Actions</TableCell>
                   </TableRow>
@@ -746,14 +765,14 @@ export default function TeacherDashboardPageNew() {
                 <TableBody>
                   {loading && (
                     <TableRow>
-                      <TableCell colSpan={6} align="center" sx={{ py: 4 }}>
+                      <TableCell colSpan={7} align="center" sx={{ py: 4 }}>
                         <CircularProgress size={28} />
                       </TableCell>
                     </TableRow>
                   )}
                   {!loading && attendanceRecords.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={6} align="center" sx={{ py: 5, color: '#666' }}>
+                      <TableCell colSpan={7} align="center" sx={{ py: 5, color: '#666' }}>
                         No attendance records for this date
                       </TableCell>
                     </TableRow>
@@ -774,6 +793,30 @@ export default function TeacherDashboardPageNew() {
                       <TableCell>{format(new Date(r.timestamp), 'hh:mm a')}</TableCell>
                       <TableCell>
                         <Chip label={r.scan_method} size="small" />
+                      </TableCell>
+                      <TableCell align="center">
+                        <Tooltip title={r.photo_path ? 'View Photo' : 'No photo'}>
+                          <span>
+                            <IconButton
+                              size="small"
+                              disabled={!r.photo_path}
+                              onClick={() => r.photo_path && setPhotoDialog({
+                                open: true,
+                                photoUrl: r.photo_path!,
+                                studentName: r.student_name,
+                                status: r.status,
+                                timestamp: r.timestamp,
+                                method: r.scan_method,
+                              })}
+                              sx={{
+                                color: r.photo_path ? theme.colors.primary.main : '#ccc',
+                                '&:hover': { bgcolor: r.photo_path ? 'rgba(59,130,246,0.1)' : 'transparent' },
+                              }}
+                            >
+                              <PhotoCamera fontSize="small" />
+                            </IconButton>
+                          </span>
+                        </Tooltip>
                       </TableCell>
                       <TableCell>
                         <Chip
@@ -823,6 +866,17 @@ export default function TeacherDashboardPageNew() {
           setSelectedRecord(null);
         }}
         onSaved={handleDialogSuccess}
+      />
+
+      {/* Attendance Photo Dialog */}
+      <AttendancePhotoDialog
+        open={photoDialog.open}
+        onClose={() => setPhotoDialog(p => ({ ...p, open: false }))}
+        photoUrl={photoDialog.photoUrl}
+        studentName={photoDialog.studentName}
+        status={photoDialog.status}
+        timestamp={photoDialog.timestamp}
+        method={photoDialog.method}
       />
 
       {/* Snackbar */}
