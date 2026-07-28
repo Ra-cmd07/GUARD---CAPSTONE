@@ -3,11 +3,12 @@ import {
   Box, Paper, Typography, Chip, Avatar, IconButton,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Button, CircularProgress, Snackbar, Alert, Divider, List, ListItem, ListItemIcon, ListItemText,
-  Drawer, useMediaQuery, useTheme, AppBar, Toolbar, Menu, MenuItem,
+  Drawer, useMediaQuery, useTheme, AppBar, Toolbar, Menu, MenuItem, TextField, Dialog,
+  DialogTitle, DialogContent, DialogActions, Tooltip,
 } from '@mui/material';
 import {
   Logout, School, CheckCircle, Cancel, Dashboard as DashboardIcon,
-  CalendarToday, LocationOn, Sms as SmsIcon, PhotoCamera, Delete, Menu as MenuIcon,
+  CalendarToday, LocationOn, Sms as SmsIcon, PhotoCamera, Delete, Menu as MenuIcon, EventNote,
 } from '@mui/icons-material';
 import { format } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
@@ -17,9 +18,10 @@ import type { AttendanceRecord, ParentProfile, Student } from '../types';
 import BLEPositioningMap from '../components/BLEPositioningMap';
 import AttendancePhotoDialog from '../components/AttendancePhotoDialog';
 import theme from '../theme/professionalTheme';
+import NotificationBell from '../components/NotificationBell';
 import useWebSocket from '../hooks/useWebSocket';
 
-type Tab = 'overview' | 'attendance' | 'location' | 'sms';
+type Tab = 'overview' | 'attendance' | 'location' | 'sms' | 'messages' | 'excuse';
 
 export default function ParentDashboardPage() {
   const { user, logout } = useAuth();
@@ -46,6 +48,33 @@ export default function ParentDashboardPage() {
     status: '',
     timestamp: undefined as Date | string | undefined,
     method: '',
+  });
+
+  // Excuse request dialog state
+  const [excuseDialog, setExcuseDialog] = useState<{
+    open: boolean;
+    record: AttendanceRecord | null;
+    reason: string;
+    loading: boolean;
+    error: string;
+    success: boolean;
+  }>({ open: false, record: null, reason: '', loading: false, error: '', success: false });
+
+  // Messages state
+  const [parentMessages, setParentMessages] = useState<any[]>([]);
+  const [unreadMsgCount, setUnreadMsgCount] = useState(0);
+  const [openMsgId,      setOpenMsgId]      = useState<number | null>(null);
+
+  // Attendance alert state
+  const [parentAlerts, setParentAlerts] = useState<any[]>([]);
+
+  // Standalone excuse form state (sidebar tab)
+  const [excuseForm, setExcuseForm] = useState({
+    date: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().split('T')[0], // PH today
+    reason: '',
+    loading: false,
+    error: '',
+    success: '',
   });
 
   const showSnack = (msg: string, sev: any = 'info') => setSnack({ open: true, msg, sev });
@@ -276,16 +305,98 @@ export default function ParentDashboardPage() {
 
   const handleLogout = () => { logout(); navigate('/login', { replace: true }); };
 
+  // Handle excuse submission
+  const handleSubmitExcuse = async () => {
+    if (!excuseDialog.record || !excuseDialog.reason.trim()) return;
+    const r = excuseDialog.record;
+    setExcuseDialog(d => ({ ...d, loading: true, error: '' }));
+    try {
+      await api.post('/excuse/parent', {
+        student_id:   selected?.id,
+        date:         r.date?.toString().split('T')[0],
+        reason:       excuseDialog.reason.trim(),
+        attendance_id: r.id,
+      });
+      setExcuseDialog(d => ({ ...d, loading: false, success: true }));
+      showSnack('Excuse request submitted! The teacher will review it.', 'success');
+      setTimeout(() => setExcuseDialog({ open: false, record: null, reason: '', loading: false, error: '', success: false }), 1800);
+    } catch (err: any) {
+      setExcuseDialog(d => ({
+        ...d,
+        loading: false,
+        error: err.response?.data?.error || 'Failed to submit excuse request',
+      }));
+    }
+  };
+
+  // Fetch messages when on messages tab
+  const fetchMessages = useCallback(async () => {
+    try {
+      const { data } = await api.get('/messages/parent');
+      setParentMessages(data.messages || []);
+      setUnreadMsgCount(data.unreadCount || 0);
+    } catch { /* silent */ }
+  }, []);
+
+  useEffect(() => {
+    if (tab === 'messages') fetchMessages();
+  }, [tab, fetchMessages]);
+
+  // Fetch attendance alerts
+  const fetchParentAlerts = useCallback(async () => {
+    try {
+      const { data } = await api.get('/alerts/parent');
+      setParentAlerts(data.alerts || []);
+    } catch { /* silent */ }
+  }, []);
+
+  useEffect(() => {
+    if (selected) fetchParentAlerts();
+  }, [selected, fetchParentAlerts]);
+
+  const handleMarkMsgRead = async (msgId: number) => {
+    setOpenMsgId(msgId);
+    try {
+      await api.patch(`/messages/parent/${msgId}/read`);
+      setParentMessages(msgs => msgs.map(m => m.id === msgId ? { ...m, is_read: true } : m));
+      setUnreadMsgCount(c => Math.max(0, c - 1));
+    } catch { /* silent */ }
+  };
+
+  const handleStandaloneExcuse = async () => {
+    if (!excuseForm.date || !excuseForm.reason.trim() || !selected) return;
+    setExcuseForm(f => ({ ...f, loading: true, error: '', success: '' }));
+    try {
+      await api.post('/excuse/parent', {
+        student_id: selected.id,
+        date:       excuseForm.date,
+        reason:     excuseForm.reason.trim(),
+        // no attendance_id — this is for a fully absent day with no record
+      });
+      setExcuseForm(f => ({
+        ...f, loading: false, reason: '',
+        success: `✅ Excuse submitted for ${selected.name} on ${new Date(excuseForm.date + 'T00:00:00').toLocaleDateString('en-PH', { month: 'long', day: 'numeric', year: 'numeric' })}. The teacher will review it.`,
+      }));
+    } catch (err: any) {
+      setExcuseForm(f => ({
+        ...f, loading: false,
+        error: err.response?.data?.error || 'Failed to submit excuse request',
+      }));
+    }
+  };
+
   // Weekly table: next 7 days starting from today
   const weekDays = Array.from({ length: 7 }, (_, i) =>
     format(new Date(new Date().setDate(new Date().getDate() + i)), 'yyyy-MM-dd')
   );
 
   const NAV = [
-    { id: 'overview',    label: 'Overview',       icon: <DashboardIcon /> },
-    { id: 'attendance',  label: 'Attendance log', icon: <CalendarToday /> },
-    { id: 'location',    label: 'Location',       icon: <LocationOn /> },
-    { id: 'sms',         label: 'SMS history',    icon: <SmsIcon /> },
+    { id: 'overview',    label: 'Overview',        icon: <DashboardIcon /> },
+    { id: 'attendance',  label: 'Attendance log',  icon: <CalendarToday /> },
+    { id: 'excuse',      label: 'Submit Excuse',   icon: <EventNote /> },
+    { id: 'location',    label: 'Location',        icon: <LocationOn /> },
+    { id: 'sms',         label: 'SMS history',     icon: <SmsIcon /> },
+    { id: 'messages',    label: 'Messages',        icon: <SmsIcon /> },
   ];
 
   const handleDrawerToggle = () => setMobileOpen(!mobileOpen);
@@ -382,10 +493,20 @@ export default function ParentDashboardPage() {
                 fontWeight: tab === n.id ? theme.typography.fontWeight.bold : theme.typography.fontWeight.normal,
                 color: '#fff',
                 fontFamily: theme.typography.fontFamily.primary,
+                flex: 1,
               }}
             >
               {n.label}
             </Typography>
+            {n.id === 'messages' && unreadMsgCount > 0 && (
+              <Box sx={{
+                bgcolor: '#ef4444', color: '#fff', borderRadius: '10px',
+                px: 1, py: 0.25, fontSize: '0.7rem', fontWeight: 700,
+                minWidth: 20, textAlign: 'center',
+              }}>
+                {unreadMsgCount}
+              </Box>
+            )}
           </Box>
         ))}
       </Box>
@@ -510,17 +631,20 @@ export default function ParentDashboardPage() {
           >
             {selected ? `My child's attendance` : 'Parent Dashboard'}
           </Typography>
-          <Typography 
-            variant="body2" 
-            sx={{ 
-              opacity: 0.7, 
-              color: theme.colors.neutral[600],
-              fontFamily: theme.typography.fontFamily.primary,
-              fontSize: { xs: '0.75rem', sm: '0.875rem' },
-            }}
-          >
-            👤 {user?.username}
-          </Typography>
+          <Box display="flex" alignItems="center" gap={1}>
+            <Typography 
+              variant="body2" 
+              sx={{ 
+                opacity: 0.7, 
+                color: theme.colors.neutral[600],
+                fontFamily: theme.typography.fontFamily.primary,
+                fontSize: { xs: '0.75rem', sm: '0.875rem' },
+              }}
+            >
+              👤 {user?.username}
+            </Typography>
+            <NotificationBell iconColor={theme.colors.neutral[600]} />
+          </Box>
         </Box>
 
         <Box sx={{ p: { xs: 2, sm: 3 }, bgcolor: 'transparent' }}>
@@ -570,6 +694,29 @@ export default function ParentDashboardPage() {
               {/* Overview Tab */}
               {tab === 'overview' && (
                 <>
+                  {/* ── Attendance Alert Banner ── */}
+                  {parentAlerts.filter(a => a.student_id === selected?.id).map(alert => (
+                    <Paper key={alert.student_id} sx={{
+                      mb: 2.5, p: 2,
+                      bgcolor: '#fff3e0',
+                      border: '2px solid #e65100',
+                      borderRadius: 2,
+                      display: 'flex', alignItems: 'flex-start', gap: 1.5,
+                    }}>
+                      <Typography sx={{ fontSize: '1.8rem', lineHeight: 1, mt: 0.25 }}>⚠️</Typography>
+                      <Box flex={1}>
+                        <Typography sx={{ fontWeight: 700, color: '#e65100', fontSize: '0.95rem' }}>
+                          Low Attendance Alert — {alert.student_name}
+                        </Typography>
+                        <Typography variant="body2" sx={{ color: '#6d4c41', mt: 0.25 }}>
+                          {alert.student_name}'s attendance rate is <strong>{alert.attendance_rate}%</strong> this month,
+                          below the required <strong>{alert.threshold}%</strong> threshold.
+                          Please contact Iponan National High School.
+                        </Typography>
+                      </Box>
+                    </Paper>
+                  ))}
+
                   {/* Child Profile Card */}
                   <Paper sx={{
                     ...theme.components.card.default,
@@ -784,24 +931,38 @@ export default function ParentDashboardPage() {
                                   </Box>
                                 </TableCell>
                                 <TableCell>
-                                  {rec ? (
-                                    <Chip
-                                      label={rec.status}
-                                      size="small"
-                                      sx={{
-                                        ...theme.components.badge[
-                                          rec.status === 'Time-In' ? 'success' :
-                                          rec.status === 'Late' ? 'warning' : 'error'
-                                        ]
-                                      }}
-                                    />
-                                  ) : (
-                                    <Chip 
-                                      label="Absent" 
-                                      size="small" 
-                                      sx={{ ...theme.components.badge.error }} 
-                                    />
-                                  )}
+                                  <Box display="flex" alignItems="center" gap={0.5} flexWrap="wrap">
+                                    {rec ? (
+                                      <Chip
+                                        label={rec.status}
+                                        size="small"
+                                        sx={{
+                                          ...theme.components.badge[
+                                            rec.status === 'Time-In' ? 'success' :
+                                            rec.status === 'Late' ? 'warning' : 'error'
+                                          ]
+                                        }}
+                                      />
+                                    ) : (
+                                      <Chip 
+                                        label="Absent" 
+                                        size="small" 
+                                        sx={{ ...theme.components.badge.error }} 
+                                      />
+                                    )}
+                                    {rec?.is_overridden === 1 && (
+                                      <Tooltip
+                                        title={
+                                          rec.notes
+                                            ? `📝 Manually updated${rec.teacher_name ? ` by ${rec.teacher_name}` : ''}: ${rec.notes}`
+                                            : `📝 Manually updated${rec.teacher_name ? ` by ${rec.teacher_name}` : ''}`
+                                        }
+                                        arrow
+                                      >
+                                        <span style={{ cursor: 'default', fontSize: '0.9rem' }}>📝</span>
+                                      </Tooltip>
+                                    )}
+                                  </Box>
                                 </TableCell>
                               </TableRow>
                             );
@@ -881,19 +1042,21 @@ export default function ParentDashboardPage() {
                           <TableCell sx={{ bgcolor: '#3b82f6', color: '#fff', fontWeight: 700 }}>Status</TableCell>
                           <TableCell sx={{ bgcolor: '#3b82f6', color: '#fff', fontWeight: 700 }}>Time</TableCell>
                           <TableCell sx={{ bgcolor: '#3b82f6', color: '#fff', fontWeight: 700 }}>Method</TableCell>
+                          <TableCell sx={{ bgcolor: '#3b82f6', color: '#fff', fontWeight: 700 }}>Note</TableCell>
+                          <TableCell sx={{ bgcolor: '#3b82f6', color: '#fff', fontWeight: 700 }}>Action</TableCell>
                         </TableRow>
                       </TableHead>
                       <TableBody>
                         {loading && (
                           <TableRow>
-                            <TableCell colSpan={4} align="center" sx={{ py: 3 }}>
+                            <TableCell colSpan={6} align="center" sx={{ py: 3 }}>
                               <CircularProgress size={24} sx={{ color: '#3b82f6' }} />
                             </TableCell>
                           </TableRow>
                         )}
                         {!loading && records.length === 0 && (
                           <TableRow>
-                            <TableCell colSpan={4} align="center" sx={{ py: 4, color: '#666' }}>
+                            <TableCell colSpan={6} align="center" sx={{ py: 4, color: '#666' }}>
                               No attendance records found
                             </TableCell>
                           </TableRow>
@@ -902,15 +1065,38 @@ export default function ParentDashboardPage() {
                           try {
                             const dateStr = r.date ? format(new Date(r.date + 'T00:00:00'), 'MMM d, yyyy') : '—';
                             const timeStr = r.time_in || (r.timestamp ? format(new Date(r.timestamp), 'hh:mm a') : '—');
+                            const canExcuse = r.status === 'Absent' || r.status === 'Late';
+                            const isOverridden = r.is_overridden === 1;
+                            // Clean up notes — strip the " | " separator prefix and show only the last meaningful note
+                            const rawNotes = r.notes || '';
+                            const cleanNotes = rawNotes
+                              .split('|')
+                              .map((n: string) => n.trim())
+                              .filter((n: string) => n.length > 0)
+                              .join(' • ');
                             return (
-                              <TableRow key={r.id} hover sx={{ '&:hover': { bgcolor: '#f5f7fa' } }}>
+                              <TableRow key={r.id} hover sx={{ '&:hover': { bgcolor: '#f5f7fa' }, bgcolor: isOverridden ? '#fffde7' : '#fff' }}>
                                 <TableCell sx={{ color: '#1a1a1a' }}>{dateStr}</TableCell>
                                 <TableCell>
-                                  <Chip 
-                                    label={r.status || 'Unknown'} 
-                                    size="small" 
-                                    color={STATUS_COLOR[r.status] || 'default'} 
-                                  />
+                                  <Box display="flex" alignItems="center" gap={0.5}>
+                                    <Chip 
+                                      label={r.status || 'Unknown'} 
+                                      size="small" 
+                                      color={STATUS_COLOR[r.status] || 'default'} 
+                                    />
+                                    {isOverridden && (
+                                      <Tooltip
+                                        title={
+                                          cleanNotes
+                                            ? `📝 Manually updated${r.teacher_name ? ` by ${r.teacher_name}` : ''}: ${cleanNotes}`
+                                            : `📝 Manually updated${r.teacher_name ? ` by ${r.teacher_name}` : ''}`
+                                        }
+                                        arrow
+                                      >
+                                        <span style={{ cursor: 'default', fontSize: '0.85rem' }}>📝</span>
+                                      </Tooltip>
+                                    )}
+                                  </Box>
                                 </TableCell>
                                 <TableCell sx={{ color: '#666', fontSize: '0.85rem' }}>
                                   {timeStr}
@@ -922,6 +1108,49 @@ export default function ParentDashboardPage() {
                                     variant="outlined" 
                                     sx={{ color: '#666', borderColor: '#e0e0e0' }} 
                                   />
+                                </TableCell>
+                                <TableCell sx={{ maxWidth: 180 }}>
+                                  {cleanNotes ? (
+                                    <Typography variant="caption" sx={{ color: '#555', fontStyle: 'italic', display: 'block' }}>
+                                      {cleanNotes}
+                                      {r.teacher_name && (
+                                        <span style={{ display: 'block', color: '#888', marginTop: 2 }}>
+                                          — {r.teacher_name}
+                                        </span>
+                                      )}
+                                    </Typography>
+                                  ) : (
+                                    <Typography variant="caption" color="text.disabled">—</Typography>
+                                  )}
+                                </TableCell>
+                                <TableCell>
+                                  {canExcuse && (
+                                    <Button
+                                      size="small"
+                                      variant="outlined"
+                                      onClick={() => setExcuseDialog({
+                                        open: true,
+                                        record: r,
+                                        reason: '',
+                                        loading: false,
+                                        error: '',
+                                        success: false,
+                                      })}
+                                      sx={{
+                                        fontSize: '0.72rem',
+                                        textTransform: 'none',
+                                        borderColor: theme.colors.status.warning.main,
+                                        color: theme.colors.status.warning.main,
+                                        '&:hover': {
+                                          bgcolor: '#fff3e0',
+                                          borderColor: theme.colors.status.warning.dark,
+                                        },
+                                        whiteSpace: 'nowrap',
+                                      }}
+                                    >
+                                      Submit Excuse
+                                    </Button>
+                                  )}
                                 </TableCell>
                               </TableRow>
                             );
@@ -1124,6 +1353,210 @@ export default function ParentDashboardPage() {
                   </List>
                 </Paper>
               )}
+
+              {/* Messages Tab */}
+              {tab === 'messages' && (
+                <Paper elevation={2} sx={{ borderRadius: 2, overflow: 'hidden', border: '1px solid #e0e0e0' }}>
+                  <Box sx={{
+                    p: 2.5,
+                    background: theme.colors.primary.gradient,
+                    color: '#fff',
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  }}>
+                    <Typography fontWeight={700} sx={{ fontFamily: theme.typography.fontFamily.display }}>
+                      📩 Messages from Teachers
+                    </Typography>
+                    {unreadMsgCount > 0 && (
+                      <Chip label={`${unreadMsgCount} unread`} size="small"
+                        sx={{ bgcolor: 'rgba(255,255,255,0.25)', color: '#fff', fontWeight: 700 }} />
+                    )}
+                  </Box>
+
+                  {parentMessages.length === 0 ? (
+                    <Box textAlign="center" py={6}>
+                      <Typography sx={{ fontSize: '3rem', mb: 1 }}>📭</Typography>
+                      <Typography color="#666">No messages from teachers yet.</Typography>
+                    </Box>
+                  ) : (
+                    <Box>
+                      {parentMessages.map((msg, i) => (
+                        <Box key={msg.id}>
+                          <Box
+                            onClick={() => handleMarkMsgRead(msg.id)}
+                            sx={{
+                              p: 2.5, cursor: 'pointer',
+                              bgcolor: msg.is_read ? '#fff' : '#e3f2fd',
+                              borderLeft: msg.is_read ? 'none' : `4px solid ${theme.colors.primary.main}`,
+                              '&:hover': { bgcolor: '#f5f9ff' },
+                              transition: 'background 0.15s',
+                            }}
+                          >
+                            <Box display="flex" justifyContent="space-between" alignItems="flex-start" mb={0.5}>
+                              <Box display="flex" alignItems="center" gap={1}>
+                                {!msg.is_read && (
+                                  <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: theme.colors.primary.main, flexShrink: 0 }} />
+                                )}
+                                <Typography sx={{ fontWeight: msg.is_read ? 500 : 700, fontSize: '0.95rem' }}>
+                                  {msg.subject}
+                                </Typography>
+                              </Box>
+                              <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: 'nowrap', ml: 1 }}>
+                                {msg.created_at ? format(new Date(msg.created_at), 'MMM d, h:mm aa') : '—'}
+                              </Typography>
+                            </Box>
+                            <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
+                              From: <strong>{msg.teacher_name}</strong> • Re: {msg.student_name}
+                            </Typography>
+                            {openMsgId === msg.id ? (
+                              <Box sx={{ mt: 1.5, p: 2, bgcolor: '#f8fafc', borderRadius: 1, border: '1px solid #e0e0e0' }}>
+                                <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.7 }}>
+                                  {msg.body}
+                                </Typography>
+                              </Box>
+                            ) : (
+                              <Typography variant="body2" color="text.secondary" sx={{
+                                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '90%',
+                              }}>
+                                {msg.body}
+                              </Typography>
+                            )}
+                          </Box>
+                          {i < parentMessages.length - 1 && <Divider />}
+                        </Box>
+                      ))}
+                    </Box>
+                  )}
+                </Paper>
+              )}
+
+              {/* ── Submit Excuse Tab (standalone form) ── */}
+              {tab === 'excuse' && (
+                <Box sx={{ maxWidth: 580, mx: 'auto' }}>
+                  <Paper elevation={2} sx={{ borderRadius: 2, overflow: 'hidden' }}>
+                    {/* Header */}
+                    <Box sx={{
+                      p: 2.5,
+                      background: theme.colors.status.warning.main,
+                      color: '#fff',
+                    }}>
+                      <Typography sx={{ fontFamily: theme.typography.fontFamily.display, fontWeight: 700, fontSize: 18 }}>
+                        📋 Submit an Excuse Request
+                      </Typography>
+                      <Typography variant="caption" sx={{ opacity: 0.9, display: 'block', mt: 0.25 }}>
+                        Use this form when your child was absent and did not scan at the kiosk
+                      </Typography>
+                    </Box>
+
+                    <Box sx={{ p: 3 }}>
+                      {excuseForm.error && (
+                        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setExcuseForm(f => ({ ...f, error: '' }))}>
+                          {excuseForm.error}
+                        </Alert>
+                      )}
+                      {excuseForm.success && (
+                        <Alert severity="success" sx={{ mb: 2 }} onClose={() => setExcuseForm(f => ({ ...f, success: '' }))}>
+                          {excuseForm.success}
+                        </Alert>
+                      )}
+
+                      {/* Child info */}
+                      <Box sx={{
+                        p: 2, mb: 2.5, bgcolor: '#f0f4ff',
+                        border: `1px solid ${theme.colors.primary.light}`,
+                        borderRadius: 2,
+                        display: 'flex', alignItems: 'center', gap: 1.5,
+                      }}>
+                        <Avatar sx={{ bgcolor: theme.colors.primary.main, width: 40, height: 40, fontSize: 18 }}>
+                          {selected?.name?.charAt(0) || '?'}
+                        </Avatar>
+                        <Box>
+                          <Typography sx={{ fontWeight: 700, fontSize: '0.95rem' }}>
+                            {selected?.name}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            {selected?.grade} — Section {selected?.section}
+                          </Typography>
+                        </Box>
+                      </Box>
+
+                      {/* Multiple children: selector */}
+                      {children.length > 1 && (
+                        <Box sx={{ mb: 2.5 }}>
+                          <Typography variant="body2" sx={{ fontWeight: 700, mb: 1 }}>
+                            Select child:
+                          </Typography>
+                          <Box display="flex" gap={1} flexWrap="wrap">
+                            {children.map(child => (
+                              <Button
+                                key={child.id}
+                                size="small"
+                                variant={selected?.id === child.id ? 'contained' : 'outlined'}
+                                onClick={() => setSelected(child)}
+                                sx={{ textTransform: 'none', fontSize: '0.82rem' }}
+                              >
+                                {child.name}
+                              </Button>
+                            ))}
+                          </Box>
+                        </Box>
+                      )}
+
+                      {/* Date picker */}
+                      <TextField
+                        label="Date of Absence *"
+                        type="date"
+                        fullWidth
+                        value={excuseForm.date}
+                        onChange={e => setExcuseForm(f => ({ ...f, date: e.target.value, success: '' }))}
+                        InputLabelProps={{ shrink: true }}
+                        inputProps={{
+                          max: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().split('T')[0],
+                        }} // cap at today PH time (UTC+8)
+                        sx={{ mb: 2.5 }}
+                        helperText="Select the date your child was absent"
+                      />
+
+                      {/* Reason */}
+                      <TextField
+                        label="Reason for Absence *"
+                        fullWidth
+                        multiline
+                        rows={4}
+                        value={excuseForm.reason}
+                        onChange={e => setExcuseForm(f => ({ ...f, reason: e.target.value, success: '' }))}
+                        placeholder="E.g., Fever and cough since the night before. Visited Dr. Santos at Polymedic Clinic."
+                        sx={{ mb: 1 }}
+                      />
+                      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2.5 }}>
+                        The teacher will be notified and can approve or reject this request.
+                      </Typography>
+
+                      {/* Submit button */}
+                      <Button
+                        fullWidth
+                        variant="contained"
+                        size="large"
+                        disabled={excuseForm.loading || !excuseForm.date || !excuseForm.reason.trim()}
+                        onClick={handleStandaloneExcuse}
+                        sx={{
+                          bgcolor: theme.colors.status.warning.main,
+                          '&:hover': { bgcolor: theme.colors.status.warning.dark },
+                          py: 1.5,
+                          fontWeight: 700,
+                          textTransform: 'none',
+                          fontSize: '1rem',
+                        }}
+                      >
+                        {excuseForm.loading
+                          ? <CircularProgress size={22} sx={{ color: '#fff' }} />
+                          : '📋 Submit Excuse Request'
+                        }
+                      </Button>
+                    </Box>
+                  </Paper>
+                </Box>
+              )}
+
             </>
           ) : (
             <Box textAlign="center" py={8}>
@@ -1143,6 +1576,101 @@ export default function ParentDashboardPage() {
           {snack.msg}
         </Alert>
       </Snackbar>
+
+      {/* ── Excuse Request Dialog ── */}
+      <Dialog
+        open={excuseDialog.open}
+        onClose={() => !excuseDialog.loading && setExcuseDialog(d => ({ ...d, open: false }))}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle sx={{
+          background: theme.colors.status.warning.main,
+          color: '#fff',
+          fontFamily: theme.typography.fontFamily.display,
+          fontWeight: theme.typography.fontWeight.bold,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 1,
+        }}>
+          📋 Submit Excuse Request
+        </DialogTitle>
+        <DialogContent sx={{ pt: 3 }}>
+          {excuseDialog.error && (
+            <Alert severity="error" sx={{ mb: 2 }}>{excuseDialog.error}</Alert>
+          )}
+          {excuseDialog.success ? (
+            <Box textAlign="center" py={2}>
+              <Typography sx={{ fontSize: '3rem', mb: 1 }}>✅</Typography>
+              <Typography fontWeight={700} color="success.main">
+                Excuse submitted successfully!
+              </Typography>
+              <Typography variant="body2" color="text.secondary" mt={1}>
+                The teacher will review your request and notify you.
+              </Typography>
+            </Box>
+          ) : (
+            <>
+              <Box sx={{
+                p: 2, mb: 2.5, bgcolor: '#fff8f0',
+                border: '1px solid #ffe0b2', borderRadius: 2,
+              }}>
+                <Typography variant="body2" sx={{ fontWeight: 700, color: '#e65100', mb: 0.5 }}>
+                  Excuse for: {selected?.name}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Date:{' '}
+                  {excuseDialog.record?.date
+                    ? format(new Date(String(excuseDialog.record.date).split('T')[0] + 'T00:00:00'), 'MMMM d, yyyy')
+                    : '—'}
+                </Typography>
+              </Box>
+              <TextField
+                label="Reason for absence *"
+                fullWidth
+                multiline
+                rows={4}
+                value={excuseDialog.reason}
+                onChange={e => setExcuseDialog(d => ({ ...d, reason: e.target.value }))}
+                placeholder="E.g., Medical appointment, Family emergency, Illness..."
+                autoFocus
+                sx={{ fontFamily: theme.typography.fontFamily.primary }}
+              />
+              <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                The teacher will receive a notification and can approve or reject this request.
+              </Typography>
+            </>
+          )}
+        </DialogContent>
+        {!excuseDialog.success && (
+          <DialogActions sx={{ px: 3, pb: 2.5, gap: 1 }}>
+            <Button
+              onClick={() => setExcuseDialog(d => ({ ...d, open: false }))}
+              disabled={excuseDialog.loading}
+              sx={{ textTransform: 'none', color: '#666' }}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="contained"
+              onClick={handleSubmitExcuse}
+              disabled={excuseDialog.loading || !excuseDialog.reason.trim()}
+              sx={{
+                bgcolor: theme.colors.status.warning.main,
+                '&:hover': { bgcolor: theme.colors.status.warning.dark },
+                textTransform: 'none',
+                fontWeight: 700,
+                minWidth: 130,
+              }}
+            >
+              {excuseDialog.loading
+                ? <CircularProgress size={18} sx={{ color: '#fff' }} />
+                : 'Submit Excuse'
+              }
+            </Button>
+          </DialogActions>
+        )}
+      </Dialog>
 
       {/* Photo Viewer Dialog */}
       <AttendancePhotoDialog

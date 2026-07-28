@@ -3,7 +3,7 @@ import {
   Box, Grid, Paper, Typography, Chip, Avatar, IconButton,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Button, TextField, Select, MenuItem, FormControl, InputLabel,
-  Alert, CircularProgress, Snackbar, Switch,
+  Alert, CircularProgress, Snackbar, Switch, FormControlLabel, FormGroup,
   Dialog, DialogTitle, DialogContent, DialogActions, Tooltip,
   Drawer, AppBar, Toolbar, useMediaQuery, useTheme as useMuiTheme,
 } from '@mui/material';
@@ -11,7 +11,7 @@ import {
   People, School, Router, Sms, Dashboard, Logout, Add, Edit,
   ToggleOn, ToggleOff, LockReset, Menu, Close, PersonAdd,
   CheckCircle, Cancel, AccessTime, Assessment, PhotoCamera, Delete,
-  QrCode2, Bluetooth, CreditCard, Download, LocationOn,
+  QrCode2, Bluetooth, CreditCard, Download, LocationOn, Campaign,
 } from '@mui/icons-material';
 import { QRCodeCanvas } from 'qrcode.react';
 import { format } from 'date-fns';
@@ -22,20 +22,22 @@ import type { AdminStats, AttendanceRecord, Kiosk } from '../types';
 import AttendancePhotoDialog from '../components/AttendancePhotoDialog';
 import BLEPositioningMap from '../components/BLEPositioningMap';
 import theme from '../theme/professionalTheme';
+import NotificationBell from '../components/NotificationBell';
 import ReportsPage from './ReportsPage';
 import KiosksPage from './KiosksPage';
 
 const NAV = [
-  { id: 'dashboard', label: 'Dashboard',  icon: <Dashboard /> },
-  { id: 'users',     label: 'Users',      icon: <People /> },
-  { id: 'students',  label: 'Students',   icon: <School /> },
-  { id: 'kiosks',    label: 'Kiosks',     icon: <Router /> },
-  { id: 'sms',       label: 'SMS Logs',   icon: <Sms /> },
-  { id: 'reports',   label: 'Reports',    icon: <Assessment /> },
-  { id: 'location',  label: 'Live Map',   icon: <LocationOn /> },
+  { id: 'dashboard',     label: 'Dashboard',     icon: <Dashboard /> },
+  { id: 'users',         label: 'Users',          icon: <People /> },
+  { id: 'students',      label: 'Students',       icon: <School /> },
+  { id: 'kiosks',        label: 'Kiosks',         icon: <Router /> },
+  { id: 'sms',           label: 'SMS Logs',       icon: <Sms /> },
+  { id: 'reports',       label: 'Reports',        icon: <Assessment /> },
+  { id: 'location',      label: 'Live Map',       icon: <LocationOn /> },
+  { id: 'announcements', label: 'Announcements',  icon: <Campaign /> },
 ];
 
-type Tab = 'dashboard' | 'users' | 'students' | 'kiosks' | 'sms' | 'reports' | 'location';
+type Tab = 'dashboard' | 'users' | 'students' | 'kiosks' | 'sms' | 'reports' | 'location' | 'announcements';
 
 function StatCard({ label, value, icon, color }: { label: string; value: any; icon: React.ReactNode; color: string }) {
   return (
@@ -406,6 +408,18 @@ export default function AdminDashboardPage() {
   const [addParentOpen, setAddParentOpen] = useState(false);
   const [selectedStudent, setSelectedStudent] = useState<any>(null);
 
+  // Attendance alerts state
+  const [alerts, setAlerts] = useState<any[]>([]);
+  const [alertCount, setAlertCount] = useState(0);
+
+  // Announcements state
+  const [announcements, setAnnouncements] = useState<any[]>([]);
+  const [annForm, setAnnForm] = useState({
+    title: '', body: '',
+    targetTeachers: true, targetParents: true, targetStudents: false,
+    sendSms: false, loading: false, error: '', success: '',
+  });
+
   // Photo viewer state
   const [photoDialog, setPhotoDialog] = useState({
     open: false,
@@ -453,6 +467,28 @@ export default function AdminDashboardPage() {
   }, []);
 
   useEffect(() => { loadDashboard(); }, [loadDashboard]);
+
+  // Load attendance alerts
+  const loadAlerts = useCallback(async () => {
+    try {
+      const { data } = await api.get('/alerts/admin');
+      setAlerts(data.alerts || []);
+      setAlertCount(data.count || 0);
+    } catch { /* silent */ }
+  }, []);
+
+  useEffect(() => { loadAlerts(); }, [loadAlerts]);
+
+  const loadAnnouncements = useCallback(async () => {
+    try {
+      const { data } = await api.get('/announcements');
+      setAnnouncements(data || []);
+    } catch { /* silent */ }
+  }, []);
+
+  useEffect(() => {
+    if (tab === 'announcements') loadAnnouncements();
+  }, [tab, loadAnnouncements]);
 
   // Auto-refresh dashboard every 5 seconds when on dashboard tab
   useEffect(() => {
@@ -652,6 +688,7 @@ export default function AdminDashboardPage() {
           <Typography variant="body2" color="text.secondary" sx={{ display: { xs: 'none', sm: 'block' } }}>
             📅 {format(new Date(), 'MMMM d, yyyy')}
           </Typography>
+          <NotificationBell iconColor={theme.colors.neutral[700]} />
         </Box>
 
         {/* Content Area */}
@@ -678,6 +715,73 @@ export default function AdminDashboardPage() {
                   <StatCard label="SMS Sent Today" value={stats?.sms_today} icon={<Sms />} color="#6a1b9a" />
                 </Grid>
               </Grid>
+
+              {/* ── Attendance Alerts ── */}
+              {alertCount > 0 && (
+                <Paper elevation={2} sx={{ borderRadius: 2, mb: 3, border: '2px solid #e65100', overflow: 'hidden' }}>
+                  <Box sx={{
+                    p: 2, bgcolor: '#fff3e0',
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  }}>
+                    <Box display="flex" alignItems="center" gap={1}>
+                      <Typography sx={{ fontSize: '1.5rem' }}>⚠️</Typography>
+                      <Box>
+                        <Typography fontWeight={700} color="#e65100">
+                          {alertCount} Student{alertCount > 1 ? 's' : ''} At Risk — Low Attendance This Month
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          Attendance rate below 80% threshold
+                        </Typography>
+                      </Box>
+                    </Box>
+                    <Button
+                      size="small" variant="outlined"
+                      onClick={loadAlerts}
+                      sx={{ borderColor: '#e65100', color: '#e65100', textTransform: 'none' }}
+                    >
+                      Refresh
+                    </Button>
+                  </Box>
+                  <TableContainer sx={{ maxHeight: 260 }}>
+                    <Table size="small" stickyHeader>
+                      <TableHead>
+                        <TableRow>
+                          {['Student', 'LRN', 'Grade/Section', 'Rate', 'Notified'].map(h => (
+                            <TableCell key={h} sx={{ bgcolor: '#fff8f0', fontWeight: 700, color: '#e65100' }}>{h}</TableCell>
+                          ))}
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {alerts.map(a => (
+                          <TableRow key={a.id} hover sx={{ bgcolor: '#fffdf0' }}>
+                            <TableCell sx={{ fontWeight: 700 }}>{a.student_name}</TableCell>
+                            <TableCell>{a.lrn}</TableCell>
+                            <TableCell>{a.grade} — {a.section}</TableCell>
+                            <TableCell>
+                              <Chip
+                                label={`${a.attendance_rate}%`}
+                                size="small"
+                                sx={{
+                                  bgcolor: a.attendance_rate < 60 ? '#ffebee' : '#fff3e0',
+                                  color:   a.attendance_rate < 60 ? '#c62828' : '#e65100',
+                                  fontWeight: 700,
+                                }}
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <Box display="flex" gap={0.5} flexWrap="wrap">
+                                {a.notified_teacher && <Chip label="Teacher" size="small" color="info" sx={{ fontSize: '0.65rem', height: 18 }} />}
+                                {a.notified_parent  && <Chip label="Parent"  size="small" color="success" sx={{ fontSize: '0.65rem', height: 18 }} />}
+                                {a.notified_admin   && <Chip label="Admin"   size="small" color="warning" sx={{ fontSize: '0.65rem', height: 18 }} />}
+                              </Box>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                </Paper>
+              )}
 
               <Paper elevation={2} sx={{ borderRadius: 2 }}>
                 <Box sx={{ 
@@ -1016,6 +1120,160 @@ export default function AdminDashboardPage() {
                   </Typography>
                 </Box>
               </Paper>
+            </Box>
+          )}
+
+          {/* ── Announcements Tab ── */}
+          {tab === 'announcements' && (
+            <Box>
+              <Grid container spacing={3}>
+                {/* Compose Form */}
+                <Grid size={{ xs: 12, md: 5 }}>
+                  <Paper elevation={2} sx={{ borderRadius: 2, overflow: 'hidden' }}>
+                    <Box sx={{ p: 2.5, background: theme.colors.primary.gradient, color: '#fff' }}>
+                      <Typography sx={{ fontFamily: theme.typography.fontFamily.display, fontWeight: 700, fontSize: 18 }}>
+                        📢 New Announcement
+                      </Typography>
+                      <Typography variant="caption" sx={{ opacity: 0.85 }}>
+                        Notify teachers, parents, and students
+                      </Typography>
+                    </Box>
+                    <Box sx={{ p: 2.5 }}>
+                      {annForm.error   && <Alert severity="error"   sx={{ mb: 2 }}>{annForm.error}</Alert>}
+                      {annForm.success && <Alert severity="success" sx={{ mb: 2 }}>{annForm.success}</Alert>}
+
+                      <TextField
+                        label="Title *" fullWidth
+                        value={annForm.title}
+                        onChange={e => setAnnForm(f => ({ ...f, title: e.target.value, success: '' }))}
+                        placeholder="E.g., School holiday on Friday"
+                        sx={{ mb: 2 }}
+                      />
+                      <TextField
+                        label="Message *" fullWidth multiline rows={5}
+                        value={annForm.body}
+                        onChange={e => setAnnForm(f => ({ ...f, body: e.target.value, success: '' }))}
+                        placeholder="Write the full announcement here..."
+                        sx={{ mb: 2.5 }}
+                      />
+
+                      <Typography variant="body2" sx={{ fontWeight: 700, mb: 1, color: '#333' }}>
+                        Send to:
+                      </Typography>
+                      <FormGroup row sx={{ mb: 2 }}>
+                        <FormControlLabel
+                          control={<Switch checked={annForm.targetTeachers} onChange={e => setAnnForm(f => ({ ...f, targetTeachers: e.target.checked }))} color="primary" />}
+                          label="Teachers"
+                        />
+                        <FormControlLabel
+                          control={<Switch checked={annForm.targetParents} onChange={e => setAnnForm(f => ({ ...f, targetParents: e.target.checked }))} color="primary" />}
+                          label="Parents"
+                        />
+                        <FormControlLabel
+                          control={<Switch checked={annForm.targetStudents} onChange={e => setAnnForm(f => ({ ...f, targetStudents: e.target.checked }))} color="primary" />}
+                          label="Students"
+                        />
+                      </FormGroup>
+
+                      <FormControlLabel
+                        control={
+                          <Switch checked={annForm.sendSms} onChange={e => setAnnForm(f => ({ ...f, sendSms: e.target.checked }))} color="warning" />
+                        }
+                        label={
+                          <Box>
+                            <Typography variant="body2" fontWeight={700}>Also send SMS to Parents</Typography>
+                            <Typography variant="caption" color="text.secondary">Only when Parents is checked</Typography>
+                          </Box>
+                        }
+                        sx={{ mb: 2.5, alignItems: 'flex-start', mt: 0.5 }}
+                      />
+
+                      <Button
+                        fullWidth variant="contained" size="large"
+                        disabled={
+                          annForm.loading ||
+                          !annForm.title.trim() || !annForm.body.trim() ||
+                          (!annForm.targetTeachers && !annForm.targetParents && !annForm.targetStudents)
+                        }
+                        onClick={async () => {
+                          const roles: string[] = [];
+                          if (annForm.targetTeachers) roles.push('teacher');
+                          if (annForm.targetParents)  roles.push('parent');
+                          if (annForm.targetStudents) roles.push('student');
+                          setAnnForm(f => ({ ...f, loading: true, error: '', success: '' }));
+                          try {
+                            const { data } = await api.post('/announcements', {
+                              title: annForm.title.trim(), body: annForm.body.trim(),
+                              target_roles: roles, send_sms: annForm.sendSms,
+                            });
+                            setAnnForm(f => ({ ...f, loading: false, title: '', body: '', success: `✅ ${data.message}` }));
+                            loadAnnouncements();
+                          } catch (err: any) {
+                            setAnnForm(f => ({ ...f, loading: false, error: err.response?.data?.error || 'Failed to publish' }));
+                          }
+                        }}
+                        sx={{ ...theme.components.button.primary, '&:hover': theme.components.button.primary.hover, py: 1.5 }}
+                      >
+                        {annForm.loading ? <CircularProgress size={20} sx={{ color: '#fff' }} /> : '📢 Publish Announcement'}
+                      </Button>
+                    </Box>
+                  </Paper>
+                </Grid>
+
+                {/* Past Announcements */}
+                <Grid size={{ xs: 12, md: 7 }}>
+                  <Paper elevation={2} sx={{ borderRadius: 2, overflow: 'hidden' }}>
+                    <Box sx={{
+                      p: 2.5, bgcolor: '#f8faff', borderBottom: '1px solid #e0e0e0',
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    }}>
+                      <Typography sx={{ fontWeight: 700, fontSize: '1rem' }}>Past Announcements</Typography>
+                      <Button size="small" onClick={loadAnnouncements} sx={{ textTransform: 'none' }}>Refresh</Button>
+                    </Box>
+                    {announcements.length === 0 ? (
+                      <Box textAlign="center" py={6}>
+                        <Typography sx={{ fontSize: '3rem', mb: 1 }}>📭</Typography>
+                        <Typography color="#888">No announcements yet</Typography>
+                      </Box>
+                    ) : (
+                      <Box sx={{ maxHeight: 600, overflowY: 'auto' }}>
+                        {announcements.map((a, i) => (
+                          <Box key={a.id} sx={{
+                            p: 2.5,
+                            borderBottom: i < announcements.length - 1 ? '1px solid #f0f0f0' : 'none',
+                            '&:hover': { bgcolor: '#f9fafc' },
+                          }}>
+                            <Box display="flex" justifyContent="space-between" alignItems="flex-start" mb={0.5}>
+                              <Typography sx={{ fontWeight: 700, fontSize: '0.95rem' }}>{a.title}</Typography>
+                              <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: 'nowrap', ml: 1 }}>
+                                {a.created_at ? format(new Date(a.created_at), 'MMM d, yyyy') : '—'}
+                              </Typography>
+                            </Box>
+                            <Typography variant="body2" color="text.secondary" sx={{
+                              mb: 1, overflow: 'hidden', display: '-webkit-box',
+                              WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+                            }}>
+                              {a.body}
+                            </Typography>
+                            <Box display="flex" gap={0.5} flexWrap="wrap">
+                              {(a.target_roles || []).map((role: string) => (
+                                <Chip key={role} label={role} size="small" sx={{
+                                  fontSize: '0.65rem', height: 18,
+                                  bgcolor: role === 'teacher' ? '#e3f2fd' : role === 'parent' ? '#e8f5e9' : '#fce4ec',
+                                  color:   role === 'teacher' ? '#1565c0' : role === 'parent' ? '#2e7d32' : '#c62828',
+                                }} />
+                              ))}
+                              {a.send_sms && (
+                                <Chip label="SMS" size="small" sx={{ fontSize: '0.65rem', height: 18, bgcolor: '#fff3e0', color: '#e65100' }} />
+                              )}
+                            </Box>
+                          </Box>
+                        ))}
+                      </Box>
+                    )}
+                  </Paper>
+                </Grid>
+              </Grid>
             </Box>
           )}
 

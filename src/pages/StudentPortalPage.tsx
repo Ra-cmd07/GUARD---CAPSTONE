@@ -14,6 +14,7 @@ import { useAuth } from '../context/AuthContext';
 import api from '../api/client';
 import type { AttendanceRecord, StudentProfile } from '../types';
 import theme from '../theme/professionalTheme';
+import NotificationBell from '../components/NotificationBell';
 
 export default function StudentPortalPage() {
   const { user, logout } = useAuth();
@@ -83,16 +84,21 @@ export default function StudentPortalPage() {
   const sidebarContent = (
     <>
       <Box sx={{ p: 3, borderBottom: '1px solid rgba(255,255,255,0.15)' }}>
-        <Typography variant="h5" sx={{
-          fontFamily: theme.typography.fontFamily.display,
-          fontWeight: theme.typography.fontWeight.extrabold,
-          letterSpacing: '0.5px',
-        }}>
-          ATTENDBOX
-        </Typography>
-        <Typography variant="caption" sx={{ opacity: 0.85, fontFamily: theme.typography.fontFamily.primary }}>
-          Student Portal
-        </Typography>
+        <Box display="flex" alignItems="center" justifyContent="space-between">
+          <Box>
+            <Typography variant="h5" sx={{
+              fontFamily: theme.typography.fontFamily.display,
+              fontWeight: theme.typography.fontWeight.extrabold,
+              letterSpacing: '0.5px',
+            }}>
+              ATTENDBOX
+            </Typography>
+            <Typography variant="caption" sx={{ opacity: 0.85, fontFamily: theme.typography.fontFamily.primary }}>
+              Student Portal
+            </Typography>
+          </Box>
+          <NotificationBell iconColor="#fff" />
+        </Box>
       </Box>
       <Box sx={{ p: 2.5, flex: 1 }}>
         <Box textAlign="center" mb={3}>
@@ -147,9 +153,10 @@ export default function StudentPortalPage() {
             <MenuIcon />
           </IconButton>
           <School sx={{ mr: 1 }} />
-          <Typography variant="h6" sx={{ fontFamily: theme.typography.fontFamily.display, fontWeight: theme.typography.fontWeight.bold }}>
+          <Typography variant="h6" sx={{ fontFamily: theme.typography.fontFamily.display, fontWeight: theme.typography.fontWeight.bold, flex: 1 }}>
             AttendBox
           </Typography>
+          <NotificationBell iconColor="#fff" />
         </Toolbar>
       </AppBar>
 

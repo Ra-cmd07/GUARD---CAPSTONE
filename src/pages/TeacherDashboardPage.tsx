@@ -11,7 +11,7 @@ import {
 import {
   CheckCircle, Cancel, AccessTime, People, School,
   Edit, Logout, Refresh, Dashboard, Add, Note, EventAvailable,
-  TrendingUp, Class as ClassIcon, Menu as MenuIcon, PhotoCamera,
+  TrendingUp, Class as ClassIcon, Menu as MenuIcon, PhotoCamera, Email,
 } from '@mui/icons-material';
 import { format } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
@@ -19,6 +19,7 @@ import { useAuth } from '../context/AuthContext';
 import api from '../api/client';
 import theme from '../theme/professionalTheme';
 import AttendancePhotoDialog from '../components/AttendancePhotoDialog';
+import NotificationBell from '../components/NotificationBell';
 
 interface TeacherProfile {
   name: string;
@@ -443,6 +444,23 @@ export default function TeacherDashboardPageNew() {
   const [addNoteOpen, setAddNoteOpen] = useState(false);
   const [selectedRecord, setSelectedRecord] = useState<AttendanceRecord | null>(null);
   
+  // Excuse requests from parents
+  const [excuseRequests, setExcuseRequests] = useState<any[]>([]);
+  const [pendingExcuseCount, setPendingExcuseCount] = useState(0);
+  const [excuseTab, setExcuseTab] = useState<'dashboard' | 'excuses'>('dashboard');
+  const [resolveDialog, setResolveDialog] = useState<{
+    open: boolean; request: any | null; action: 'approve' | 'reject'; note: string; loading: boolean; error: string;
+  }>({ open: false, request: null, action: 'approve', note: '', loading: false, error: '' });
+
+  // Message-parent dialog state
+  const [msgDialog, setMsgDialog] = useState<{
+    open: boolean; studentName: string; studentId: number | null;
+    subject: string; body: string; loading: boolean; error: string; success: boolean;
+  }>({ open: false, studentName: '', studentId: null, subject: '', body: '', loading: false, error: '', success: false });
+
+  // At-risk students (below threshold)
+  const [atRiskIds, setAtRiskIds] = useState<Set<number>>(new Set());
+  
   // Photo dialog state
   const [photoDialog, setPhotoDialog] = useState<{
     open: boolean;
@@ -496,6 +514,35 @@ export default function TeacherDashboardPageNew() {
     return () => clearInterval(interval);
   }, [fetchAttendance]);
 
+  // Fetch excuse requests
+  const fetchExcuseRequests = useCallback(async () => {
+    try {
+      const { data } = await api.get('/excuse/teacher?status=all');
+      setExcuseRequests(data.requests || []);
+      setPendingExcuseCount(data.pendingCount || 0);
+    } catch {
+      // silent
+    }
+  }, []);
+
+  useEffect(() => { fetchExcuseRequests(); }, [fetchExcuseRequests]);
+  // Refresh excuse requests every 60 seconds
+  useEffect(() => {
+    const id = setInterval(fetchExcuseRequests, 60_000);
+    return () => clearInterval(id);
+  }, [fetchExcuseRequests]);
+
+  // Fetch at-risk students
+  const fetchAtRisk = useCallback(async () => {
+    try {
+      const { data } = await api.get('/alerts/teacher');
+      const ids = new Set<number>((data.alerts || []).map((a: any) => a.student_id));
+      setAtRiskIds(ids);
+    } catch { /* silent */ }
+  }, []);
+
+  useEffect(() => { fetchAtRisk(); }, [fetchAtRisk]);
+
   const handleLogout = () => {
     logout();
     navigate('/login', { replace: true });
@@ -509,6 +556,34 @@ export default function TeacherDashboardPageNew() {
   const handleAddNote = (record: AttendanceRecord) => {
     setSelectedRecord(record);
     setAddNoteOpen(true);
+  };
+
+  const handleResolveExcuse = async () => {
+    const { request, action, note } = resolveDialog;
+    if (!request) return;
+    setResolveDialog(d => ({ ...d, loading: true, error: '' }));
+    try {
+      await api.patch(`/excuse/teacher/${request.id}`, { action, teacher_note: note });
+      showSnack(`Excuse request ${action === 'approve' ? 'approved' : 'rejected'} successfully`, 'success');
+      setResolveDialog({ open: false, request: null, action: 'approve', note: '', loading: false, error: '' });
+      fetchExcuseRequests();
+    } catch (err: any) {
+      setResolveDialog(d => ({ ...d, loading: false, error: err.response?.data?.error || 'Failed to resolve request' }));
+    }
+  };
+
+  const handleSendMessage = async () => {
+    const { studentId, subject, body } = msgDialog;
+    if (!studentId || !subject.trim() || !body.trim()) return;
+    setMsgDialog(d => ({ ...d, loading: true, error: '' }));
+    try {
+      await api.post('/messages/teacher', { student_id: studentId, subject: subject.trim(), body: body.trim() });
+      setMsgDialog(d => ({ ...d, loading: false, success: true }));
+      showSnack('Message sent to parent successfully', 'success');
+      setTimeout(() => setMsgDialog({ open: false, studentName: '', studentId: null, subject: '', body: '', loading: false, error: '', success: false }), 1800);
+    } catch (err: any) {
+      setMsgDialog(d => ({ ...d, loading: false, error: err.response?.data?.error || 'Failed to send message' }));
+    }
   };
 
   const sidebarContent = (
@@ -542,16 +617,40 @@ export default function TeacherDashboardPageNew() {
       {/* Navigation */}
       <Box sx={{ px: 2, pb: 2 }}>
         <Box
-          onClick={() => { navigate('/teacher'); setMobileOpen(false); }}
+          onClick={() => { navigate('/teacher'); setMobileOpen(false); setExcuseTab('dashboard'); }}
           sx={{
             display: 'flex', alignItems: 'center', gap: 1.5,
             px: 2, py: 1.5, cursor: 'pointer', borderRadius: 1,
-            bgcolor: 'rgba(255,255,255,0.2)', borderLeft: '3px solid #fff',
+            bgcolor: excuseTab === 'dashboard' ? 'rgba(255,255,255,0.2)' : 'transparent',
+            borderLeft: excuseTab === 'dashboard' ? '3px solid #fff' : '3px solid transparent',
             '&:hover': { bgcolor: 'rgba(255,255,255,0.25)' },
           }}
         >
           <Dashboard />
           <Typography variant="body2" sx={{ fontWeight: 700 }}>Dashboard</Typography>
+        </Box>
+        <Box
+          onClick={() => { setExcuseTab('excuses'); setMobileOpen(false); }}
+          sx={{
+            display: 'flex', alignItems: 'center', gap: 1.5,
+            px: 2, py: 1.5, cursor: 'pointer', borderRadius: 1, mt: 0.5,
+            bgcolor: excuseTab === 'excuses' ? 'rgba(255,255,255,0.2)' : 'transparent',
+            borderLeft: excuseTab === 'excuses' ? '3px solid #fff' : '3px solid transparent',
+            '&:hover': { bgcolor: 'rgba(255,255,255,0.25)' },
+          }}
+        >
+          <EventAvailable />
+          <Typography variant="body2" sx={{ fontWeight: excuseTab === 'excuses' ? 700 : 400, flex: 1 }}>
+            Excuse Requests
+          </Typography>
+          {pendingExcuseCount > 0 && (
+            <Box sx={{
+              bgcolor: '#ef4444', color: '#fff', borderRadius: '10px',
+              px: 1, py: 0.25, fontSize: '0.7rem', fontWeight: 700, minWidth: 20, textAlign: 'center',
+            }}>
+              {pendingExcuseCount}
+            </Box>
+          )}
         </Box>
       </Box>
 
@@ -634,10 +733,129 @@ export default function TeacherDashboardPageNew() {
           <Button startIcon={<Refresh />} size="small" onClick={fetchAttendance} variant="outlined">
             Refresh
           </Button>
+          <NotificationBell iconColor={theme.colors.neutral[700]} />
         </Box>
 
         {/* Content */}
         <Box sx={{ flex: 1, overflow: 'auto', p: { xs: 2, sm: 3 } }}>
+
+          {/* ── EXCUSE REQUESTS TAB ── */}
+          {excuseTab === 'excuses' && (
+            <Paper sx={{ borderRadius: 2, overflow: 'hidden' }}>
+              <Box sx={{
+                p: 2.5, background: theme.colors.status.warning.main, color: '#fff',
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              }}>
+                <Typography sx={{ fontFamily: theme.typography.fontFamily.display, fontWeight: 700, fontSize: 18 }}>
+                  📋 Excuse Requests from Parents
+                </Typography>
+                <Box display="flex" gap={1} alignItems="center">
+                  {pendingExcuseCount > 0 && (
+                    <Chip label={`${pendingExcuseCount} pending`} size="small"
+                      sx={{ bgcolor: 'rgba(255,255,255,0.25)', color: '#fff', fontWeight: 700 }} />
+                  )}
+                  <Button size="small" variant="outlined" onClick={fetchExcuseRequests}
+                    sx={{ color: '#fff', borderColor: 'rgba(255,255,255,0.5)', '&:hover': { borderColor: '#fff', bgcolor: 'rgba(255,255,255,0.1)' } }}>
+                    Refresh
+                  </Button>
+                </Box>
+              </Box>
+              <TableContainer>
+                <Table size="small">
+                  <TableHead>
+                    <TableRow>
+                      {['Student', 'Date', 'Parent', 'Reason', 'Status', 'Actions'].map(h => (
+                        <TableCell key={h} sx={{ fontWeight: 700, bgcolor: '#fff8e1' }}>{h}</TableCell>
+                      ))}
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {excuseRequests.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={6} align="center" sx={{ py: 5, color: '#888' }}>
+                          No excuse requests found
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    {excuseRequests.map(req => (
+                      <TableRow key={req.id} hover sx={{
+                        bgcolor: req.status === 'pending' ? '#fffde7' : '#fff',
+                        '&:hover': { bgcolor: '#f9f9f9' },
+                      }}>
+                        <TableCell><Typography sx={{ fontWeight: 700 }}>{req.student_name}</Typography></TableCell>
+                        <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                          {req.date ? format(new Date(String(req.date).split('T')[0] + 'T00:00:00'), 'MMM d, yyyy') : '—'}
+                        </TableCell>
+                        <TableCell>
+                          <Typography sx={{ fontSize: '0.82rem' }}>{req.parent_name}</Typography>
+                          {req.parent_contact && (
+                            <Typography variant="caption" color="text.secondary">{req.parent_contact}</Typography>
+                          )}
+                        </TableCell>
+                        <TableCell sx={{ maxWidth: 220 }}>
+                          <Typography sx={{ fontSize: '0.82rem', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                            {req.reason}
+                          </Typography>
+                          {req.teacher_note && (
+                            <Typography variant="caption" sx={{ color: '#e65100', display: 'block', mt: 0.5 }}>
+                              Note: {req.teacher_note}
+                            </Typography>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <Chip
+                            label={req.status}
+                            size="small"
+                            color={req.status === 'approved' ? 'success' : req.status === 'rejected' ? 'error' : 'warning'}
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Box display="flex" gap={0.5} flexWrap="wrap">
+                            {req.status === 'pending' && (
+                              <>
+                                <Button size="small" variant="contained"
+                                  onClick={() => setResolveDialog({ open: true, request: req, action: 'approve', note: '', loading: false, error: '' })}
+                                  sx={{ bgcolor: '#2e7d32', '&:hover': { bgcolor: '#1b5e20' }, fontSize: '0.72rem', px: 1, py: 0.5, minWidth: 'unset', textTransform: 'none' }}>
+                                  ✓ Approve
+                                </Button>
+                                <Button size="small" variant="outlined"
+                                  onClick={() => setResolveDialog({ open: true, request: req, action: 'reject', note: '', loading: false, error: '' })}
+                                  sx={{ color: '#c62828', borderColor: '#c62828', '&:hover': { bgcolor: '#ffebee' }, fontSize: '0.72rem', px: 1, py: 0.5, minWidth: 'unset', textTransform: 'none' }}>
+                                  ✗ Reject
+                                </Button>
+                              </>
+                            )}
+                            <Tooltip title="Delete this request">
+                              <IconButton
+                                size="small"
+                                onClick={async () => {
+                                  if (!window.confirm('Delete this excuse request?')) return;
+                                  try {
+                                    await api.delete(`/excuse/teacher/${req.id}`);
+                                    showSnack('Excuse request deleted', 'success');
+                                    fetchExcuseRequests();
+                                  } catch (err: any) {
+                                    showSnack(err.response?.data?.error || 'Failed to delete', 'error');
+                                  }
+                                }}
+                                sx={{ color: '#c62828', '&:hover': { bgcolor: '#ffebee' } }}
+                              >
+                                <Cancel fontSize="small" />
+                              </IconButton>
+                            </Tooltip>
+                          </Box>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            </Paper>
+          )}
+
+          {/* ── DASHBOARD TAB ── */}
+          {excuseTab === 'dashboard' && (<>
+
           {/* Quick Stats */}
           <Grid container spacing={2} mb={3}>
             <Grid size={{ xs: 6, md: 3 }}>
@@ -787,7 +1005,14 @@ export default function TeacherDashboardPageNew() {
                       }}
                     >
                       <TableCell>
-                        <Typography sx={{ fontWeight: 700 }}>{r.student_name}</Typography>
+                        <Box display="flex" alignItems="center" gap={0.5}>
+                          <Typography sx={{ fontWeight: 700 }}>{r.student_name}</Typography>
+                          {atRiskIds.has(r.student_id) && (
+                            <Tooltip title="⚠️ Low attendance this month (below 80%)">
+                              <span style={{ fontSize: '1rem', cursor: 'default' }}>⚠️</span>
+                            </Tooltip>
+                          )}
+                        </Box>
                       </TableCell>
                       <TableCell>{r.lrn}</TableCell>
                       <TableCell>{format(new Date(r.timestamp), 'hh:mm a')}</TableCell>
@@ -835,6 +1060,24 @@ export default function TeacherDashboardPageNew() {
                             <Note fontSize="small" />
                           </IconButton>
                         </Tooltip>
+                        <Tooltip title="Message Parent">
+                          <IconButton
+                            size="small"
+                            onClick={() => setMsgDialog({
+                              open: true,
+                              studentName: r.student_name,
+                              studentId: r.student_id,
+                              subject: '',
+                              body: '',
+                              loading: false,
+                              error: '',
+                              success: false,
+                            })}
+                            sx={{ color: theme.colors.primary.main }}
+                          >
+                            <Email fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -842,8 +1085,166 @@ export default function TeacherDashboardPageNew() {
               </Table>
             </TableContainer>
           </Paper>
+
+          </>)}  {/* end excuseTab === 'dashboard' */}
         </Box>
       </Box>
+
+      {/* ── Resolve Excuse Dialog (Teacher Approve/Reject) ── */}
+      <Dialog
+        open={resolveDialog.open}
+        onClose={() => !resolveDialog.loading && setResolveDialog(d => ({ ...d, open: false }))}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle sx={{
+          bgcolor: resolveDialog.action === 'approve' ? '#2e7d32' : '#c62828',
+          color: '#fff',
+          fontFamily: theme.typography.fontFamily.display,
+          fontWeight: theme.typography.fontWeight.bold,
+        }}>
+          {resolveDialog.action === 'approve' ? '✅ Approve Excuse Request' : '❌ Reject Excuse Request'}
+        </DialogTitle>
+        <DialogContent sx={{ pt: 3 }}>
+          {resolveDialog.error && (
+            <Alert severity="error" sx={{ mb: 2 }}>{resolveDialog.error}</Alert>
+          )}
+          {resolveDialog.request && (
+            <Box sx={{ p: 2, mb: 2.5, bgcolor: '#f5f5f5', borderRadius: 2 }}>
+              <Typography variant="body2" sx={{ fontWeight: 700, mb: 0.5 }}>
+                {resolveDialog.request.student_name}
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Date:{' '}
+                {resolveDialog.request.date
+                  ? format(new Date(String(resolveDialog.request.date).split('T')[0] + 'T00:00:00'), 'MMMM d, yyyy')
+                  : '—'}
+              </Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                Reason: {resolveDialog.request.reason}
+              </Typography>
+            </Box>
+          )}
+          <TextField
+            label="Note to parent (optional)"
+            fullWidth
+            multiline
+            rows={3}
+            value={resolveDialog.note}
+            onChange={e => setResolveDialog(d => ({ ...d, note: e.target.value }))}
+            placeholder={
+              resolveDialog.action === 'approve'
+                ? 'E.g., Approved. Please bring a medical certificate next time.'
+                : 'E.g., Please provide a valid excuse letter from a doctor.'
+            }
+          />
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2.5, gap: 1 }}>
+          <Button
+            onClick={() => setResolveDialog(d => ({ ...d, open: false }))}
+            disabled={resolveDialog.loading}
+            sx={{ textTransform: 'none', color: '#666' }}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            onClick={handleResolveExcuse}
+            disabled={resolveDialog.loading}
+            sx={{
+              bgcolor: resolveDialog.action === 'approve' ? '#2e7d32' : '#c62828',
+              '&:hover': { bgcolor: resolveDialog.action === 'approve' ? '#1b5e20' : '#b71c1c' },
+              textTransform: 'none',
+              fontWeight: 700,
+              minWidth: 130,
+            }}
+          >
+            {resolveDialog.loading
+              ? <CircularProgress size={18} sx={{ color: '#fff' }} />
+              : resolveDialog.action === 'approve' ? '✅ Confirm Approve' : '❌ Confirm Reject'
+            }
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* ── Message Parent Dialog ── */}
+      <Dialog
+        open={msgDialog.open}
+        onClose={() => !msgDialog.loading && setMsgDialog(d => ({ ...d, open: false }))}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle sx={{
+          background: theme.colors.primary.gradient,
+          color: '#fff',
+          fontFamily: theme.typography.fontFamily.display,
+          fontWeight: theme.typography.fontWeight.bold,
+        }}>
+          📩 Message Parent — {msgDialog.studentName}
+        </DialogTitle>
+        <DialogContent sx={{ pt: 3 }}>
+          {msgDialog.error && <Alert severity="error" sx={{ mb: 2 }}>{msgDialog.error}</Alert>}
+          {msgDialog.success ? (
+            <Box textAlign="center" py={2}>
+              <Typography sx={{ fontSize: '3rem', mb: 1 }}>✅</Typography>
+              <Typography fontWeight={700} color="success.main">Message sent successfully!</Typography>
+              <Typography variant="body2" color="text.secondary" mt={1}>
+                The parent will receive an SMS and an in-app notification.
+              </Typography>
+            </Box>
+          ) : (
+            <>
+              <TextField
+                label="Subject *"
+                fullWidth
+                value={msgDialog.subject}
+                onChange={e => setMsgDialog(d => ({ ...d, subject: e.target.value }))}
+                placeholder="E.g., Attendance concern for this week"
+                sx={{ mb: 2 }}
+                autoFocus
+              />
+              <TextField
+                label="Message *"
+                fullWidth
+                multiline
+                rows={5}
+                value={msgDialog.body}
+                onChange={e => setMsgDialog(d => ({ ...d, body: e.target.value }))}
+                placeholder="Write your message to the parent here..."
+              />
+              <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                The parent will receive this message in their portal and via SMS.
+              </Typography>
+            </>
+          )}
+        </DialogContent>
+        {!msgDialog.success && (
+          <DialogActions sx={{ px: 3, pb: 2.5, gap: 1 }}>
+            <Button
+              onClick={() => setMsgDialog(d => ({ ...d, open: false }))}
+              disabled={msgDialog.loading}
+              sx={{ textTransform: 'none', color: '#666' }}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="contained"
+              onClick={handleSendMessage}
+              disabled={msgDialog.loading || !msgDialog.subject.trim() || !msgDialog.body.trim()}
+              sx={{
+                ...theme.components.button.primary,
+                '&:hover': theme.components.button.primary.hover,
+                minWidth: 120,
+              }}
+            >
+              {msgDialog.loading
+                ? <CircularProgress size={18} sx={{ color: '#fff' }} />
+                : '📩 Send Message'
+              }
+            </Button>
+          </DialogActions>
+        )}
+      </Dialog>
 
       {/* Dialogs */}
       <ManualAttendanceDialog
