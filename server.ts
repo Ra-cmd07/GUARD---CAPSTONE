@@ -29,6 +29,12 @@ import reportsRoutes    from './routes/reportsRoutes';
 import kiosksRoutes     from './routes/kiosksRoutes';
 import gsmRoutes        from './routes/gsmRoutes';
 import teacherRoutes    from './routes/teacherRoutes';
+import notificationRoutes from './routes/notificationRoutes';
+import excuseRoutes       from './routes/excuseRoutes';
+import messageRoutes      from './routes/messageRoutes';
+import alertRoutes        from './routes/alertRoutes';
+import announcementRoutes from './routes/announcementRoutes';
+import { checkAttendanceThresholds } from './controllers/attendanceAlertController';
 
 import { errorHandler } from './middleware/errorMiddleware';
 
@@ -88,7 +94,12 @@ app.use('/api/location',    locationRoutes);
 app.use('/api/reports',     reportsRoutes);
 app.use('/api/kiosks',      kiosksRoutes);
 app.use('/api/gsm',         gsmRoutes);
-app.use('/api/teacher',     teacherRoutes);
+app.use('/api/teacher',        teacherRoutes);
+app.use('/api/notifications',  notificationRoutes);
+app.use('/api/excuse',         excuseRoutes);
+app.use('/api/messages',       messageRoutes);
+app.use('/api/alerts',         alertRoutes);
+app.use('/api/announcements',  announcementRoutes);
 
 // ─── Health Check ─────────────────────────────────────────────────────
 app.get('/api/health', (_req, res) => {
@@ -132,9 +143,23 @@ server.listen(PORT, '0.0.0.0', () => {
   const proto = httpsEnabled ? 'https' : 'http';
   console.log(`🚀 AttendBox API running at ${proto}://0.0.0.0:${PORT}`);
   console.log(`   Local:   ${proto}://localhost:${PORT}`);
-  console.log(`   Network: ${proto}://192.168.1.29:${PORT}`);
+  console.log(`   Network: ${proto}://192.168.1.37:${PORT}`);
   console.log(`🔌 WebSocket server ready for real-time updates`);
   console.log(`📤 Background upload queue initialized`);
+
+  // ── Daily attendance threshold check ─────────────────────────────
+  // Runs once on startup, then every 24 hours
+  const RUN_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
+  const runWithDelay = () => {
+    // First run: 60 seconds after startup (let DB settle)
+    setTimeout(async () => {
+      await checkAttendanceThresholds();
+      // Then repeat every 24 hours
+      setInterval(checkAttendanceThresholds, RUN_INTERVAL_MS);
+    }, 60_000);
+  };
+  runWithDelay();
+  console.log(`⏰ Attendance threshold checker scheduled (runs daily)`);
 });
 
 export default app;

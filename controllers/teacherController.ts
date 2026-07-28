@@ -133,7 +133,7 @@ export async function markManualAttendance(req: AuthRequest, res: Response) {
     if (!studentRows.length) return res.status(404).json({ error: 'Student not found' });
     const student = studentRows[0];
 
-    if (teacher.section !== student.section)
+    if (teacher.section.toLowerCase() !== student.section.toLowerCase())
       return res.status(403).json({ error: 'Cannot mark attendance for students outside your class' });
 
     const dateStr = format(new Date(), 'yyyy-MM-dd');
@@ -180,7 +180,7 @@ export async function addAttendanceNote(req: AuthRequest, res: Response) {
       `SELECT section FROM students WHERE id = ?`, [student_id]
     );
     if (!studentRows.length) return res.status(404).json({ error: 'Student not found' });
-    if (teacher.section !== studentRows[0].section)
+    if (teacher.section.toLowerCase() !== studentRows[0].section.toLowerCase())
       return res.status(403).json({ error: 'Cannot add notes for students outside your class' });
 
     if (attendance_id) {
@@ -224,7 +224,7 @@ export async function excuseAbsence(req: AuthRequest, res: Response) {
     if (!studentRows.length) return res.status(404).json({ error: 'Student not found' });
     const student = studentRows[0];
 
-    if (teacher.section !== student.section)
+    if (teacher.section.toLowerCase() !== student.section.toLowerCase())
       return res.status(403).json({ error: 'Cannot excuse students outside your class' });
 
     const excuseNote = reason || `Excused by ${teacher.name}`;

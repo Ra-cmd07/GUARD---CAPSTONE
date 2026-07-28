@@ -1,0 +1,308 @@
+import { Response } from 'express';
+import { AuthRequest } from '../middleware/authMiddleware';
+import pool from '../lib/db';
+import { createNotification } from './notificationController';
+import { format } from 'date-fns';
+
+// ─── Helper: get parent row from DB ──────────────────────────────────
+async function getParentRow(userId: number): Promise<any | null> {
+  const [rows]: any = await pool.query(
+    `SELECT p.id, p.user_id, p.name, p.contact
+     FROM parents p WHERE p.user_id = ? LIMIT 1`,
+    [userId]
+  );
+  return rows.length > 0 ? rows[0] : null;
+}
+
+// ─── Helper: get teacher for a student's section ──────────────────────
+async function getTeacherForStudent(studentId: number): Promise<any | null> {
+  const [rows]: any = await pool.query(
+    `SELECT t.id, t.user_id, t.name, t.section
+     FROM teachers t
+     JOIN students s ON LOWER(s.section) = LOWER(t.section)
+     WHERE s.id = ?
+     LIMIT 1`,
+    [studentId]
+  );
+  return rows.length > 0 ? rows[0] : null;
+}
+
+// ─── POST /parent/excuse ──────────────────────────────────────────────
+// Parent submits an excuse for their child's absence
+export async function submitExcuse(req: AuthRequest, res: Response) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { student_id, date, reason, attendance_id } = req.body;
+
+    if (!student_id || !date || !reason?.trim())
+      return res.status(400).json({ error: 'student_id, date, and reason are required' });
+
+    const parent = await getParentRow(userId);
+    if (!parent) return res.status(404).json({ error: 'Parent profile not found' });
+
+    // Verify this parent is linked to this student
+    const [link]: any = await pool.query(
+      `SELECT id FROM parent_student WHERE parent_id = ? AND student_id = ?`,
+      [parent.id, student_id]
+    );
+    if (!link.length) return res.status(403).json({ error: 'Not authorized for this student' });
+
+    // Find the teacher for this student
+    const teacher = await getTeacherForStudent(student_id);
+
+    // Check no duplicate pending request for same student + date
+    const [existing]: any = await pool.query(
+      `SELECT id FROM excuse_requests
+       WHERE student_id = ? AND date = ? AND status = 'pending'`,
+      [student_id, date]
+    );
+    if (existing.length)
+      return res.status(409).json({ error: 'A pending excuse request already exists for this date' });
+
+    // Get student name
+    const [studentRows]: any = await pool.query(
+      `SELECT name FROM students WHERE id = ?`, [student_id]
+    );
+    const studentName = studentRows[0]?.name || 'Student';
+
+    // Insert excuse request
+    const [result]: any = await pool.query(
+      `INSERT INTO excuse_requests
+         (student_id, parent_id, teacher_id, attendance_id, date, reason, status, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'pending', NOW())`,
+      [student_id, parent.id, teacher?.id || null, attendance_id || null, date, reason.trim()]
+    );
+
+    // Notify the teacher via in-app notification
+    if (teacher?.user_id) {
+      await createNotification(
+        teacher.user_id,
+        '📋 New Excuse Request',
+        `${parent.name} submitted an excuse for ${studentName} on ${format(new Date(date + 'T00:00:00'), 'MMM d, yyyy')}`,
+        'info',
+        '/teacher'
+      );
+    }
+
+    res.status(201).json({
+      success: true,
+      message: 'Excuse request submitted successfully',
+      excuseId: result.insertId,
+    });
+  } catch (error) {
+    console.error('Error submitting excuse:', error);
+    res.status(500).json({ error: 'Failed to submit excuse request' });
+  }
+}
+
+// ─── GET /parent/excuse-requests ─────────────────────────────────────
+// Parent views their submitted excuse requests
+export async function getParentExcuseRequests(req: AuthRequest, res: Response) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const parent = await getParentRow(userId);
+    if (!parent) return res.status(404).json({ error: 'Parent profile not found' });
+
+    const [rows]: any = await pool.query(
+      `SELECT er.id, er.student_id, er.date, er.reason,
+              er.status, er.teacher_note, er.created_at, er.resolved_at,
+              s.name AS student_name,
+              t.name AS teacher_name
+       FROM excuse_requests er
+       JOIN students  s ON s.id = er.student_id
+       LEFT JOIN teachers t ON t.id = er.teacher_id
+       WHERE er.parent_id = ?
+       ORDER BY er.created_at DESC
+       LIMIT 50`,
+      [parent.id]
+    );
+
+    res.json(rows);
+  } catch (error) {
+    console.error('Error fetching excuse requests:', error);
+    res.status(500).json({ error: 'Failed to fetch excuse requests' });
+  }
+}
+
+// ─── GET /teacher/excuse-requests ────────────────────────────────────
+// Teacher views pending excuse requests for their class
+export async function getTeacherExcuseRequests(req: AuthRequest, res: Response) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    // Get teacher row
+    const [tRows]: any = await pool.query(
+      `SELECT id, name, section FROM teachers WHERE user_id = ? LIMIT 1`,
+      [userId]
+    );
+    if (!tRows.length) return res.status(404).json({ error: 'Teacher profile not found' });
+    const teacher = tRows[0];
+
+    const statusFilter = (req.query.status as string) || 'pending';
+
+    const [rows]: any = await pool.query(
+      `SELECT er.id, er.student_id, er.date, er.reason,
+              er.status, er.teacher_note, er.created_at, er.resolved_at,
+              s.name AS student_name, s.lrn, s.section,
+              p.name AS parent_name, p.contact AS parent_contact
+       FROM excuse_requests er
+       JOIN students  s ON s.id = er.student_id
+       LEFT JOIN parents p ON p.id = er.parent_id
+       WHERE LOWER(s.section) = LOWER(?)
+         AND (? = 'all' OR er.status = ?)
+       ORDER BY er.status ASC, er.created_at DESC`,
+      [teacher.section, statusFilter, statusFilter]
+    );
+
+    const pendingCount = rows.filter((r: any) => r.status === 'pending').length;
+
+    res.json({ requests: rows, pendingCount });
+  } catch (error) {
+    console.error('Error fetching teacher excuse requests:', error);
+    res.status(500).json({ error: 'Failed to fetch excuse requests' });
+  }
+}
+
+// ─── PATCH /teacher/excuse-requests/:id ──────────────────────────────
+// Teacher approves or rejects an excuse request
+export async function resolveExcuseRequest(req: AuthRequest, res: Response) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { id } = req.params;
+    const { action, teacher_note } = req.body; // action: 'approve' | 'reject'
+
+    if (!['approve', 'reject'].includes(action))
+      return res.status(400).json({ error: "action must be 'approve' or 'reject'" });
+
+    // Get the excuse request
+    const [excuseRows]: any = await pool.query(
+      `SELECT er.*, s.name AS student_name, s.section,
+              p.user_id AS parent_user_id, p.name AS parent_name, p.contact AS parent_contact
+       FROM excuse_requests er
+       JOIN students s ON s.id = er.student_id
+       JOIN parents  p ON p.id = er.parent_id
+       WHERE er.id = ?`,
+      [id]
+    );
+    if (!excuseRows.length) return res.status(404).json({ error: 'Excuse request not found' });
+    const excuse = excuseRows[0];
+
+    if (excuse.status !== 'pending')
+      return res.status(409).json({ error: 'This request has already been resolved' });
+
+    // Verify teacher owns this section
+    const [tRows]: any = await pool.query(
+      `SELECT id, name, section FROM teachers WHERE user_id = ? LIMIT 1`,
+      [userId]
+    );
+    if (!tRows.length) return res.status(404).json({ error: 'Teacher not found' });
+    if (tRows[0].section.toLowerCase() !== excuse.section.toLowerCase())
+      return res.status(403).json({ error: 'This student is not in your class' });
+
+    const newStatus = action === 'approve' ? 'approved' : 'rejected';
+
+    // Update excuse request status
+    await pool.query(
+      `UPDATE excuse_requests
+       SET status = ?, teacher_note = ?, resolved_at = NOW()
+       WHERE id = ?`,
+      [newStatus, teacher_note || null, id]
+    );
+
+    // If APPROVED → update attendance record status to Excused
+    if (action === 'approve') {
+      if (excuse.attendance_id) {
+        await pool.query(
+          `UPDATE attendance SET status = 'Absent', is_overridden = 1,
+                                 notes = CONCAT(IFNULL(notes,''), ' | Excused by teacher')
+           WHERE id = ?`,
+          [excuse.attendance_id]
+        );
+      } else {
+        // Find the attendance record by student + date
+        const [attRows]: any = await pool.query(
+          `SELECT id FROM attendance
+           WHERE student_id = ? AND DATE(CONVERT_TZ(date,'+00:00','+08:00')) = ?
+           LIMIT 1`,
+          [excuse.student_id, excuse.date]
+        );
+        if (attRows.length) {
+          await pool.query(
+            `UPDATE attendance SET status = 'Absent', is_overridden = 1,
+                                   notes = CONCAT(IFNULL(notes,''), ' | Excused by teacher')
+             WHERE id = ?`,
+            [attRows[0].id]
+          );
+        }
+      }
+    }
+
+    // Notify parent via in-app notification
+    const actionText = action === 'approve' ? '✅ Approved' : '❌ Rejected';
+    const dateStr    = format(new Date(excuse.date + 'T00:00:00'), 'MMM d, yyyy');
+
+    await createNotification(
+      excuse.parent_user_id,
+      `${actionText}: Excuse for ${excuse.student_name}`,
+      action === 'approve'
+        ? `Your excuse request for ${excuse.student_name} on ${dateStr} was approved.${teacher_note ? ' Note: ' + teacher_note : ''}`
+        : `Your excuse request for ${excuse.student_name} on ${dateStr} was rejected.${teacher_note ? ' Reason: ' + teacher_note : ''}`,
+      action === 'approve' ? 'info' : 'warning',
+      '/parent'
+    );
+
+    res.json({
+      success: true,
+      message: `Excuse request ${newStatus}`,
+      status: newStatus,
+    });
+  } catch (error) {
+    console.error('Error resolving excuse request:', error);
+    res.status(500).json({ error: 'Failed to resolve excuse request' });
+  }
+}
+
+export default {
+  submitExcuse,
+  getParentExcuseRequests,
+  getTeacherExcuseRequests,
+  resolveExcuseRequest,
+  deleteExcuseRequest,
+};
+export async function deleteExcuseRequest(req: AuthRequest, res: Response) {
+  try {
+    const userId = req.user?.id;
+    const { id } = req.params;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    // Verify teacher owns this section
+    const [tRows]: any = await pool.query(
+      'SELECT section FROM teachers WHERE user_id = ? LIMIT 1', [userId]
+    );
+    if (!tRows.length) return res.status(404).json({ error: 'Teacher not found' });
+
+    // Verify the request belongs to this teacher's section
+    const [excuseRows]: any = await pool.query(
+      `SELECT er.id FROM excuse_requests er
+       JOIN students s ON s.id = er.student_id
+       WHERE er.id = ? AND LOWER(s.section) = LOWER(?)`,
+      [id, tRows[0].section]
+    );
+    if (!excuseRows.length)
+      return res.status(404).json({ error: 'Excuse request not found or not in your class' });
+
+    await pool.query('DELETE FROM excuse_requests WHERE id = ?', [id]);
+
+    res.json({ success: true, message: 'Excuse request deleted' });
+  } catch (error) {
+    console.error('Error deleting excuse request:', error);
+    res.status(500).json({ error: 'Failed to delete excuse request' });
+  }
+}
