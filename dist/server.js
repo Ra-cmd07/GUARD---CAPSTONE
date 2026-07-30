@@ -11,6 +11,9 @@ const morgan_1 = __importDefault(require("morgan"));
 const path_1 = __importDefault(require("path"));
 const dotenv_1 = __importDefault(require("dotenv"));
 const http_1 = require("http");
+const https_1 = require("https");
+const net_1 = __importDefault(require("net"));
+const fs_1 = __importDefault(require("fs"));
 const socketHandler_1 = require("./src/websocket/socketHandler");
 dotenv_1.default.config();
 // ─── Route imports ────────────────────────────────────────────────────
@@ -30,6 +33,13 @@ const reportsRoutes_1 = __importDefault(require("./routes/reportsRoutes"));
 const kiosksRoutes_1 = __importDefault(require("./routes/kiosksRoutes"));
 const gsmRoutes_1 = __importDefault(require("./routes/gsmRoutes"));
 const teacherRoutes_1 = __importDefault(require("./routes/teacherRoutes"));
+const notificationRoutes_1 = __importDefault(require("./routes/notificationRoutes"));
+const excuseRoutes_1 = __importDefault(require("./routes/excuseRoutes"));
+const messageRoutes_1 = __importDefault(require("./routes/messageRoutes"));
+const alertRoutes_1 = __importDefault(require("./routes/alertRoutes"));
+const announcementRoutes_1 = __importDefault(require("./routes/announcementRoutes"));
+const assignmentRoutes_1 = __importDefault(require("./routes/assignmentRoutes"));
+const attendanceAlertController_1 = require("./controllers/attendanceAlertController");
 const errorMiddleware_1 = require("./middleware/errorMiddleware");
 const app = (0, express_1.default)();
 const PORT = parseInt(process.env.PORT || '5000');
@@ -47,6 +57,14 @@ app.use((0, cors_1.default)({
 }));
 app.use((0, morgan_1.default)('dev'));
 app.use(express_1.default.json({ limit: '10mb' }));
+// Catch malformed JSON bodies and return a friendlier error
+app.use((err, _req, res, next) => {
+    if (err && (err.type === 'entity.parse.failed' || err instanceof SyntaxError)) {
+        console.error('Malformed JSON body:', err.message || err);
+        return res.status(400).json({ error: 'Malformed JSON in request body' });
+    }
+    return next(err);
+});
 app.use(express_1.default.urlencoded({ extended: true }));
 // ─── Static Files ─────────────────────────────────────────────────────
 // Handle both dev (ts-node from root) and prod (node from dist/) modes
@@ -70,6 +88,7 @@ app.use('/uploads', (req, res, next) => {
 // ─── API Routes ────────────────────────────────────────────────────────
 app.use('/api/auth', authRoutes_1.default);
 app.use('/api/admin', adminRoutes_1.default);
+app.use('/api/admin/assignments', assignmentRoutes_1.default);
 app.use('/api/attendance', attendanceRoutes_1.default);
 app.use('/api/students', studentRoutes_1.default);
 app.use('/api/guardians', guardianRoutes_1.default);
@@ -84,6 +103,11 @@ app.use('/api/reports', reportsRoutes_1.default);
 app.use('/api/kiosks', kiosksRoutes_1.default);
 app.use('/api/gsm', gsmRoutes_1.default);
 app.use('/api/teacher', teacherRoutes_1.default);
+app.use('/api/notifications', notificationRoutes_1.default);
+app.use('/api/excuse', excuseRoutes_1.default);
+app.use('/api/messages', messageRoutes_1.default);
+app.use('/api/alerts', alertRoutes_1.default);
+app.use('/api/announcements', announcementRoutes_1.default);
 // ─── Health Check ─────────────────────────────────────────────────────
 app.get('/api/health', (_req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
@@ -95,13 +119,89 @@ app.use((_req, res) => {
 // ─── Global Error Handler ─────────────────────────────────────────────
 app.use(errorMiddleware_1.errorHandler);
 // ─── Start Server ─────────────────────────────────────────────────────
-const httpServer = (0, http_1.createServer)(app);
+// Check if HTTPS certificates exist
+const certPath = path_1.default.resolve(__dirname, 'certs/localhost.pem');
+const keyPath = path_1.default.resolve(__dirname, 'certs/localhost-key.pem');
+const httpsEnabled = fs_1.default.existsSync(certPath) && fs_1.default.existsSync(keyPath);
+let server;
+if (httpsEnabled) {
+    // HTTPS mode - enables camera on phone
+    const httpsOptions = {
+        key: fs_1.default.readFileSync(keyPath),
+        cert: fs_1.default.readFileSync(certPath),
+    };
+    server = (0, https_1.createServer)(httpsOptions, app);
+    console.log('🔒 HTTPS mode enabled');
+}
+else {
+    // HTTP fallback
+    server = (0, http_1.createServer)(app);
+    console.log('⚠️  HTTP mode (no certificates found)');
+}
 // Initialize WebSocket
-const io = (0, socketHandler_1.initializeWebSocket)(httpServer);
+const io = (0, socketHandler_1.initializeWebSocket)(server);
 exports.io = io;
-httpServer.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 AttendBox API running at http://0.0.0.0:${PORT}`);
-    console.log(`   Local:   http://localhost:${PORT}`);
-    console.log(`🔌 WebSocket server ready for real-time updates`);
+// Handle server errors (e.g. port in use) and exit so nodemon restarts cleanly
+server.on('error', (err) => {
+    if (err && err.code === 'EADDRINUSE') {
+        console.error(`Port ${PORT} is already in use. Another process may be running.`);
+        process.exit(1);
+    }
+    console.error('Server error:', err);
+    process.exit(1);
 });
+// Probe for an available port starting from desired PORT and try up to +5
+async function findAvailablePort(startPort, attempts = 6) {
+    function isAvailable(port) {
+        return new Promise((resolve) => {
+            const socket = new net_1.default.Socket();
+            socket.setTimeout(500);
+            socket.once('connect', () => {
+                socket.destroy();
+                resolve(false); // in use
+            });
+            socket.once('timeout', () => {
+                socket.destroy();
+                resolve(true);
+            });
+            socket.once('error', (err) => {
+                // ECONNREFUSED means nothing is listening -> available
+                if (err && (err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND'))
+                    resolve(true);
+                else
+                    resolve(false);
+            });
+            socket.connect(port, '127.0.0.1');
+        });
+    }
+    for (let i = 0; i < attempts; i++) {
+        const p = startPort + i;
+        // eslint-disable-next-line no-await-in-loop
+        const ok = await isAvailable(p);
+        if (ok)
+            return p;
+    }
+    return startPort; // fallback
+}
+(async () => {
+    const chosenPort = await findAvailablePort(PORT, 6);
+    server.listen(chosenPort, '0.0.0.0', () => {
+        const proto = httpsEnabled ? 'https' : 'http';
+        console.log(`🚀 AttendBox API running at ${proto}://0.0.0.0:${chosenPort}`);
+        console.log(`   Local:   ${proto}://localhost:${chosenPort}`);
+        console.log(`   Network: ${proto}://192.168.1.37:${chosenPort}`);
+        console.log(`🔌 WebSocket server ready for real-time updates`);
+        console.log(`📤 Background upload queue initialized`);
+        // ── Daily attendance threshold check ─────────────────────────────
+        const RUN_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
+        const runWithDelay = () => {
+            setTimeout(async () => {
+                await (0, attendanceAlertController_1.checkAttendanceThresholds)();
+                setInterval(attendanceAlertController_1.checkAttendanceThresholds, RUN_INTERVAL_MS);
+            }, 60000);
+        };
+        runWithDelay();
+        console.log(`⏰ Attendance threshold checker scheduled (runs daily)`);
+    });
+})();
 exports.default = app;

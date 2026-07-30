@@ -179,13 +179,18 @@ export async function approveRFID(req: Request, res: Response): Promise<void> {
     const localHour = hour24;
     const session = hour24 < 12 ? 'AM' : 'PM';
 
-    // AUTO-TOGGLE: Check last attendance record for THIS SESSION (AM/PM) to determine next status
+    // AUTO-TOGGLE: Check last record across both tables for THIS SESSION (AM/PM)
     const [lastRecord] = await pool.execute(
-      `SELECT status FROM attendance
-       WHERE student_id = ? AND date = ? AND session = ?
-       ORDER BY timestamp DESC
+      `SELECT status FROM (
+         SELECT status, created_at FROM attendance
+         WHERE student_id = ? AND date = ? AND session = ?
+         UNION ALL
+         SELECT status, created_at FROM partial_attendance
+         WHERE student_id = ? AND date = ? AND session = ?
+       ) combined
+       ORDER BY created_at DESC
        LIMIT 1`,
-      [student.id, today, session]
+      [student.id, today, session, student.id, today, session]
     ) as any[];
 
     let status: string;
@@ -212,20 +217,20 @@ export async function approveRFID(req: Request, res: Response): Promise<void> {
 
     // REMOVED: Duplicate check - now allows unlimited attendance records per day
 
-    // Insert attendance IMMEDIATELY (don't wait for photo)
+    // Insert into partial_attendance (staging — teacher must verify)
     const [attResult] = await pool.execute(
-      `INSERT INTO attendance
+      `INSERT INTO partial_attendance
        (student_id, student_name, lrn, gender, grade, section,
         kiosk_id, scan_method, status, session, date, time_in, time_out,
-        photo_path)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        photo_path, scanned_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
       [
         student.id, student.name, student.lrn, student.gender,
         student.grade, student.section,
         detection.kiosk_id || null, 'RFID', status, session, today,
         status === 'Time-In' || status === 'Late' ? timeStr : null,
         status === 'Time-Out' ? timeStr : null,
-        null, // Photo path will be updated later
+        null,
       ]
     ) as any[];
 
@@ -240,16 +245,16 @@ export async function approveRFID(req: Request, res: Response): Promise<void> {
           const photoPath = await savePhotoLocally(base64Data, student.name, 'rfid');
           console.log('📸 RFID photo saved locally:', photoPath);
 
-          // Update attendance record with photo path (both local_path and photo_path for compatibility)
+          // Update partial_attendance record with photo path
           await pool.execute(
-            'UPDATE attendance SET local_path = ?, photo_path = ? WHERE id = ?',
+            'UPDATE partial_attendance SET local_path = ?, photo_path = ? WHERE id = ?',
             [photoPath, photoPath, attendanceId]
           );
 
-          // Log photo
+          // NULL attendance_id — record is in partial_attendance, not attendance yet
           await pool.execute(
             'INSERT INTO scan_photos (attendance_id, student_name, status, photo_path, local_path) VALUES (?, ?, ?, ?, ?)',
-            [attendanceId, student.name, status, photoPath, photoPath]
+            [null, student.name, status, photoPath, photoPath]
           );
 
           // Queue Cloudinary upload (background, non-blocking)
@@ -281,12 +286,13 @@ export async function approveRFID(req: Request, res: Response): Promise<void> {
     const message = `${statusEmoji} ATTENDBOX: ${student.name} has ${status === 'Time-In' ? 'arrived at school' : status === 'Time-Out' ? 'left school' : 'arrived LATE'} at ${timeDisplay}. Date: ${today}.`;
 
     for (const g of guardians as any[]) {
-      if (g.contact) {  // Changed from g.contact_number to g.contact
+      if (g.contact) {
         const sent = await sendSms(g.contact, message);
+        // NULL attendance_id — avoids FK violation (record is in partial_attendance)
         await pool.execute(
           `INSERT INTO sms_logs (attendance_id, student_name, parent_name, phone_number, message, status, sent_at)
            VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          [attendanceId, student.name, g.name, g.contact, message,
+          [null, student.name, g.name, g.contact, message,
            sent ? 'sent' : 'failed', sent ? new Date() : null]
         );
       }

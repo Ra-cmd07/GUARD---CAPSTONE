@@ -115,13 +115,19 @@ export async function kioskScan(req: Request, res: Response): Promise<void> {
     const localHour = hour24;
     const session = hour24 < 12 ? 'AM' : 'PM';
 
-    // AUTO-TOGGLE: Check last attendance record for THIS SESSION (AM/PM) to determine next status
+    // AUTO-TOGGLE: Check last record across both tables for THIS SESSION (AM/PM)
+    // Check verified attendance first, then fall back to partial (pending)
     const [lastRecord] = await pool.execute(
-      `SELECT status FROM attendance
-       WHERE student_id = ? AND date = ? AND session = ?
-       ORDER BY timestamp DESC
+      `SELECT status FROM (
+         SELECT status, created_at FROM attendance
+         WHERE student_id = ? AND date = ? AND session = ?
+         UNION ALL
+         SELECT status, created_at FROM partial_attendance
+         WHERE student_id = ? AND date = ? AND session = ?
+       ) combined
+       ORDER BY created_at DESC
        LIMIT 1`,
-      [student.id, today, session]
+      [student.id, today, session, student.id, today, session]
     ) as any[];
 
     let status: string;
@@ -148,20 +154,20 @@ export async function kioskScan(req: Request, res: Response): Promise<void> {
 
     // REMOVED: Duplicate check - now allows unlimited check-ins/outs per day
 
-    // ── Insert attendance IMMEDIATELY (don't wait for photo) ──────────
+    // ── Insert into partial_attendance (staging — teacher must verify) ──
     const [attResult] = await pool.execute(
-      `INSERT INTO attendance
+      `INSERT INTO partial_attendance
          (student_id, student_name, lrn, gender, grade, section,
           kiosk_id, scan_method, status, session, date, time_in, time_out,
-          photo_path, qr_data)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          photo_path, qr_data, scanned_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
       [
         student.id, student.name, student.lrn, student.gender,
         student.grade, student.section,
         kiosk_id || null, scan_method, status, session, today,
         status === 'Time-In' || status === 'Late' ? timeStr : null,
         status === 'Time-Out' ? timeStr : null,
-        null, // Photo path will be updated later
+        null,
         qr_data || null,
       ]
     ) as any[];
@@ -177,16 +183,16 @@ export async function kioskScan(req: Request, res: Response): Promise<void> {
           const photoPath = await savePhotoLocally(base64Data, student.name, 'scan');
           console.log('📸 Photo saved locally:', photoPath);
 
-          // Update attendance record with photo path (both local_path and photo_path for compatibility)
+          // Update partial_attendance record with photo path
           await pool.execute(
-            'UPDATE attendance SET local_path = ?, photo_path = ? WHERE id = ?',
+            'UPDATE partial_attendance SET local_path = ?, photo_path = ? WHERE id = ?',
             [photoPath, photoPath, attendanceId]
           );
 
-          // Log to scan_photos table
+          // Log to scan_photos — NULL attendance_id since not yet in attendance table
           await pool.execute(
             'INSERT INTO scan_photos (attendance_id, student_name, status, photo_path, local_path) VALUES (?, ?, ?, ?, ?)',
-            [attendanceId, student.name, status, photoPath, photoPath]
+            [null, student.name, status, photoPath, photoPath]
           );
 
           // Queue Cloudinary upload (background, non-blocking)
@@ -214,14 +220,14 @@ export async function kioskScan(req: Request, res: Response): Promise<void> {
     const smsResults: any[] = [];
     for (const g of guardians as any[]) {
       if (g.contact) {
-        // Queue SMS for GSM module (ESP32 will poll and send)
-        const queued = await queueSmsForGSM(g.contact, message, student.id, attendanceId);
-        
-        // Log to sms_logs table for tracking
+        // Queue SMS for GSM module — use NULL for attendance_id (record is in partial_attendance, not attendance yet)
+        const queued = await queueSmsForGSM(g.contact, message, student.id, null as any);
+
+        // Log to sms_logs — NULL attendance_id avoids FK violation (will link on verification)
         await pool.execute(
           `INSERT INTO sms_logs (attendance_id, student_name, parent_name, phone_number, message, status, sent_at)
            VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          [attendanceId, student.name, g.name, g.contact, message,
+          [null, student.name, g.name, g.contact, message,
            queued ? 'queued' : 'failed', queued ? new Date() : null]
         );
         smsResults.push({ name: g.name, phone: g.contact, queued });
@@ -317,7 +323,7 @@ export async function getRecentScans(req: Request, res: Response): Promise<void>
         a.time_out,
         a.photo_path,
         a.created_at
-      FROM attendance a
+      FROM partial_attendance a
       WHERE a.created_at >= DATE_SUB(NOW(), INTERVAL ? SECOND)
     `;
     

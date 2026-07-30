@@ -180,7 +180,8 @@ export async function getStudentAttendance(req: Request, res: Response): Promise
     const from     = req.query.from as string;
     const to       = req.query.to   as string;
 
-    let q = 'SELECT *, DATE_FORMAT(date, "%Y-%m-%d") as date_str FROM attendance WHERE student_id = ?';
+    // Only show verified attendance records to parents (attendance table is the source of truth)
+    let q = `SELECT *, DATE_FORMAT(date, '%Y-%m-%d') AS date, DATE_FORMAT(date, "%Y-%m-%d") as date_str FROM attendance WHERE student_id = ?`;
     const p: any[] = [id];
 
     if (from) { q += ' AND date >= ?'; p.push(from); }

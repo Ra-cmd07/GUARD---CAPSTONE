@@ -19,7 +19,7 @@ export async function getAttendanceTrend(req: Request, res: Response): Promise<v
       ) as any[];
       const total = (totalStudents as any[])[0]?.total || 0;
       
-      // Count students who attended (Time-In or Late)
+      // Count students who attended (Time-In or Late) — only verified records
       const [attended] = await pool.execute(
         `SELECT COUNT(DISTINCT student_id) as count 
          FROM attendance 

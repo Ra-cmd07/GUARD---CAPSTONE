@@ -6,6 +6,9 @@ import {
   markManualAttendance,
   addAttendanceNote,
   excuseAbsence,
+  getTeacherSubjectAssignments,
+  getSubjectAttendance,
+  verifyPartialAttendance,
 } from '../controllers/teacherController';
 
 const router = express.Router();
@@ -27,5 +30,14 @@ router.post('/attendance/note', addAttendanceNote);
 
 // Excuse absence
 router.post('/attendance/excuse', excuseAbsence);
+
+// Get all subject assignments for the logged-in teacher
+router.get('/subject-assignments', getTeacherSubjectAssignments);
+
+// Get attendance for a specific assignment (subject+section)
+router.get('/subject-attendance', getSubjectAttendance);
+
+// Verify / accept a partial attendance entry → moves to Final
+router.post('/attendance/verify', verifyPartialAttendance);
 
 export default router;

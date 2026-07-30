@@ -6,6 +6,7 @@ import path from 'path';
 import dotenv from 'dotenv';
 import { createServer as createHttpServer } from 'http';
 import { createServer as createHttpsServer } from 'https';
+import net from 'net';
 import fs from 'fs';
 import { initializeWebSocket } from './src/websocket/socketHandler';
 import { uploadQueue } from './utils/uploadQueue';
@@ -34,6 +35,7 @@ import excuseRoutes       from './routes/excuseRoutes';
 import messageRoutes      from './routes/messageRoutes';
 import alertRoutes        from './routes/alertRoutes';
 import announcementRoutes from './routes/announcementRoutes';
+import assignmentRoutes from './routes/assignmentRoutes';
 import { checkAttendanceThresholds } from './controllers/attendanceAlertController';
 
 import { errorHandler } from './middleware/errorMiddleware';
@@ -55,6 +57,14 @@ app.use(cors({
 }));
 app.use(morgan('dev'));
 app.use(express.json({ limit: '10mb' }));
+// Catch malformed JSON bodies and return a friendlier error
+app.use((err: any, _req: any, res: any, next: any) => {
+  if (err && (err.type === 'entity.parse.failed' || err instanceof SyntaxError)) {
+    console.error('Malformed JSON body:', err.message || err);
+    return res.status(400).json({ error: 'Malformed JSON in request body' });
+  }
+  return next(err);
+});
 app.use(express.urlencoded({ extended: true }));
 
 // ─── Static Files ─────────────────────────────────────────────────────
@@ -81,6 +91,7 @@ app.use('/uploads', (req, res, next) => {
 // ─── API Routes ────────────────────────────────────────────────────────
 app.use('/api/auth',        authRoutes);
 app.use('/api/admin',       adminRoutes);
+app.use('/api/admin/assignments', assignmentRoutes);
 app.use('/api/attendance',  attendanceRoutes);
 app.use('/api/students',    studentRoutes);
 app.use('/api/guardians',   guardianRoutes);
@@ -139,28 +150,70 @@ if (httpsEnabled) {
 // Initialize WebSocket
 const io = initializeWebSocket(server);
 
-server.listen(PORT, '0.0.0.0', () => {
-  const proto = httpsEnabled ? 'https' : 'http';
-  console.log(`🚀 AttendBox API running at ${proto}://0.0.0.0:${PORT}`);
-  console.log(`   Local:   ${proto}://localhost:${PORT}`);
-  console.log(`   Network: ${proto}://192.168.1.37:${PORT}`);
-  console.log(`🔌 WebSocket server ready for real-time updates`);
-  console.log(`📤 Background upload queue initialized`);
-
-  // ── Daily attendance threshold check ─────────────────────────────
-  // Runs once on startup, then every 24 hours
-  const RUN_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
-  const runWithDelay = () => {
-    // First run: 60 seconds after startup (let DB settle)
-    setTimeout(async () => {
-      await checkAttendanceThresholds();
-      // Then repeat every 24 hours
-      setInterval(checkAttendanceThresholds, RUN_INTERVAL_MS);
-    }, 60_000);
-  };
-  runWithDelay();
-  console.log(`⏰ Attendance threshold checker scheduled (runs daily)`);
+// Handle server errors (e.g. port in use) and exit so nodemon restarts cleanly
+server.on('error', (err: any) => {
+  if (err && err.code === 'EADDRINUSE') {
+    console.error(`Port ${PORT} is already in use. Another process may be running.`);
+    process.exit(1);
+  }
+  console.error('Server error:', err);
+  process.exit(1);
 });
+
+// Probe for an available port starting from desired PORT and try up to +5
+async function findAvailablePort(startPort: number, attempts = 6): Promise<number> {
+  function isAvailable(port: number): Promise<boolean> {
+    return new Promise((resolve) => {
+      const socket = new net.Socket();
+      socket.setTimeout(500);
+      socket.once('connect', () => {
+        socket.destroy();
+        resolve(false); // in use
+      });
+      socket.once('timeout', () => {
+        socket.destroy();
+        resolve(true);
+      });
+      socket.once('error', (err: any) => {
+        // ECONNREFUSED means nothing is listening -> available
+        if (err && (err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND')) resolve(true);
+        else resolve(false);
+      });
+      socket.connect(port, '127.0.0.1');
+    });
+  }
+
+  for (let i = 0; i < attempts; i++) {
+    const p = startPort + i;
+    // eslint-disable-next-line no-await-in-loop
+    const ok = await isAvailable(p);
+    if (ok) return p;
+  }
+  return startPort; // fallback
+}
+
+(async () => {
+  const chosenPort = await findAvailablePort(PORT, 6);
+  server.listen(chosenPort, '0.0.0.0', () => {
+    const proto = httpsEnabled ? 'https' : 'http';
+    console.log(`🚀 AttendBox API running at ${proto}://0.0.0.0:${chosenPort}`);
+    console.log(`   Local:   ${proto}://localhost:${chosenPort}`);
+    console.log(`   Network: ${proto}://192.168.1.37:${chosenPort}`);
+    console.log(`🔌 WebSocket server ready for real-time updates`);
+    console.log(`📤 Background upload queue initialized`);
+
+    // ── Daily attendance threshold check ─────────────────────────────
+    const RUN_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
+    const runWithDelay = () => {
+      setTimeout(async () => {
+        await checkAttendanceThresholds();
+        setInterval(checkAttendanceThresholds, RUN_INTERVAL_MS);
+      }, 60_000);
+    };
+    runWithDelay();
+    console.log(`⏰ Attendance threshold checker scheduled (runs daily)`);
+  });
+})();
 
 export default app;
 export { io };

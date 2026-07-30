@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import pool from '../lib/db';
 import { AuthRequest } from '../middleware/authMiddleware';
+import { buildTeacherRoleLabel } from './teacherController';
 
 // ─── GET /api/attendance ──────────────────────────────────────────────
 // Admin sees all; Teacher sees own class; Parent sees child; Student sees own
@@ -56,7 +57,7 @@ export async function getAttendance(req: AuthRequest, res: Response): Promise<vo
       query += ' AND a.student_id = ?';
       params.push(profileId);
     } else if (role === 'admin') {
-      // Admin can filter by section
+      // Admin sees all verified records; filter by section if provided
       if (section) { query += ' AND a.section = ?'; params.push(section); }
     }
 
@@ -197,6 +198,21 @@ export async function updateAttendance(req: AuthRequest, res: Response): Promise
 
     // Log the override if made by a teacher
     if (role === 'teacher' && profileId && (status !== existing.status || session !== existing.session)) {
+      // Append role-context audit note
+      const roleLabel = await buildTeacherRoleLabel(profileId as number, existing.section);
+      const [tRows] = await pool.execute('SELECT name FROM teachers WHERE id = ?', [profileId]) as any[];
+      const teacherName = (tRows as any[])[0]?.name || 'Teacher';
+      const auditSuffix = `Modified by ${teacherName} (${roleLabel})`;
+
+      await pool.execute(
+        `UPDATE attendance
+         SET notes = CONCAT(IFNULL(notes,''), ' | ', ?),
+             teacher_id = ?,
+             teacher_name = ?
+         WHERE id = ?`,
+        [auditSuffix, profileId, teacherName, id]
+      );
+
       await pool.execute(
         `INSERT INTO attendance_override_log
            (attendance_id, teacher_id, old_status, new_status, old_session, new_session, reason)

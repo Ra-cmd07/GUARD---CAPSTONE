@@ -151,13 +151,18 @@ export async function approveDetection(req: Request, res: Response): Promise<voi
     const localMinute = phTime.getUTCMinutes();
     const session = hour24 < 12 ? 'AM' : 'PM';
 
-    // AUTO-TOGGLE: Check last attendance record for THIS SESSION (AM/PM) to determine next status
+    // AUTO-TOGGLE: Check last record across both tables for THIS SESSION (AM/PM)
     const [lastRecord] = await pool.execute(
-      `SELECT status FROM attendance
-       WHERE student_id = ? AND date = ? AND session = ?
-       ORDER BY timestamp DESC
+      `SELECT status FROM (
+         SELECT status, created_at FROM attendance
+         WHERE student_id = ? AND date = ? AND session = ?
+         UNION ALL
+         SELECT status, created_at FROM partial_attendance
+         WHERE student_id = ? AND date = ? AND session = ?
+       ) combined
+       ORDER BY created_at DESC
        LIMIT 1`,
-      [student.id, localDate, session]
+      [student.id, localDate, session, student.id, localDate, session]
     ) as any[];
 
     let status: string;
@@ -166,39 +171,22 @@ export async function approveDetection(req: Request, res: Response): Promise<voi
     
     if ((lastRecord as any[]).length > 0) {
       const lastStatus = (lastRecord as any[])[0].status;
-      
-      // Toggle based on last status IN THIS SESSION
       if (lastStatus === 'Time-Out') {
-        // Last was Time-Out, so next is Time-In (check if late)
         status = (localHour > 8 || (localHour === 8 && localMinute > 0)) ? 'Late' : 'Time-In';
       } else {
-        // Last was Time-In or Late, so next is Time-Out
         status = 'Time-Out';
       }
     } else {
-      // No record for this session yet, first scan is Time-In (check if late)
       status = (localHour > 8 || (localHour === 8 && localMinute > 0)) ? 'Late' : 'Time-In';
     }
-    
-    console.log('🔍 DEBUG: Inserting attendance with values:', {
-      student_id: student.id,
-      student_name: student.name,
-      lrn: student.lrn,
-      gender: student.gender,
-      grade: student.grade,
-      section: student.section,
-      kiosk_id: detection.kiosk_id || null,
-      scan_method: 'BLE',
-      status: status,
-      session: session
-    });
-    
-    // Insert new attendance record (session-based)
+
+    // Insert into partial_attendance (staging — teacher must verify)
     const [insertResult] = await pool.execute(
-      `INSERT INTO attendance 
-       (student_id, student_name, lrn, gender, grade, section, kiosk_id, 
-        scan_method, status, session, date, time_in, time_out, photo_path, local_path) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'BLE', ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO partial_attendance
+       (student_id, student_name, lrn, gender, grade, section, kiosk_id,
+        scan_method, status, session, date, time_in, time_out, photo_path, local_path,
+        scanned_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'BLE', ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
       [
         student.id, student.name, student.lrn, student.gender,
         student.grade, student.section, detection.kiosk_id || null,
@@ -206,20 +194,20 @@ export async function approveDetection(req: Request, res: Response): Promise<voi
         status === 'Time-In' || status === 'Late' ? localTime : null,
         status === 'Time-Out' ? localTime : null,
         photoPath,
-        photoPath  // local_path same as photo_path initially
+        photoPath,
       ]
     ) as any[];
-    
+
     attendanceId = (insertResult as any).insertId;
     attendanceStatus = status;
-    
+
     // Queue Cloudinary upload (background, non-blocking)
     if (photoPath) {
       uploadQueue.enqueue(attendanceId, photoPath, student.name);
       console.log('📤 BLE photo queued for Cloudinary upload');
     }
-    
-    console.log(`✅ Attendance APPROVED (${session}): ${student.name} ${status === 'Late' ? 'LATE' : status}`);
+
+    console.log(`✅ Scan staged to partial_attendance (${session}): ${student.name} ${status}`);
 
     // Send SMS notification to parents/guardians
     const [guardians] = await pool.execute(
@@ -234,12 +222,13 @@ export async function approveDetection(req: Request, res: Response): Promise<voi
     const message = `${statusEmoji} ATTENDBOX: ${student.name} has ${attendanceStatus === 'Time-In' ? 'arrived at school' : attendanceStatus === 'Time-Out' ? 'left school' : 'arrived LATE'} at ${localTime}. Date: ${localDate}.`;
 
     for (const g of guardians as any[]) {
-      if (g.contact) {  // Changed from g.contact_number to g.contact
-        const queued = await queueSmsForGSM(g.contact, message, student.id, attendanceId);
+      if (g.contact) {
+        // NULL attendance_id — avoids FK violation (record is in partial_attendance, not attendance yet)
+        const queued = await queueSmsForGSM(g.contact, message, student.id, null as any);
         await pool.execute(
           `INSERT INTO sms_logs (attendance_id, student_name, parent_name, phone_number, message, status, sent_at)
            VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          [attendanceId, student.name, g.name, g.contact, message,
+          [null, student.name, g.name, g.contact, message,
            queued ? 'queued' : 'failed', queued ? new Date() : null]
         );
       }
