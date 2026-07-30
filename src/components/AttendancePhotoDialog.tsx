@@ -138,7 +138,8 @@ export default function AttendancePhotoDialog({
                 ...theme.components.badge[
                   status === 'Time-In' ? 'success' :
                   status === 'Late' ? 'warning' :
-                  status === 'Time-Out' ? 'info' : 'error'
+                  status === 'Time-Out' ? 'info' :
+                  status === 'Excused' ? 'default' : 'error'
                 ]
               }}
             />

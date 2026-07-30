@@ -12,6 +12,7 @@ import {
   ToggleOn, ToggleOff, LockReset, Menu, Close, PersonAdd,
   CheckCircle, Cancel, AccessTime, Assessment, PhotoCamera, Delete,
   QrCode2, Bluetooth, CreditCard, Download, LocationOn, Campaign,
+  Class as ClassIcon,
 } from '@mui/icons-material';
 import { QRCodeCanvas } from 'qrcode.react';
 import { format } from 'date-fns';
@@ -25,11 +26,13 @@ import theme from '../theme/professionalTheme';
 import NotificationBell from '../components/NotificationBell';
 import ReportsPage from './ReportsPage';
 import KiosksPage from './KiosksPage';
+import AssignmentsPage from './AssignmentsPage';
 
 const NAV = [
   { id: 'dashboard',     label: 'Dashboard',     icon: <Dashboard /> },
   { id: 'users',         label: 'Users',          icon: <People /> },
   { id: 'students',      label: 'Students',       icon: <School /> },
+  { id: 'assignments',   label: 'Assignments',    icon: <ClassIcon /> },
   { id: 'kiosks',        label: 'Kiosks',         icon: <Router /> },
   { id: 'sms',           label: 'SMS Logs',       icon: <Sms /> },
   { id: 'reports',       label: 'Reports',        icon: <Assessment /> },
@@ -37,7 +40,7 @@ const NAV = [
   { id: 'announcements', label: 'Announcements',  icon: <Campaign /> },
 ];
 
-type Tab = 'dashboard' | 'users' | 'students' | 'kiosks' | 'sms' | 'reports' | 'location' | 'announcements';
+type Tab = 'dashboard' | 'users' | 'students' | 'assignments' | 'kiosks' | 'sms' | 'reports' | 'location' | 'announcements';
 
 function StatCard({ label, value, icon, color }: { label: string; value: any; icon: React.ReactNode; color: string }) {
   return (
@@ -204,8 +207,8 @@ function AddParentDialog({ open, onClose, student, onCreated }: {
 function CreateUserDialog({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: () => void }) {
   const [form, setForm] = useState({
     username: '', password: '', role: 'teacher', name: '',
-    gender: '', section: '', contact: '', address: '', lrn: '', grade: '',
-    subject: '', room: '', schedule: '', relationship: '', employee_id: '',
+    gender: '', contact: '', address: '', lrn: '',
+    subject: '', room: '', schedule: '', employee_id: '',
   });
   const [parents, setParents] = useState([
     { username: '', password: '', name: '', relationship: 'Father', contact: '' },
@@ -284,14 +287,10 @@ function CreateUserDialog({ open, onClose, onCreated }: { open: boolean; onClose
           </Grid>
           {form.role === 'teacher' && <>
             <Grid size={{ xs: 12, sm: 6 }}><TextField label="Employee ID" fullWidth value={form.employee_id} onChange={e => set('employee_id', e.target.value)} /></Grid>
-            <Grid size={{ xs: 12, sm: 6 }}><TextField label="Section/Grade" fullWidth value={form.section} onChange={e => set('section', e.target.value)} /></Grid>
-            <Grid size={{ xs: 12, sm: 6 }}><TextField label="Subject" fullWidth value={form.subject} onChange={e => set('subject', e.target.value)} /></Grid>
-            <Grid size={{ xs: 12, sm: 6 }}><TextField label="Room" fullWidth value={form.room} onChange={e => set('room', e.target.value)} /></Grid>
           </>}
           {form.role === 'student' && <>
             <Grid size={{ xs: 12, sm: 6 }}><TextField label="LRN *" fullWidth value={form.lrn} onChange={e => set('lrn', e.target.value)} /></Grid>
-            <Grid size={{ xs: 12, sm: 6 }}><TextField label="Grade" fullWidth value={form.grade} onChange={e => set('grade', e.target.value)} /></Grid>
-            <Grid size={{ xs: 12, sm: 6 }}><TextField label="Section" fullWidth value={form.section} onChange={e => set('section', e.target.value)} /></Grid>
+          </>}
             
             {/* Parent Accounts Section */}
             <Grid size={{ xs: 12 }}>
@@ -373,10 +372,6 @@ function CreateUserDialog({ open, onClose, onCreated }: { open: boolean; onClose
                 </Paper>
               </Grid>
             ))}
-          </>}
-          {form.role === 'parent' && <>
-            <Grid size={{ xs: 12, sm: 6 }}><TextField label="Relationship" fullWidth value={form.relationship} onChange={e => set('relationship', e.target.value)} /></Grid>
-          </>}
           <Grid size={{ xs: 12 }}><TextField label="Address" fullWidth value={form.address} onChange={e => set('address', e.target.value)} /></Grid>
         </Grid>
       </DialogContent>
@@ -584,7 +579,7 @@ export default function AdminDashboardPage() {
     : users;
 
   const STATUS_COLOR: Record<string, any> = {
-    'Time-In': 'success', 'Time-Out': 'info', Late: 'warning', Absent: 'error',
+    'Time-In': 'success', 'Time-Out': 'info', Late: 'warning', Absent: 'error', Excused: 'default',
   };
 
   const sidebarContent = (
@@ -866,6 +861,11 @@ export default function AdminDashboardPage() {
                 </TableContainer>
               </Paper>
             </>
+          )}
+
+          {/* ── Assignments Tab ── */}
+          {tab === 'assignments' && (
+            <AssignmentsPage />
           )}
 
           {/* ── Users / Students Tab ── */}

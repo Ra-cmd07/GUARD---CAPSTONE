@@ -220,7 +220,7 @@ export default function ParentDashboardPage() {
   }, [tab, selected]);
 
   const STATUS_COLOR: Record<string, any> = {
-    'Time-In': 'success', 'Time-Out': 'info', Late: 'warning', Absent: 'error',
+    'Time-In': 'success', 'Time-Out': 'info', Late: 'warning', Absent: 'error', Excused: 'default',
   };
 
   // Campus status: based on MOST RECENT action today (supports multiple in/out per day)
@@ -1063,7 +1063,10 @@ export default function ParentDashboardPage() {
                         )}
                         {!loading && records.map((r) => {
                           try {
-                            const dateStr = r.date ? format(new Date(r.date + 'T00:00:00'), 'MMM d, yyyy') : '—';
+                            const rawDate = r.date instanceof Date
+                              ? (() => { const y = r.date.getUTCFullYear(); const m = String(r.date.getUTCMonth()+1).padStart(2,'0'); const d = String(r.date.getUTCDate()).padStart(2,'0'); return `${y}-${m}-${d}`; })()
+                              : String(r.date).replace(/T.*$/,'');
+                            const dateStr = rawDate ? format(new Date(rawDate + 'T12:00:00'), 'MMM d, yyyy') : '—';
                             const timeStr = r.time_in || (r.timestamp ? format(new Date(r.timestamp), 'hh:mm a') : '—');
                             const canExcuse = r.status === 'Absent' || r.status === 'Late';
                             const isOverridden = r.is_overridden === 1;
@@ -1086,11 +1089,7 @@ export default function ParentDashboardPage() {
                                     />
                                     {isOverridden && (
                                       <Tooltip
-                                        title={
-                                          cleanNotes
-                                            ? `📝 Manually updated${r.teacher_name ? ` by ${r.teacher_name}` : ''}: ${cleanNotes}`
-                                            : `📝 Manually updated${r.teacher_name ? ` by ${r.teacher_name}` : ''}`
-                                        }
+                                        title={cleanNotes || `📝 Manually updated${r.teacher_name ? ` by ${r.teacher_name}` : ''}`}
                                         arrow
                                       >
                                         <span style={{ cursor: 'default', fontSize: '0.85rem' }}>📝</span>
@@ -1109,15 +1108,10 @@ export default function ParentDashboardPage() {
                                     sx={{ color: '#666', borderColor: '#e0e0e0' }} 
                                   />
                                 </TableCell>
-                                <TableCell sx={{ maxWidth: 180 }}>
+                                <TableCell sx={{ maxWidth: 200 }}>
                                   {cleanNotes ? (
                                     <Typography variant="caption" sx={{ color: '#555', fontStyle: 'italic', display: 'block' }}>
                                       {cleanNotes}
-                                      {r.teacher_name && (
-                                        <span style={{ display: 'block', color: '#888', marginTop: 2 }}>
-                                          — {r.teacher_name}
-                                        </span>
-                                      )}
                                     </Typography>
                                   ) : (
                                     <Typography variant="caption" color="text.disabled">—</Typography>
@@ -1621,7 +1615,13 @@ export default function ParentDashboardPage() {
                 <Typography variant="body2" color="text.secondary">
                   Date:{' '}
                   {excuseDialog.record?.date
-                    ? format(new Date(String(excuseDialog.record.date).split('T')[0] + 'T00:00:00'), 'MMMM d, yyyy')
+                    ? (() => {
+                        const raw = excuseDialog.record!.date;
+                        const s = raw instanceof Date
+                          ? `${raw.getUTCFullYear()}-${String(raw.getUTCMonth()+1).padStart(2,'0')}-${String(raw.getUTCDate()).padStart(2,'0')}`
+                          : String(raw).replace(/T.*$/,'');
+                        return format(new Date(s + 'T12:00:00'), 'MMMM d, yyyy');
+                      })()
                     : '—'}
                 </Typography>
               </Box>

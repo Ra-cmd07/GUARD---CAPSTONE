@@ -100,6 +100,30 @@ function StatCard({ label, value, color, icon }: { label: string; value: number;
   );
 }
 
+// Safely format a date value that may arrive as a JS Date object or a string from MySQL.
+// MySQL DATE columns arrive as Date objects set to midnight UTC of the stored date.
+// We extract the UTC date parts directly to avoid local-timezone off-by-one errors.
+function formatAttendanceDate(raw: any, fmt = 'MMM d, yyyy'): string {
+  if (!raw) return '—';
+  try {
+    let dateStr: string;
+    if (raw instanceof Date) {
+      // Use UTC parts — the Date object is midnight UTC of the stored date
+      const y = raw.getUTCFullYear();
+      const m = String(raw.getUTCMonth() + 1).padStart(2, '0');
+      const d = String(raw.getUTCDate()).padStart(2, '0');
+      dateStr = `${y}-${m}-${d}`;
+    } else {
+      // Strip any time portion from string
+      dateStr = String(raw).replace(/T.*$/, '').trim();
+    }
+    // Parse as local noon to avoid DST edge cases
+    return format(new Date(`${dateStr}T12:00:00`), fmt);
+  } catch {
+    return String(raw);
+  }
+}
+
 // Manual Attendance Dialog
 function ManualAttendanceDialog({
   open,
@@ -423,6 +447,53 @@ function AddNoteDialog({
   );
 }
 
+// ─── PartialAttendanceRow ─────────────────────────────────────────────
+function PartialAttendanceRow({ record, onVerify, verifyingId }: {
+  record: any;
+  onVerify: (id: number, status: string) => Promise<void>;
+  verifyingId: number | null;
+}) {
+  const [selectedStatus, setSelectedStatus] = useState(record.status || 'Time-In');
+  const isBusy = verifyingId === record.id;
+  const statusOptions = ['Time-In', 'Late', 'Absent', 'Time-Out'];
+
+  return (
+    <TableRow hover sx={{ bgcolor: '#fffdf5', '&:hover': { bgcolor: '#fff9e6' } }}>
+      <TableCell sx={{ fontWeight: 700 }}>{record.student_name}</TableCell>
+      <TableCell sx={{ fontSize: '0.8rem' }}>{record.lrn}</TableCell>
+      <TableCell sx={{ fontSize: '0.8rem' }}>
+        {record.time_in || (record.timestamp ? format(new Date(record.timestamp), 'hh:mm a') : '—')}
+      </TableCell>
+      <TableCell>
+        <Chip label={record.scan_method || 'QR'} size="small" />
+      </TableCell>
+      <TableCell>
+        <Chip label={record.status} size="small"
+          color={record.status === 'Time-In' ? 'success' : record.status === 'Late' ? 'warning' : record.status === 'Time-Out' ? 'info' : record.status === 'Excused' ? 'default' : 'error'} />
+      </TableCell>
+      <TableCell>
+        <Select size="small" value={selectedStatus}
+          onChange={e => setSelectedStatus(e.target.value)}
+          sx={{ fontSize: '0.78rem', minWidth: 110 }}>
+          {statusOptions.map(s => (
+            <MenuItem key={s} value={s} sx={{ fontSize: '0.78rem' }}>{s}</MenuItem>
+          ))}
+        </Select>
+      </TableCell>
+      <TableCell>
+        <Button size="small" variant="contained" disabled={isBusy}
+          onClick={() => onVerify(record.id, selectedStatus)}
+          sx={{
+            bgcolor: '#2e7d32', '&:hover': { bgcolor: '#1b5e20' },
+            fontSize: '0.7rem', px: 1.5, py: 0.5, textTransform: 'none', fontWeight: 700,
+          }}>
+          {isBusy ? <CircularProgress size={14} sx={{ color: '#fff' }} /> : '✓ Confirm'}
+        </Button>
+      </TableCell>
+    </TableRow>
+  );
+}
+
 // Main Component
 export default function TeacherDashboardPageNew() {
   const { user, logout } = useAuth();
@@ -447,7 +518,11 @@ export default function TeacherDashboardPageNew() {
   // Excuse requests from parents
   const [excuseRequests, setExcuseRequests] = useState<any[]>([]);
   const [pendingExcuseCount, setPendingExcuseCount] = useState(0);
-  const [excuseTab, setExcuseTab] = useState<'dashboard' | 'excuses'>('dashboard');
+  const [excuseTab, setExcuseTab] = useState<'dashboard' | 'excuses' | 'subject-excuses'>('dashboard');
+  const [subjectExcuseAsgId, setSubjectExcuseAsgId] = useState<number | null>(null);
+  const [subjectExcuseRequests, setSubjectExcuseRequests] = useState<any[]>([]);
+  const [subjectExcuseLoading, setSubjectExcuseLoading] = useState(false);
+  const [subjectPendingCounts, setSubjectPendingCounts] = useState<Record<number, number>>({});
   const [resolveDialog, setResolveDialog] = useState<{
     open: boolean; request: any | null; action: 'approve' | 'reject'; note: string; loading: boolean; error: string;
   }>({ open: false, request: null, action: 'approve', note: '', loading: false, error: '' });
@@ -475,6 +550,23 @@ export default function TeacherDashboardPageNew() {
 
   const showSnack = (msg: string, sev: any = 'success') => setSnack({ open: true, msg, sev });
 
+  // Subject assignments (from Image 1 config) — determines sidebar nav
+  const [subjectAssignments, setSubjectAssignments] = useState<any[]>([]);
+  const [advisoryAssignments, setAdvisoryAssignments] = useState<any[]>([]);
+  // Active view: 'dashboard' (main class), 'excuses', or assignment id (subject class)
+  const [activeView, setActiveView] = useState<'dashboard' | 'excuses' | number>('dashboard');
+  // Subject attendance (partial + final)
+  const [subjectDate, setSubjectDate] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [partialAttendance, setPartialAttendance] = useState<any[]>([]);
+  const [finalAttendance,   setFinalAttendance]   = useState<any[]>([]);
+  const [subjectStudents,   setSubjectStudents]   = useState<any[]>([]);
+  const [subjectLoading,    setSubjectLoading]    = useState(false);
+  const [verifyingId,       setVerifyingId]       = useState<number | null>(null);
+
+  // Advisory partial attendance (unverified kiosk scans for the main class)
+  const [advisoryPartial,   setAdvisoryPartial]   = useState<any[]>([]);
+  const [advisoryVerifyId,  setAdvisoryVerifyId]  = useState<number | null>(null);
+
   // Fetch teacher's classes
   const fetchClasses = useCallback(async () => {
     try {
@@ -492,7 +584,10 @@ export default function TeacherDashboardPageNew() {
     try {
       const { data } = await api.get(`/teacher/attendance/today?date=${date}`);
       setStats(data.stats);
-      setAttendanceRecords(data.attendance);
+      // Final attendance = is_verified = 1 (verified records from attendance table)
+      setAttendanceRecords((data.attendance || []).filter((r: any) => r.is_verified === 1));
+      // Partial attendance = is_verified = 0 (kiosk scans in partial_attendance table)
+      setAdvisoryPartial((data.attendance || []).filter((r: any) => r.is_verified === 0));
     } catch (error) {
       showSnack('Failed to load attendance', 'error');
     } finally {
@@ -508,13 +603,47 @@ export default function TeacherDashboardPageNew() {
     fetchAttendance();
   }, [fetchAttendance]);
 
+  // Fetch subject assignments for sidebar nav
+  const fetchSubjectAssignments = useCallback(async () => {
+    try {
+      const { data } = await api.get('/teacher/subject-assignments');
+      setSubjectAssignments(data.subjects || []);
+      setAdvisoryAssignments(data.advisory || []);
+      // If teacher is NOT an adviser but has subject assignments,
+      // auto-navigate to first subject so they don't see empty advisory
+      if (data.subjects?.length > 0 && !teacherData?.is_adviser && teacherData?.is_adviser !== undefined) {
+        setActiveView(data.subjects[0].id);
+      }
+    } catch { /* silent */ }
+  }, [teacherData?.is_adviser]);
+
+  useEffect(() => { fetchSubjectAssignments(); }, [fetchSubjectAssignments]);
+
+  // Fetch partial + final attendance for a subject assignment
+  const fetchSubjectAttendance = useCallback(async (assignmentId: number, date: string) => {
+    setSubjectLoading(true);
+    try {
+      const { data } = await api.get(`/teacher/subject-attendance?assignment_id=${assignmentId}&date=${date}`);
+      setPartialAttendance(data.partial || []);
+      setFinalAttendance(data.final   || []);
+      setSubjectStudents(data.students || []);
+    } catch { /* silent */ }
+    finally { setSubjectLoading(false); }
+  }, []);
+
+  useEffect(() => {
+    if (typeof activeView === 'number') {
+      fetchSubjectAttendance(activeView, subjectDate);
+    }
+  }, [activeView, subjectDate, fetchSubjectAttendance]);
+
   // Auto-refresh every 30 seconds
   useEffect(() => {
     const interval = setInterval(fetchAttendance, 30000);
     return () => clearInterval(interval);
   }, [fetchAttendance]);
 
-  // Fetch excuse requests
+  // Fetch excuse requests (adviser)
   const fetchExcuseRequests = useCallback(async () => {
     try {
       const { data } = await api.get('/excuse/teacher?status=all');
@@ -526,11 +655,64 @@ export default function TeacherDashboardPageNew() {
   }, []);
 
   useEffect(() => { fetchExcuseRequests(); }, [fetchExcuseRequests]);
-  // Refresh excuse requests every 60 seconds
   useEffect(() => {
     const id = setInterval(fetchExcuseRequests, 60_000);
     return () => clearInterval(id);
   }, [fetchExcuseRequests]);
+
+  // Fetch excuse requests for a specific subject assignment
+  const fetchSubjectExcuseRequests = useCallback(async (assignmentId: number) => {
+    setSubjectExcuseLoading(true);
+    try {
+      const { data } = await api.get(`/excuse/teacher?status=all&assignment_id=${assignmentId}`);
+      setSubjectExcuseRequests(data.requests || []);
+      // Update overall pending count badge to include subject pending requests
+      setPendingExcuseCount(prev => {
+        const subjectPending = (data.requests || []).filter((r: any) => r.status === 'pending').length;
+        // Merge: keep adviser count + current subject pending
+        return Math.max(prev, subjectPending);
+      });
+    } catch {
+      setSubjectExcuseRequests([]);
+    } finally {
+      setSubjectExcuseLoading(false);
+    }
+  }, []);
+
+  // On load: also fetch pending count across ALL subject assignments so badge shows for subject teachers
+  const fetchSubjectPendingCount = useCallback(async () => {
+    if (!subjectAssignments.length) return;
+    try {
+      let totalPending = 0;
+      const counts: Record<number, number> = {};
+      for (const asg of subjectAssignments) {
+        const { data } = await api.get(`/excuse/teacher?status=pending&assignment_id=${asg.id}`);
+        const count = data.pendingCount || 0;
+        counts[asg.id] = count;
+        totalPending += count;
+      }
+      setSubjectPendingCounts(counts);
+      if (totalPending > 0) {
+        setPendingExcuseCount(prev => Math.max(prev, totalPending));
+      }
+    } catch {
+      // silent
+    }
+  }, [subjectAssignments]);
+
+  // Trigger fetchSubjectPendingCount whenever subjectAssignments changes (on load and refresh)
+  useEffect(() => {
+    if (subjectAssignments.length > 0) {
+      fetchSubjectPendingCount();
+    }
+  }, [subjectAssignments, fetchSubjectPendingCount]);
+
+  // Auto-fetch when switching to subject excuse view
+  useEffect(() => {
+    if (excuseTab === 'subject-excuses' && subjectExcuseAsgId !== null) {
+      fetchSubjectExcuseRequests(subjectExcuseAsgId);
+    }
+  }, [excuseTab, subjectExcuseAsgId, fetchSubjectExcuseRequests]);
 
   // Fetch at-risk students
   const fetchAtRisk = useCallback(async () => {
@@ -566,7 +748,12 @@ export default function TeacherDashboardPageNew() {
       await api.patch(`/excuse/teacher/${request.id}`, { action, teacher_note: note });
       showSnack(`Excuse request ${action === 'approve' ? 'approved' : 'rejected'} successfully`, 'success');
       setResolveDialog({ open: false, request: null, action: 'approve', note: '', loading: false, error: '' });
-      fetchExcuseRequests();
+      // Refresh whichever list is currently active
+      if (excuseTab === 'subject-excuses' && subjectExcuseAsgId !== null) {
+        fetchSubjectExcuseRequests(subjectExcuseAsgId);
+      } else {
+        fetchExcuseRequests();
+      }
     } catch (err: any) {
       setResolveDialog(d => ({ ...d, loading: false, error: err.response?.data?.error || 'Failed to resolve request' }));
     }
@@ -603,60 +790,170 @@ export default function TeacherDashboardPageNew() {
         <Typography variant="caption" sx={{ opacity: 0.7, textTransform: 'uppercase', fontSize: 10, display: 'block', mb: 0.5 }}>
           Logged in as
         </Typography>
+        {/* Teacher Info — show advisory details ONLY for advisers */}
         <Box sx={{ bgcolor: 'rgba(255,255,255,0.15)', p: 1.5, borderRadius: 1, mb: 2, borderLeft: '3px solid rgba(255,255,255,0.5)' }}>
           <Typography sx={{ fontWeight: 700 }}>{teacherData?.name || user?.username}</Typography>
-          <Typography variant="caption" sx={{ opacity: 0.9 }}>{teacherData?.section || '—'}</Typography>
+          {teacherData?.is_adviser !== false && teacherData?.section && (
+            <Typography variant="caption" sx={{ opacity: 0.9 }}>{teacherData.section}</Typography>
+          )}
         </Box>
-        {teacherData?.subject && <Typography variant="caption" display="block" sx={{ opacity: 0.9, mb: 0.5 }}>📚 {teacherData.subject}</Typography>}
-        {teacherData?.room && <Typography variant="caption" display="block" sx={{ opacity: 0.9, mb: 0.5 }}>🏫 Room: {teacherData.room}</Typography>}
-        {teacherData?.schedule && <Typography variant="caption" display="block" sx={{ opacity: 0.9 }}>⏰ {teacherData.schedule}</Typography>}
+        {/* Year Level / Strand / Track — adviser only, from assignment */}
+        {teacherData?.is_adviser !== false && teacherData?.year_level && (
+          <Typography variant="caption" display="block" sx={{ opacity: 0.9, mb: 0.5 }}>
+            🎓 {[
+              teacherData.year_level,
+              teacherData.strand || null,
+              teacherData.track  || null,
+            ].filter(Boolean).join(' • ')}
+          </Typography>
+        )}
+        {teacherData?.is_adviser !== false && teacherData?.section && (
+          <Typography variant="caption" display="block" sx={{ opacity: 0.9, mb: 0.5 }}>🧑‍🏫 Section: {teacherData.section}</Typography>
+        )}
+        {/* Subject only shown to advisers (their main advisory subject) */}
+        {/* Subject label removed per design — subjects are shown in Subject Classes nav */}
+        {/* Room / Schedule — adviser only */}
+        {teacherData?.is_adviser !== false && teacherData?.room && (
+          <Typography variant="caption" display="block" sx={{ opacity: 0.9, mb: 0.5 }}>🏫 Room: {teacherData.room}</Typography>
+        )}
+        {teacherData?.is_adviser !== false && teacherData?.schedule && (
+          <Typography variant="caption" display="block" sx={{ opacity: 0.9 }}>⏰ {teacherData.schedule}</Typography>
+        )}
       </Box>
 
       <Divider sx={{ borderColor: 'rgba(255,255,255,0.2)', my: 1 }} />
 
       {/* Navigation */}
-      <Box sx={{ px: 2, pb: 2 }}>
-        <Box
-          onClick={() => { navigate('/teacher'); setMobileOpen(false); setExcuseTab('dashboard'); }}
-          sx={{
-            display: 'flex', alignItems: 'center', gap: 1.5,
-            px: 2, py: 1.5, cursor: 'pointer', borderRadius: 1,
-            bgcolor: excuseTab === 'dashboard' ? 'rgba(255,255,255,0.2)' : 'transparent',
-            borderLeft: excuseTab === 'dashboard' ? '3px solid #fff' : '3px solid transparent',
-            '&:hover': { bgcolor: 'rgba(255,255,255,0.25)' },
-          }}
-        >
-          <Dashboard />
-          <Typography variant="body2" sx={{ fontWeight: 700 }}>Dashboard</Typography>
-        </Box>
-        <Box
-          onClick={() => { setExcuseTab('excuses'); setMobileOpen(false); }}
-          sx={{
-            display: 'flex', alignItems: 'center', gap: 1.5,
-            px: 2, py: 1.5, cursor: 'pointer', borderRadius: 1, mt: 0.5,
-            bgcolor: excuseTab === 'excuses' ? 'rgba(255,255,255,0.2)' : 'transparent',
-            borderLeft: excuseTab === 'excuses' ? '3px solid #fff' : '3px solid transparent',
-            '&:hover': { bgcolor: 'rgba(255,255,255,0.25)' },
-          }}
-        >
-          <EventAvailable />
-          <Typography variant="body2" sx={{ fontWeight: excuseTab === 'excuses' ? 700 : 400, flex: 1 }}>
-            Excuse Requests
-          </Typography>
-          {pendingExcuseCount > 0 && (
-            <Box sx={{
-              bgcolor: '#ef4444', color: '#fff', borderRadius: '10px',
-              px: 1, py: 0.25, fontSize: '0.7rem', fontWeight: 700, minWidth: 20, textAlign: 'center',
-            }}>
-              {pendingExcuseCount}
+      <Box sx={{ px: 2, pb: 1, flex: 1, overflowY: 'auto' }}>
+
+        {/* ── Main Class (Dashboard) — only show if teacher is an adviser ── */}
+        {teacherData?.is_adviser !== false && (
+          <>
+            <Typography variant="caption" sx={{ opacity: 0.6, textTransform: 'uppercase', fontSize: 10, display: 'block', px: 1, mb: 0.5 }}>
+              Main Class
+            </Typography>
+            <Box
+              onClick={() => { setActiveView('dashboard'); setExcuseTab('dashboard'); setMobileOpen(false); }}
+              sx={{
+                display: 'flex', alignItems: 'center', gap: 1.5,
+                px: 2, py: 1.2, cursor: 'pointer', borderRadius: 1, mb: 0.5,
+                bgcolor: activeView === 'dashboard' && excuseTab === 'dashboard' ? 'rgba(255,255,255,0.2)' : 'transparent',
+                borderLeft: activeView === 'dashboard' && excuseTab === 'dashboard' ? '3px solid #fff' : '3px solid transparent',
+                '&:hover': { bgcolor: 'rgba(255,255,255,0.15)' },
+              }}
+            >
+              <Dashboard sx={{ fontSize: 18 }} />
+              <Box flex={1}>
+                <Typography variant="body2" sx={{ fontWeight: 700, lineHeight: 1.2 }}>Classroom Advisory</Typography>
+                {teacherData?.section && (
+                  <Typography variant="caption" sx={{ opacity: 0.8, fontSize: 10 }}>
+                    {teacherData.section}
+                  </Typography>
+                )}
+              </Box>
             </Box>
-          )}
-        </Box>
+          </>
+        )}
+
+        {/* ── Excuse Requests ── */}
+        {/* ── Excuse Requests — only for advisers ── */}
+        {teacherData?.is_adviser !== false && (
+          <Box
+            onClick={() => { setActiveView('dashboard'); setExcuseTab('excuses'); setMobileOpen(false); }}
+            sx={{
+              display: 'flex', alignItems: 'center', gap: 1.5,
+              px: 2, py: 1.2, cursor: 'pointer', borderRadius: 1, mb: 1,
+              bgcolor: excuseTab === 'excuses' ? 'rgba(255,255,255,0.2)' : 'transparent',
+              borderLeft: excuseTab === 'excuses' ? '3px solid #fff' : '3px solid transparent',
+              '&:hover': { bgcolor: 'rgba(255,255,255,0.15)' },
+            }}
+          >
+            <EventAvailable sx={{ fontSize: 18 }} />
+            <Typography variant="body2" sx={{ fontWeight: excuseTab === 'excuses' ? 700 : 400, flex: 1 }}>
+              Excuse Requests
+            </Typography>
+            {pendingExcuseCount > 0 && (
+              <Box sx={{
+                bgcolor: '#ef4444', color: '#fff', borderRadius: '10px',
+                px: 1, py: 0.25, fontSize: '0.65rem', fontWeight: 700, minWidth: 18, textAlign: 'center',
+              }}>
+                {pendingExcuseCount}
+              </Box>
+            )}
+          </Box>
+        )}
+
+        {/* ── Subject Classes (dynamic from assignments) ── */}
+        {subjectAssignments.length > 0 && (
+          <>
+            <Divider sx={{ borderColor: 'rgba(255,255,255,0.15)', mb: 0.5 }} />
+            <Typography variant="caption" sx={{ opacity: 0.6, textTransform: 'uppercase', fontSize: 10, display: 'block', px: 1, mb: 0.5 }}>
+              Subject Classes
+            </Typography>
+            {subjectAssignments.map((asg: any) => (
+              <Box key={asg.id}>
+                {/* Subject class nav item */}
+                <Box
+                  onClick={() => { setActiveView(asg.id); setExcuseTab('dashboard'); setMobileOpen(false); }}
+                  sx={{
+                    display: 'flex', alignItems: 'center', gap: 1.5,
+                    px: 2, py: 1, cursor: 'pointer', borderRadius: 1, mb: 0,
+                    bgcolor: activeView === asg.id && excuseTab !== 'subject-excuses' ? 'rgba(255,255,255,0.2)' : 'transparent',
+                    borderLeft: activeView === asg.id && excuseTab !== 'subject-excuses' ? '3px solid #fbc02d' : '3px solid transparent',
+                    '&:hover': { bgcolor: 'rgba(255,255,255,0.15)' },
+                  }}
+                >
+                  <TrendingUp sx={{ fontSize: 16, opacity: 0.8 }} />
+                  <Box flex={1}>
+                    <Typography variant="body2" sx={{ fontWeight: activeView === asg.id && excuseTab !== 'subject-excuses' ? 700 : 400, fontSize: '0.82rem', lineHeight: 1.2 }}>
+                      {asg.subject}
+                    </Typography>
+                    <Typography variant="caption" sx={{ opacity: 0.75, fontSize: '0.7rem' }}>
+                      {asg.section}
+                    </Typography>
+                  </Box>
+                </Box>
+                {/* Excuse Requests sub-item under this subject */}
+                <Box
+                  onClick={() => {
+                    setActiveView(asg.id);
+                    setSubjectExcuseAsgId(asg.id);
+                    setExcuseTab('subject-excuses');
+                    setMobileOpen(false);
+                  }}
+                  sx={{
+                    display: 'flex', alignItems: 'center', gap: 1.5,
+                    pl: 4, pr: 2, py: 0.8, cursor: 'pointer', borderRadius: 1, mb: 0.5,
+                    bgcolor: excuseTab === 'subject-excuses' && subjectExcuseAsgId === asg.id
+                      ? 'rgba(255,255,255,0.2)' : 'transparent',
+                    borderLeft: excuseTab === 'subject-excuses' && subjectExcuseAsgId === asg.id
+                      ? '3px solid #fbc02d' : '3px solid transparent',
+                    '&:hover': { bgcolor: 'rgba(255,255,255,0.15)' },
+                  }}
+                >
+                  <EventAvailable sx={{ fontSize: 15, opacity: 0.8 }} />
+                  <Typography variant="caption" sx={{
+                    fontWeight: excuseTab === 'subject-excuses' && subjectExcuseAsgId === asg.id ? 700 : 400,
+                    fontSize: '0.75rem', flex: 1,
+                  }}>
+                    Excuse Requests
+                  </Typography>
+                  {(subjectPendingCounts[asg.id] ?? 0) > 0 && (
+                    <Box sx={{
+                      bgcolor: '#ef4444', color: '#fff', borderRadius: '10px',
+                      px: 1, py: 0.25, fontSize: '0.65rem', fontWeight: 700, minWidth: 18, textAlign: 'center',
+                    }}>
+                      {subjectPendingCounts[asg.id]}
+                    </Box>
+                  )}
+                </Box>
+              </Box>
+            ))}
+          </>
+        )}
       </Box>
 
-      <Box flex={1} />
-
-      <Box sx={{ p: 2, borderTop: '1px solid rgba(255,255,255,0.15)' }}>
+      <Box sx={{ p: 2, borderTop: '1px solid rgba(255,255,255,0.15)', flexShrink: 0 }}>
         <Button fullWidth variant="contained" startIcon={<Logout />} onClick={handleLogout}
           sx={{ bgcolor: '#c62828', '&:hover': { bgcolor: '#b71c1c' } }}>
           Logout
@@ -784,7 +1081,7 @@ export default function TeacherDashboardPageNew() {
                       }}>
                         <TableCell><Typography sx={{ fontWeight: 700 }}>{req.student_name}</Typography></TableCell>
                         <TableCell sx={{ whiteSpace: 'nowrap' }}>
-                          {req.date ? format(new Date(String(req.date).split('T')[0] + 'T00:00:00'), 'MMM d, yyyy') : '—'}
+                          {formatAttendanceDate(req.date)}
                         </TableCell>
                         <TableCell>
                           <Typography sx={{ fontSize: '0.82rem' }}>{req.parent_name}</Typography>
@@ -853,8 +1150,8 @@ export default function TeacherDashboardPageNew() {
             </Paper>
           )}
 
-          {/* ── DASHBOARD TAB ── */}
-          {excuseTab === 'dashboard' && (<>
+          {/* ── DASHBOARD TAB (only when Classroom Advisory is selected) ── */}
+          {excuseTab === 'dashboard' && activeView === 'dashboard' && (<>
 
           {/* Quick Stats */}
           <Grid container spacing={2} mb={3}>
@@ -943,116 +1240,133 @@ export default function TeacherDashboardPageNew() {
             </Grid>
           </Paper>
 
-          {/* Today's Attendance Table */}
-          <Paper sx={{ borderRadius: 2, overflow: 'hidden' }}>
+          {/* ── ADVISORY: Automated Partial Attendance List ── */}
+          <Paper sx={{ mb: 3, borderRadius: 2, overflow: 'hidden' }}>
             <Box sx={{
-              p: 2.5,
-              background: theme.colors.primary.gradient,
-              color: '#fff',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
+              p: 2, bgcolor: '#fff8e1', borderBottom: '1px solid #ffe082',
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
             }}>
-              <Typography sx={{ fontFamily: theme.typography.fontFamily.display, fontWeight: 700, fontSize: 18 }}>
-                Today's Attendance — {format(new Date(date), 'MMM dd, yyyy')}
-              </Typography>
-              <Chip
-                label={`${attendanceRecords.length} records`}
-                size="small"
-                sx={{
-                  bgcolor: 'rgba(255,255,255,0.2)',
-                  color: '#fff',
-                  fontWeight: 600,
-                  border: '1px solid rgba(255,255,255,0.3)',
-                }}
-              />
+              <Box>
+                <Typography sx={{ fontWeight: 700, fontSize: '0.95rem', color: '#e65100' }}>
+                  ⏳ Automated Partial Attendance List
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  Kiosk scans — verify each entry to move it to the Final List
+                </Typography>
+              </Box>
+              <Chip label={`${advisoryPartial.length} pending`} size="small"
+                sx={{ bgcolor: advisoryPartial.length > 0 ? '#ffa000' : '#e0e0e0',
+                  color: advisoryPartial.length > 0 ? '#fff' : '#666', fontWeight: 700 }} />
             </Box>
-            <TableContainer sx={{ maxHeight: 500 }}>
+            <TableContainer>
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    {['Student', 'LRN', 'Time', 'Method', 'Status', 'Verify As', 'Action'].map(h => (
+                      <TableCell key={h} sx={{ fontWeight: 700, bgcolor: '#fffde7' }}>{h}</TableCell>
+                    ))}
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {advisoryPartial.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={7} align="center" sx={{ py: 4, color: '#aaa', fontStyle: 'italic' }}>
+                        No pending scans — all attendance verified
+                      </TableCell>
+                    </TableRow>
+                  ) : advisoryPartial.map(r => (
+                    <PartialAttendanceRow
+                      key={r.id} record={r}
+                      onVerify={async (id, status) => {
+                        setAdvisoryVerifyId(id);
+                        try {
+                          await api.post('/teacher/attendance/verify', { attendance_id: id, status });
+                          showSnack(`Verified as ${status}`);
+                          fetchAttendance();
+                        } catch { showSnack('Failed to verify', 'error'); }
+                        finally { setAdvisoryVerifyId(null); }
+                      }}
+                      verifyingId={advisoryVerifyId}
+                    />
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          </Paper>
+
+          {/* ── ADVISORY: Final Attendance List ── */}
+          <Paper sx={{ mb: 3, borderRadius: 2, overflow: 'hidden' }}>
+            <Box sx={{
+              p: 2, background: theme.colors.primary.gradient, color: '#fff',
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            }}>
+              <Box>
+                <Typography sx={{ fontWeight: 700, fontSize: '0.95rem' }}>
+                  ✅ Final Attendance List — {teacherData?.section || 'Classroom Advisory'}
+                </Typography>
+                <Typography variant="caption" sx={{ opacity: 0.85 }}>
+                  Verified records • synced to Parent Portal
+                </Typography>
+              </Box>
+              <Chip label={`${attendanceRecords.length} records`} size="small"
+                sx={{ bgcolor: 'rgba(255,255,255,0.2)', color: '#fff', fontWeight: 700 }} />
+            </Box>
+            <TableContainer sx={{ maxHeight: 380 }}>
               <Table stickyHeader size="small">
                 <TableHead>
                   <TableRow>
-                    <TableCell sx={{ fontWeight: 700 }}>Student Name</TableCell>
-                    <TableCell sx={{ fontWeight: 700 }}>LRN</TableCell>
-                    <TableCell sx={{ fontWeight: 700 }}>Time</TableCell>
-                    <TableCell sx={{ fontWeight: 700 }}>Method</TableCell>
-                    <TableCell align="center" sx={{ fontWeight: 700 }}>Photo</TableCell>
-                    <TableCell sx={{ fontWeight: 700 }}>Status</TableCell>
-                    <TableCell align="center" sx={{ fontWeight: 700 }}>Actions</TableCell>
+                    {['Student', 'Date', 'LRN', 'Time', 'Method', 'Photo', 'Status', 'Actions'].map(h => (
+                      <TableCell key={h} sx={{ fontWeight: 700, bgcolor: theme.colors.primary.light, color: '#fff' }}>{h}</TableCell>
+                    ))}
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   {loading && (
-                    <TableRow>
-                      <TableCell colSpan={7} align="center" sx={{ py: 4 }}>
-                        <CircularProgress size={28} />
-                      </TableCell>
-                    </TableRow>
+                    <TableRow><TableCell colSpan={8} align="center" sx={{ py: 4 }}><CircularProgress size={28} /></TableCell></TableRow>
                   )}
                   {!loading && attendanceRecords.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={7} align="center" sx={{ py: 5, color: '#666' }}>
-                        No attendance records for this date
+                      <TableCell colSpan={8} align="center" sx={{ py: 4, color: '#aaa', fontStyle: 'italic' }}>
+                        No verified attendance for this date
                       </TableCell>
                     </TableRow>
                   )}
                   {attendanceRecords.map((r) => (
-                    <TableRow
-                      key={r.id}
-                      hover
-                      sx={{
-                        bgcolor: r.is_overridden ? '#fff3e0' : '#fff',
-                        '&:hover': { bgcolor: '#f5f5f5' },
-                      }}
-                    >
+                    <TableRow key={r.id} hover sx={{ bgcolor: r.is_overridden ? '#fff3e0' : '#fff', '&:hover': { bgcolor: '#f5f5f5' } }}>
                       <TableCell>
                         <Box display="flex" alignItems="center" gap={0.5}>
                           <Typography sx={{ fontWeight: 700 }}>{r.student_name}</Typography>
-                          {atRiskIds.has(r.student_id) && (
+                          {atRiskIds.has(r.student_id!) && (
                             <Tooltip title="⚠️ Low attendance this month (below 80%)">
                               <span style={{ fontSize: '1rem', cursor: 'default' }}>⚠️</span>
                             </Tooltip>
                           )}
                         </Box>
                       </TableCell>
+                      <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                        {formatAttendanceDate(r.date)}
+                      </TableCell>
                       <TableCell>{r.lrn}</TableCell>
                       <TableCell>{format(new Date(r.timestamp), 'hh:mm a')}</TableCell>
-                      <TableCell>
-                        <Chip label={r.scan_method} size="small" />
-                      </TableCell>
+                      <TableCell><Chip label={r.scan_method} size="small" /></TableCell>
                       <TableCell align="center">
                         <Tooltip title={r.photo_path ? 'View Photo' : 'No photo'}>
                           <span>
-                            <IconButton
-                              size="small"
-                              disabled={!r.photo_path}
+                            <IconButton size="small" disabled={!r.photo_path}
                               onClick={() => r.photo_path && setPhotoDialog({
-                                open: true,
-                                photoUrl: r.photo_path!,
-                                studentName: r.student_name,
-                                status: r.status,
-                                timestamp: r.timestamp,
-                                method: r.scan_method,
+                                open: true, photoUrl: r.photo_path!,
+                                studentName: r.student_name, status: r.status,
+                                timestamp: r.timestamp, method: r.scan_method || '',
                               })}
-                              sx={{
-                                color: r.photo_path ? theme.colors.primary.main : '#ccc',
-                                '&:hover': { bgcolor: r.photo_path ? 'rgba(59,130,246,0.1)' : 'transparent' },
-                              }}
-                            >
+                              sx={{ color: r.photo_path ? theme.colors.primary.main : '#ccc' }}>
                               <PhotoCamera fontSize="small" />
                             </IconButton>
                           </span>
                         </Tooltip>
                       </TableCell>
                       <TableCell>
-                        <Chip
-                          label={r.status}
-                          size="small"
-                          color={
-                            r.status === 'Time-In' ? 'success' :
-                            r.status === 'Late' ? 'warning' :
-                            r.status === 'Time-Out' ? 'info' : 'error'
-                          }
-                        />
+                        <Chip label={r.status} size="small"
+                          color={r.status === 'Time-In' ? 'success' : r.status === 'Late' ? 'warning' : r.status === 'Time-Out' ? 'info' : r.status === 'Excused' ? 'default' : 'error'} />
                       </TableCell>
                       <TableCell align="center">
                         <Tooltip title="Add Note">
@@ -1061,20 +1375,9 @@ export default function TeacherDashboardPageNew() {
                           </IconButton>
                         </Tooltip>
                         <Tooltip title="Message Parent">
-                          <IconButton
-                            size="small"
-                            onClick={() => setMsgDialog({
-                              open: true,
-                              studentName: r.student_name,
-                              studentId: r.student_id,
-                              subject: '',
-                              body: '',
-                              loading: false,
-                              error: '',
-                              success: false,
-                            })}
-                            sx={{ color: theme.colors.primary.main }}
-                          >
+                          <IconButton size="small"
+                            onClick={() => setMsgDialog({ open: true, studentName: r.student_name, studentId: r.student_id!, subject: '', body: '', loading: false, error: '', success: false })}
+                            sx={{ color: theme.colors.primary.main }}>
                             <Email fontSize="small" />
                           </IconButton>
                         </Tooltip>
@@ -1084,9 +1387,333 @@ export default function TeacherDashboardPageNew() {
                 </TableBody>
               </Table>
             </TableContainer>
+
+            {/* Students in this class */}
+            {students.length > 0 && (
+              <Box sx={{ p: 2, borderTop: '1px solid #e0e0e0', bgcolor: '#f9f9f9' }}>
+                <Typography variant="caption" sx={{ fontWeight: 700, color: '#555' }}>
+                  Students in this class ({students.length}):
+                </Typography>
+                <Box display="flex" gap={0.5} flexWrap="wrap" mt={0.5}>
+                  {students.map((s: any) => (
+                    <Chip key={s.id} label={s.name} size="small"
+                      sx={{ bgcolor: '#e3f2fd', color: '#1565c0', fontSize: '0.7rem' }} />
+                  ))}
+                </Box>
+              </Box>
+            )}
           </Paper>
 
-          </>)}  {/* end excuseTab === 'dashboard' */}
+          </>)}  {/* end dashboard tab */}
+
+          {/* ── SUBJECT EXCUSE REQUESTS VIEW ── */}
+          {excuseTab === 'subject-excuses' && subjectExcuseAsgId !== null && (() => {
+            const asg = subjectAssignments.find((a: any) => a.id === subjectExcuseAsgId);
+            return (
+              <Paper sx={{ borderRadius: 2, overflow: 'hidden' }}>
+                {/* Header */}
+                <Box sx={{
+                  p: 2.5, background: theme.colors.status.warning.main, color: '#fff',
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 1,
+                }}>
+                  <Box>
+                    <Typography sx={{ fontFamily: theme.typography.fontFamily.display, fontWeight: 700, fontSize: 18 }}>
+                      📋 Excuse Requests from Parents
+                    </Typography>
+                    {asg && (
+                      <Typography variant="body2" sx={{ opacity: 0.9, mt: 0.25 }}>
+                        {asg.subject} — {asg.section}
+                      </Typography>
+                    )}
+                  </Box>
+                  <Button size="small" variant="outlined"
+                    onClick={() => fetchSubjectExcuseRequests(subjectExcuseAsgId)}
+                    sx={{ color: '#fff', borderColor: 'rgba(255,255,255,0.5)', '&:hover': { borderColor: '#fff', bgcolor: 'rgba(255,255,255,0.1)' } }}>
+                    Refresh
+                  </Button>
+                </Box>
+
+                {/* Table */}
+                <TableContainer>
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow>
+                        {['Student', 'Date', 'Parent', 'Reason', 'Status', 'Actions'].map(h => (
+                          <TableCell key={h} sx={{ fontWeight: 700, bgcolor: '#fff8e1' }}>{h}</TableCell>
+                        ))}
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {subjectExcuseLoading && (
+                        <TableRow>
+                          <TableCell colSpan={6} align="center" sx={{ py: 4 }}>
+                            <CircularProgress size={24} />
+                          </TableCell>
+                        </TableRow>
+                      )}
+                      {!subjectExcuseLoading && subjectExcuseRequests.length === 0 && (
+                        <TableRow>
+                          <TableCell colSpan={6} align="center" sx={{ py: 5, color: '#888' }}>
+                            No excuse requests found
+                          </TableCell>
+                        </TableRow>
+                      )}
+                      {!subjectExcuseLoading && subjectExcuseRequests.map((req: any) => (
+                        <TableRow key={req.id} hover sx={{
+                          bgcolor: req.status === 'pending' ? '#fffde7' : '#fff',
+                          '&:hover': { bgcolor: '#f9f9f9' },
+                        }}>
+                          <TableCell>
+                            <Typography sx={{ fontWeight: 700 }}>{req.student_name}</Typography>
+                            <Typography variant="caption" color="text.secondary">{req.section}</Typography>
+                          </TableCell>
+                          <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                            {formatAttendanceDate(req.date)}
+                          </TableCell>
+                          <TableCell>
+                            <Typography sx={{ fontSize: '0.82rem' }}>{req.parent_name}</Typography>
+                            {req.parent_contact && (
+                              <Typography variant="caption" color="text.secondary">{req.parent_contact}</Typography>
+                            )}
+                          </TableCell>
+                          <TableCell sx={{ maxWidth: 220 }}>
+                            <Typography sx={{ fontSize: '0.82rem', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                              {req.reason}
+                            </Typography>
+                            {req.teacher_note && (
+                              <Typography variant="caption" sx={{ color: '#e65100', display: 'block', mt: 0.5 }}>
+                                Note: {req.teacher_note}
+                              </Typography>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <Chip
+                              label={req.status}
+                              size="small"
+                              color={req.status === 'approved' ? 'success' : req.status === 'rejected' ? 'error' : 'warning'}
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Box display="flex" gap={0.5} flexWrap="wrap">
+                              {req.status === 'pending' && (
+                                <>
+                                  <Button size="small" variant="contained"
+                                    onClick={() => setResolveDialog({ open: true, request: req, action: 'approve', note: '', loading: false, error: '' })}
+                                    sx={{ bgcolor: '#2e7d32', '&:hover': { bgcolor: '#1b5e20' }, fontSize: '0.72rem', px: 1, py: 0.5, minWidth: 'unset', textTransform: 'none' }}>
+                                    ✓ Approve
+                                  </Button>
+                                  <Button size="small" variant="outlined"
+                                    onClick={() => setResolveDialog({ open: true, request: req, action: 'reject', note: '', loading: false, error: '' })}
+                                    sx={{ color: '#c62828', borderColor: '#c62828', '&:hover': { bgcolor: '#ffebee' }, fontSize: '0.72rem', px: 1, py: 0.5, minWidth: 'unset', textTransform: 'none' }}>
+                                    ✗ Reject
+                                  </Button>
+                                </>
+                              )}
+                              <Tooltip title="Delete this request">
+                                <IconButton size="small"
+                                  onClick={async () => {
+                                    if (!window.confirm('Delete this excuse request?')) return;
+                                    try {
+                                      await api.delete(`/excuse/teacher/${req.id}`);
+                                      showSnack('Excuse request deleted', 'success');
+                                      fetchSubjectExcuseRequests(subjectExcuseAsgId!);
+                                    } catch (err: any) {
+                                      showSnack(err.response?.data?.error || 'Failed to delete', 'error');
+                                    }
+                                  }}
+                                  sx={{ color: '#c62828', '&:hover': { bgcolor: '#ffebee' } }}>
+                                  <Cancel fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
+                            </Box>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              </Paper>
+            );
+          })()}
+
+          {/* ── SUBJECT CLASS VIEW ── */}
+          {typeof activeView === 'number' && excuseTab !== 'subject-excuses' && (() => {
+            const asg = subjectAssignments.find((a: any) => a.id === activeView);
+            if (!asg) return null;
+            return (
+              <Box>
+                {/* Subject header */}
+                <Paper sx={{ mb: 3, borderRadius: 2, overflow: 'hidden' }}>
+                  <Box sx={{ p: 2.5, background: theme.colors.primary.gradient, color: '#fff',
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 1 }}>
+                    <Box>
+                      <Typography sx={{ fontFamily: theme.typography.fontFamily.display, fontWeight: 700, fontSize: 18 }}>
+                        📚 {asg.subject}
+                      </Typography>
+                      <Typography variant="body2" sx={{ opacity: 0.9, mt: 0.25 }}>
+                        {asg.section} {asg.year_level && `• ${asg.year_level}`}
+                        {asg.strand && ` • ${asg.strand}`}
+                        {asg.track && ` • ${asg.track}`}
+                        {asg.adviser_name && ` • Adviser: ${asg.adviser_name}`}
+                      </Typography>
+                    </Box>
+                    <Box display="flex" alignItems="center" gap={1}>
+                      <TextField type="date" size="small" value={subjectDate}
+                        onChange={e => setSubjectDate(e.target.value)}
+                        sx={{ width: 150, bgcolor: 'rgba(255,255,255,0.15)', borderRadius: 1,
+                          '& input': { color: '#fff' }, '& .MuiOutlinedInput-notchedOutline': { borderColor: 'rgba(255,255,255,0.4)' } }}
+                      />
+                      <Button size="small" variant="outlined"
+                        onClick={() => fetchSubjectAttendance(activeView, subjectDate)}
+                        sx={{ color: '#fff', borderColor: 'rgba(255,255,255,0.5)', '&:hover': { borderColor: '#fff' } }}>
+                        Refresh
+                      </Button>
+                    </Box>
+                  </Box>
+                </Paper>
+
+                {subjectLoading ? (
+                  <Box textAlign="center" py={4}><CircularProgress /></Box>
+                ) : (
+                  <>
+                    {/* ── 1. Automated Partial Attendance List ── */}
+                    <Paper sx={{ mb: 3, borderRadius: 2, overflow: 'hidden' }}>
+                      <Box sx={{ p: 2, bgcolor: '#fff8e1', borderBottom: '1px solid #ffe082',
+                          display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <Box>
+                          <Typography sx={{ fontWeight: 700, fontSize: '0.95rem', color: '#e65100' }}>
+                            ⏳ Automated Partial Attendance List
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            Kiosk scans — verify each entry to move it to the Final List
+                          </Typography>
+                        </Box>
+                        <Chip label={`${partialAttendance.length} pending`} size="small"
+                          sx={{ bgcolor: '#ffa000', color: '#fff', fontWeight: 700 }} />
+                      </Box>
+                      <TableContainer>
+                        <Table size="small">
+                          <TableHead>
+                            <TableRow>
+                              {['Student', 'LRN', 'Time', 'Method', 'Status', 'Verify As', 'Action'].map(h => (
+                                <TableCell key={h} sx={{ fontWeight: 700, bgcolor: '#fffde7' }}>{h}</TableCell>
+                              ))}
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {partialAttendance.length === 0 ? (
+                              <TableRow>
+                                <TableCell colSpan={7} align="center" sx={{ py: 4, color: '#aaa', fontStyle: 'italic' }}>
+                                  No pending scans — all attendance verified
+                                </TableCell>
+                              </TableRow>
+                            ) : partialAttendance.map(r => (
+                              <PartialAttendanceRow
+                                key={r.id} record={r}
+                                onVerify={async (id, status) => {
+                                  setVerifyingId(id);
+                                  try {
+                                    await api.post('/teacher/attendance/verify', { attendance_id: id, status });
+                                    showSnack(`Attendance verified as ${status}`);
+                                    fetchSubjectAttendance(activeView, subjectDate);
+                                  } catch { showSnack('Failed to verify', 'error'); }
+                                  finally { setVerifyingId(null); }
+                                }}
+                                verifyingId={verifyingId}
+                              />
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
+                    </Paper>
+
+                    {/* ── 2. Final Attendance List ── */}
+                    <Paper sx={{ borderRadius: 2, overflow: 'hidden' }}>
+                      <Box sx={{ p: 2, background: theme.colors.primary.gradient, color: '#fff',
+                          display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <Box>
+                          <Typography sx={{ fontWeight: 700, fontSize: '0.95rem' }}>
+                            ✅ Final Attendance List — {asg.subject}
+                          </Typography>
+                          <Typography variant="caption" sx={{ opacity: 0.85 }}>
+                            Verified records • synced to Parent Portal
+                          </Typography>
+                        </Box>
+                        <Chip label={`${finalAttendance.length} records`} size="small"
+                          sx={{ bgcolor: 'rgba(255,255,255,0.2)', color: '#fff', fontWeight: 700 }} />
+                      </Box>
+                      <TableContainer sx={{ maxHeight: 400 }}>
+                        <Table stickyHeader size="small">
+                          <TableHead>
+                            <TableRow>
+                              {['Student', 'Date', 'LRN', 'Time', 'Method', 'Status', 'Photo'].map(h => (
+                                <TableCell key={h} sx={{ fontWeight: 700, bgcolor: theme.colors.primary.light, color: '#fff' }}>{h}</TableCell>
+                              ))}
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {finalAttendance.length === 0 ? (
+                              <TableRow>
+                                <TableCell colSpan={7} align="center" sx={{ py: 4, color: '#aaa', fontStyle: 'italic' }}>
+                                  No verified attendance for this date
+                                </TableCell>
+                              </TableRow>
+                            ) : finalAttendance.map(r => (
+                              <TableRow key={r.id} hover>
+                                <TableCell sx={{ fontWeight: 700 }}>{r.student_name}</TableCell>
+                                <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                                  {formatAttendanceDate(r.date)}
+                                </TableCell>
+                                <TableCell>{r.lrn}</TableCell>
+                                <TableCell>{r.time_in || (r.timestamp ? format(new Date(r.timestamp), 'hh:mm a') : '—')}</TableCell>
+                                <TableCell><Chip label={r.scan_method} size="small" /></TableCell>
+                                <TableCell>
+                                  <Chip label={r.status} size="small"
+                                    color={r.status === 'Time-In' ? 'success' : r.status === 'Late' ? 'warning' : r.status === 'Time-Out' ? 'info' : r.status === 'Excused' ? 'default' : 'error'} />
+                                </TableCell>
+                                <TableCell align="center">
+                                  {r.photo_path ? (
+                                    <Tooltip title="View photo">
+                                      <IconButton size="small" onClick={() => setPhotoDialog({
+                                        open: true, photoUrl: r.photo_path!,
+                                        studentName: r.student_name, status: r.status,
+                                        timestamp: r.timestamp, method: r.scan_method,
+                                      })} sx={{ color: theme.colors.primary.main }}>
+                                        <PhotoCamera fontSize="small" />
+                                      </IconButton>
+                                    </Tooltip>
+                                  ) : (
+                                    <PhotoCamera fontSize="small" sx={{ color: '#ccc' }} />
+                                  )}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
+
+                      {/* Student roster for this subject */}
+                      {subjectStudents.length > 0 && (
+                        <Box sx={{ p: 2, borderTop: '1px solid #e0e0e0', bgcolor: '#f9f9f9' }}>
+                          <Typography variant="caption" sx={{ fontWeight: 700, color: '#555' }}>
+                            Students in this class ({subjectStudents.length}):
+                          </Typography>
+                          <Box display="flex" gap={0.5} flexWrap="wrap" mt={0.5}>
+                            {subjectStudents.map((s: any) => (
+                              <Chip key={s.id} label={s.name} size="small"
+                                sx={{ bgcolor: '#e3f2fd', color: '#1565c0', fontSize: '0.7rem' }}
+                              />
+                            ))}
+                          </Box>
+                        </Box>
+                      )}
+                    </Paper>
+                  </>
+                )}
+              </Box>
+            );
+          })()}
+
         </Box>
       </Box>
 
@@ -1116,9 +1743,7 @@ export default function TeacherDashboardPageNew() {
               </Typography>
               <Typography variant="body2" color="text.secondary">
                 Date:{' '}
-                {resolveDialog.request.date
-                  ? format(new Date(String(resolveDialog.request.date).split('T')[0] + 'T00:00:00'), 'MMMM d, yyyy')
-                  : '—'}
+                {formatAttendanceDate(resolveDialog.request.date, 'MMMM d, yyyy')}
               </Typography>
               <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
                 Reason: {resolveDialog.request.reason}

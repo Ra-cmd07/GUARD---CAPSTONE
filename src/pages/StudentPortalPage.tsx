@@ -319,7 +319,7 @@ export default function StudentPortalPage() {
                       let timeStr = '—';
                       try { if (r.time_in) timeStr = r.time_in; else if (r.timestamp) timeStr = format(new Date(r.timestamp), 'hh:mm a'); } catch { timeStr = r.time_in || '—'; }
                       const getStatusBadge = (status: string) => {
-                        const k = status === 'Time-In' ? 'success' : status === 'Late' ? 'warning' : status === 'Time-Out' ? 'info' : 'error';
+                        const k = status === 'Time-In' ? 'success' : status === 'Late' ? 'warning' : status === 'Time-Out' ? 'info' : status === 'Excused' ? 'default' : 'error';
                         return theme.components.badge[k] || {};
                       };
                       return (
