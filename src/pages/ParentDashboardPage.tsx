@@ -8,7 +8,7 @@ import {
 } from '@mui/material';
 import {
   Logout, School, CheckCircle, Cancel, Dashboard as DashboardIcon,
-  CalendarToday, LocationOn, Sms as SmsIcon, PhotoCamera, Delete, Menu as MenuIcon, EventNote,
+  CalendarToday, LocationOn, Sms as SmsIcon, PhotoCamera, Delete, Menu as MenuIcon, EventNote, Close,
 } from '@mui/icons-material';
 import { format } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
@@ -714,6 +714,20 @@ export default function ParentDashboardPage() {
                           Please contact Iponan National High School.
                         </Typography>
                       </Box>
+                      <Tooltip title="Dismiss this alert">
+                        <IconButton
+                          size="small"
+                          onClick={async () => {
+                            try {
+                              await api.patch(`/alerts/${alert.id}/dismiss`);
+                              setParentAlerts(prev => prev.filter(a => a.id !== alert.id));
+                            } catch { /* silent */ }
+                          }}
+                          sx={{ color: '#bbb', flexShrink: 0, '&:hover': { color: '#e65100', bgcolor: 'rgba(230,81,0,0.08)' } }}
+                        >
+                          <Close fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
                     </Paper>
                   ))}
 

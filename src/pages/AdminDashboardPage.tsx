@@ -407,6 +407,14 @@ export default function AdminDashboardPage() {
   const [alerts, setAlerts] = useState<any[]>([]);
   const [alertCount, setAlertCount] = useState(0);
 
+  // Fingerprint room prediction state
+  const [roomPrediction, setRoomPrediction] = useState<{
+    predicted_location: string;
+    confidence_distance: number;
+    live_anchors: { anchor_id: string; rssi: number }[];
+  } | null>(null);
+  const [roomPredictionError, setRoomPredictionError] = useState<string | null>(null);
+
   // Announcements state
   const [announcements, setAnnouncements] = useState<any[]>([]);
   const [annForm, setAnnForm] = useState({
@@ -495,6 +503,28 @@ export default function AdminDashboardPage() {
       return () => clearInterval(interval);
     }
   }, [tab, loadDashboard]);
+
+  // Poll fingerprint room prediction every 5 seconds when on the Live Map tab
+  useEffect(() => {
+    if (tab !== 'location') return;
+    const fetchPrediction = async () => {
+      try {
+        const { data } = await api.get('/fingerprint/predict?seconds=10');
+        setRoomPrediction(data);
+        setRoomPredictionError(null);
+      } catch (err: any) {
+        const msg = err.response?.data?.error;
+        // Don't show "no fingerprint data" as an error — just clear the panel
+        if (msg?.includes('No fingerprint') || msg?.includes('No live')) {
+          setRoomPrediction(null);
+        }
+        setRoomPredictionError(null);
+      }
+    };
+    fetchPrediction();
+    const interval = setInterval(fetchPrediction, 5000);
+    return () => clearInterval(interval);
+  }, [tab]);
 
   useEffect(() => {
     if (tab === 'users' || tab === 'students') loadUsers();
@@ -741,7 +771,7 @@ export default function AdminDashboardPage() {
                     <Table size="small" stickyHeader>
                       <TableHead>
                         <TableRow>
-                          {['Student', 'LRN', 'Grade/Section', 'Rate', 'Notified'].map(h => (
+                          {['Student', 'LRN', 'Grade/Section', 'Rate', 'Notified', ''].map(h => (
                             <TableCell key={h} sx={{ bgcolor: '#fff8f0', fontWeight: 700, color: '#e65100' }}>{h}</TableCell>
                           ))}
                         </TableRow>
@@ -769,6 +799,23 @@ export default function AdminDashboardPage() {
                                 {a.notified_parent  && <Chip label="Parent"  size="small" color="success" sx={{ fontSize: '0.65rem', height: 18 }} />}
                                 {a.notified_admin   && <Chip label="Admin"   size="small" color="warning" sx={{ fontSize: '0.65rem', height: 18 }} />}
                               </Box>
+                            </TableCell>
+                            <TableCell align="center">
+                              <Tooltip title="Dismiss this alert">
+                                <IconButton
+                                  size="small"
+                                  onClick={async () => {
+                                    try {
+                                      await api.patch(`/alerts/${a.id}/dismiss`);
+                                      setAlerts(prev => prev.filter(x => x.id !== a.id));
+                                      setAlertCount(prev => Math.max(0, prev - 1));
+                                    } catch { /* silent */ }
+                                  }}
+                                  sx={{ color: '#999', '&:hover': { color: '#c62828', bgcolor: '#ffebee' } }}
+                                >
+                                  <Close fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
                             </TableCell>
                           </TableRow>
                         ))}
@@ -1098,6 +1145,66 @@ export default function AdminDashboardPage() {
                   showDiagnostics={true}
                 />
               </Paper>
+
+              {/* Fingerprint Room Prediction Panel */}
+              {roomPrediction && (
+                <Paper elevation={2} sx={{ mt: 2, p: 2.5, borderRadius: 2, border: '2px solid #4f46e5', bgcolor: '#eef2ff' }}>
+                  <Box display="flex" alignItems="center" gap={1} mb={1.5}>
+                    <Typography sx={{ fontSize: '1.3rem' }}>📍</Typography>
+                    <Box>
+                      <Typography fontWeight={700} color="#4338ca" fontSize="0.95rem">
+                        Fingerprint Room Prediction
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        Based on current BLE anchor RSSI readings — updates every 5 seconds
+                      </Typography>
+                    </Box>
+                  </Box>
+                  <Box display="flex" alignItems="center" gap={2} flexWrap="wrap">
+                    <Chip
+                      label={roomPrediction.predicted_location}
+                      sx={{
+                        bgcolor: '#4f46e5', color: '#fff', fontWeight: 700,
+                        fontSize: '1rem', px: 1, height: 36,
+                      }}
+                    />
+                    <Typography variant="body2" color="text.secondary">
+                      Confidence distance: <strong>{roomPrediction.confidence_distance}</strong> dBm units
+                      {roomPrediction.confidence_distance < 15 && (
+                        <Chip label="High confidence" size="small" color="success" sx={{ ml: 1, fontSize: '0.65rem', height: 18 }} />
+                      )}
+                      {roomPrediction.confidence_distance >= 15 && roomPrediction.confidence_distance < 30 && (
+                        <Chip label="Medium confidence" size="small" color="warning" sx={{ ml: 1, fontSize: '0.65rem', height: 18 }} />
+                      )}
+                      {roomPrediction.confidence_distance >= 30 && (
+                        <Chip label="Low confidence" size="small" color="error" sx={{ ml: 1, fontSize: '0.65rem', height: 18 }} />
+                      )}
+                    </Typography>
+                  </Box>
+                  <Box mt={1.5} display="flex" gap={1} flexWrap="wrap">
+                    {roomPrediction.live_anchors.map((a: any) => (
+                      <Chip
+                        key={a.anchor_id}
+                        label={`${a.anchor_id}: ${Math.round(a.rssi)} dBm`}
+                        size="small"
+                        variant="outlined"
+                        sx={{ fontSize: '0.7rem', color: '#4338ca', borderColor: '#a5b4fc' }}
+                      />
+                    ))}
+                  </Box>
+                </Paper>
+              )}
+
+              {/* No fingerprint data notice */}
+              {!roomPrediction && tab === 'location' && (
+                <Paper elevation={1} sx={{ mt: 2, p: 2, borderRadius: 2, bgcolor: '#f8fafc', border: '1px dashed #cbd5e1' }}>
+                  <Typography variant="body2" color="text.secondary" textAlign="center">
+                    🔍 No fingerprint prediction available.{' '}
+                    <strong>Calibrate the system</strong> using the Attendbox Mobile app (admin login)
+                    to enable room-level detection.
+                  </Typography>
+                </Paper>
+              )}
 
               {/* Info Box */}
               <Paper elevation={1} sx={{ mt: 2, p: 2, bgcolor: theme.colors.primary[50], borderRadius: 2 }}>
