@@ -35,6 +35,7 @@ import excuseRoutes       from './routes/excuseRoutes';
 import messageRoutes      from './routes/messageRoutes';
 import alertRoutes        from './routes/alertRoutes';
 import announcementRoutes from './routes/announcementRoutes';
+import fingerprintRoutes  from './routes/fingerprintRoutes';
 import assignmentRoutes from './routes/assignmentRoutes';
 import { checkAttendanceThresholds } from './controllers/attendanceAlertController';
 
@@ -111,6 +112,7 @@ app.use('/api/excuse',         excuseRoutes);
 app.use('/api/messages',       messageRoutes);
 app.use('/api/alerts',         alertRoutes);
 app.use('/api/announcements',  announcementRoutes);
+app.use('/api/fingerprint',    fingerprintRoutes);
 
 // ─── Health Check ─────────────────────────────────────────────────────
 app.get('/api/health', (_req, res) => {
@@ -201,6 +203,17 @@ async function findAvailablePort(startPort: number, attempts = 6): Promise<numbe
     console.log(`   Network: ${proto}://192.168.1.37:${chosenPort}`);
     console.log(`🔌 WebSocket server ready for real-time updates`);
     console.log(`📤 Background upload queue initialized`);
+
+    // ── HTTP companion server for mobile app (avoids self-signed cert issues) ──
+    // React Native rejects self-signed HTTPS certs, so we expose a plain HTTP
+    // listener on port 5001 for the Attendbox Mobile app only.
+    if (httpsEnabled) {
+      const HTTP_MOBILE_PORT = Number(process.env.HTTP_MOBILE_PORT) || 5001;
+      const httpMobileServer = createHttpServer(app);
+      httpMobileServer.listen(HTTP_MOBILE_PORT, '0.0.0.0', () => {
+        console.log(`📱 HTTP mobile port: http://192.168.1.29:${HTTP_MOBILE_PORT}/api  (for Attendbox Mobile app)`);
+      });
+    }
 
     // ── Daily attendance threshold check ─────────────────────────────
     const RUN_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
