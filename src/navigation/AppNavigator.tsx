@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import LoginScreen from '../screens/LoginScreen';
 import ParentDashboardScreen from '../screens/ParentDashboardScreen';
 import StudentPortalScreen from '../screens/StudentPortalScreen';
+import FingerprintCalibrationScreen from '../screens/FingerprintCalibrationScreen';
 import { ActivityIndicator, View } from 'react-native';
 
 const Stack = createStackNavigator();
@@ -29,6 +30,8 @@ export default function AppNavigator() {
           <Stack.Screen name="ParentDashboard" component={ParentDashboardScreen} />
         ) : role === 'student' ? (
           <Stack.Screen name="StudentPortal" component={StudentPortalScreen} />
+        ) : role === 'admin' ? (
+          <Stack.Screen name="FingerprintCalibration" component={FingerprintCalibrationScreen} />
         ) : (
           <Stack.Screen name="Login" component={LoginScreen} />
         )}

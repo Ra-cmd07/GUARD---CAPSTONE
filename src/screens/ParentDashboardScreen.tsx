@@ -139,12 +139,27 @@ export default function ParentDashboardScreen() {
               <Text style={styles.attendanceMethod}>
                 Method: {record.scan_method}
               </Text>
-              {record.photo_path && (
+              
+              {/* HYBRID PHOTO DISPLAY */}
+              {record.cloudinary_uploaded && record.cloudinary_url ? (
+                // Photo uploaded to Cloudinary - display from CDN
                 <Image
-                  source={{ uri: record.photo_path }}
+                  source={{ uri: record.cloudinary_url }}
                   style={styles.attendancePhoto}
+                  resizeMode="cover"
                 />
-              )}
+              ) : record.local_path ? (
+                // Photo still uploading to Cloudinary - show indicator
+                <View style={styles.uploadingContainer}>
+                  <ActivityIndicator size="small" color="#2563eb" />
+                  <Text style={styles.uploadingText}>
+                    📤 Uploading to cloud...
+                  </Text>
+                  <Text style={styles.uploadingSubtext}>
+                    Photo will appear shortly
+                  </Text>
+                </View>
+              ) : null}
             </View>
           ))
         )}
@@ -300,6 +315,29 @@ const styles = StyleSheet.create({
     height: 200,
     borderRadius: 8,
     marginTop: 12,
+  },
+  uploadingContainer: {
+    width: '100%',
+    height: 120,
+    borderRadius: 8,
+    marginTop: 12,
+    backgroundColor: '#f3f4f6',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderStyle: 'dashed',
+  },
+  uploadingText: {
+    marginTop: 8,
+    fontSize: 14,
+    color: '#6b7280',
+    fontWeight: '600',
+  },
+  uploadingSubtext: {
+    marginTop: 4,
+    fontSize: 12,
+    color: '#9ca3af',
   },
   emptyState: {
     padding: 32,

@@ -65,6 +65,9 @@ export interface AttendanceRecord {
   time_out?: string;
   timestamp: string;
   photo_path?: string;
+  local_path?: string;           // NEW: Local file path
+  cloudinary_url?: string;       // NEW: Cloudinary CDN URL
+  cloudinary_uploaded?: boolean; // NEW: Upload status flag
   qr_data?: string;
   by_whom?: string;
   notes?: string;
