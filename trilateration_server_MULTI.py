@@ -24,13 +24,84 @@ import requests  # For backend API integration
 app = Flask(__name__, static_folder='static')
 sock = Sock(app)
 
+# ==================== DISTANCE CORRECTION ====================
+
+# Cache correction data to avoid HTTP call on every update
+_correction_cache: dict = {}  # {anchor_id: [(rssi, distance), ...]}
+_correction_cache_ts: float = 0.0
+_CORRECTION_CACHE_TTL = 30.0  # seconds
+
+def get_corrected_distance(anchor_id: str, rssi: float, raw_distance: float) -> float:
+    """Return empirically corrected distance using fingerprint calibration data.
+    Falls back to raw_distance if no calibration data or request fails."""
+    global _correction_cache, _correction_cache_ts
+
+    if not ENABLE_DISTANCE_CORRECTION:
+        return raw_distance
+
+    try:
+        resp = requests.get(
+            FINGERPRINT_CORRECT_URL,
+            params={"anchor_id": anchor_id, "rssi": rssi},
+            timeout=0.5  # must be fast — called every update cycle
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            corrected = data.get("corrected_distance", raw_distance)
+            method = data.get("method", "?")
+            if method != "fallback":
+                return float(corrected)
+    except Exception:
+        pass  # Network error or timeout — use raw distance
+
+    return raw_distance
+
+def run_zone_detection():
+    """Background thread: every ZONE_DETECT_INTERVAL seconds, collect the latest
+    corrected reading per student per anchor and POST to the detect-zone endpoint."""
+    import time as _time
+    while True:
+        _time.sleep(ZONE_DETECT_INTERVAL)
+        if not ENABLE_ZONE_DETECTION:
+            continue
+        try:
+            with lock:
+                now = _time.time()
+                readings = []
+                for target_id, student_info in STUDENTS.items():
+                    target_readings = anchor_readings[target_id]
+                    for anchor_id, rlist in target_readings.items():
+                        if rlist and (now - rlist[-1].timestamp) < MEASUREMENT_TIMEOUT:
+                            r = rlist[-1]
+                            readings.append({
+                                'student_id':         student_info.get('student_id', target_id),
+                                'student_name':       student_info['name'],
+                                'anchor_id':          str(anchor_id),
+                                'rssi':               r.rssi,
+                                'corrected_distance': r.distance,
+                            })
+
+            if readings:
+                requests.post(
+                    DETECT_ZONE_URL,
+                    json={'readings': readings},
+                    timeout=2.0
+                )
+        except Exception as e:
+            print(f"[ZoneDetect] Error: {e}")
+
 # ==================== CONFIGURATION ====================
 
 # Backend API configuration
 BACKEND_API_URL = "http://localhost:5000/api/location/trilateration-update"
-ENABLE_BACKEND_SYNC = True  # Set to False to disable database saving
-DB_UPDATE_INTERVAL = 5.0  # Save to database every 5 seconds (instead of every 0.05s)
-SAVE_ON_ZONE_CHANGE = True  # Save immediately when proximity zone changes
+FINGERPRINT_CORRECT_URL = "http://192.168.1.29:5001/api/fingerprint/correct-distance"  # HTTP port for internal calls
+DETECT_ZONE_URL = "http://192.168.1.29:5001/api/fingerprint/detect-zone"               # Enter/Exit detection
+ENABLE_BACKEND_SYNC = True
+ENABLE_DISTANCE_CORRECTION = True
+ENABLE_ZONE_DETECTION = True   # Set False to disable Enter/Exit detection
+ZONE_DETECT_INTERVAL = 3.0     # Seconds between zone checks
+DB_UPDATE_INTERVAL = 5.0
+SAVE_ON_ZONE_CHANGE = True
 
 # Anchor positions (GPS coordinates: latitude, longitude)
 ANCHOR_POSITIONS = {
@@ -667,14 +738,18 @@ def update_anchor():
         print(f"[UPDATE] anchor={anchor_id} target={target_id} ({student_name}) found={found} distance={distance:.2f}m rssi={rssi} zone={proximity_zone}")
         
         if found and distance > 0:
+            # Apply empirical distance correction if calibration data exists
+            anchor_id_str = str(anchor_id)
+            corrected_distance = get_corrected_distance(anchor_id_str, float(rssi), distance)
+
             with lock:
                 anchor_readings[target_id][anchor_id].append(AnchorReading(
                     anchor_id=anchor_id,
-                    distance=distance,
+                    distance=corrected_distance,
                     rssi=rssi,
                     timestamp=time.time(),
-                    raw_distance=distance,
-                    proximity_zone=proximity_zone  # NEW
+                    raw_distance=distance,        # keep original for reference
+                    proximity_zone=proximity_zone
                 ))
         
         return jsonify({'status': 'ok'})
@@ -718,6 +793,36 @@ def status():
             'students': students_status,
             'connected_clients': len(websocket_clients)
         })
+
+@app.route('/latest-rssi')
+def latest_rssi():
+    """Return the most recent RSSI reading per anchor across all targets.
+    Used by the mobile app distance calibration to get current RSSI without
+    needing the anchor to send to the backend BLEPROXY table."""
+    with lock:
+        now = time.time()
+        result = {}  # anchor_id -> {rssi, distance, age_s, target_id}
+
+        for target_id, target_readings in anchor_readings.items():
+            for anchor_id, readings in target_readings.items():
+                if readings and (now - readings[-1].timestamp) < MEASUREMENT_TIMEOUT:
+                    reading = readings[-1]
+                    anchor_key = str(anchor_id)
+                    # Keep the freshest reading per anchor
+                    existing = result.get(anchor_key)
+                    if existing is None or reading.timestamp > existing.get('_ts', 0):
+                        result[anchor_key] = {
+                            'anchor_id': anchor_key,
+                            'rssi': reading.rssi,
+                            'raw_distance': reading.raw_distance,
+                            'corrected_distance': reading.distance,
+                            'age_s': round(now - reading.timestamp, 1),
+                            '_ts': reading.timestamp,
+                        }
+
+        # Strip internal _ts field before returning
+        clean = [{k: v for k, v in r.items() if k != '_ts'} for r in result.values()]
+        return jsonify({'anchors': clean, 'count': len(clean)})
 
 # ==================== WEBSOCKET ====================
 
@@ -781,6 +886,12 @@ if __name__ == '__main__':
     broadcaster = threading.Thread(target=broadcast_positions, daemon=True)
     broadcaster.start()
     print("[Broadcaster] ✓ Position broadcaster started")
-    
+
+    # Start Enter/Exit zone detection thread
+    if ENABLE_ZONE_DETECTION:
+        zone_thread = threading.Thread(target=run_zone_detection, daemon=True)
+        zone_thread.start()
+        print(f"[ZoneDetect] ✓ Enter/Exit detection started (interval={ZONE_DETECT_INTERVAL}s)")
+
     # Start Flask server
     app.run(host='0.0.0.0', port=8080, debug=False)
