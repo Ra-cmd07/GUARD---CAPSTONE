@@ -8,6 +8,22 @@ import { createServer as createHttpServer } from 'http';
 import { createServer as createHttpsServer } from 'https';
 import net from 'net';
 import fs from 'fs';
+import os from 'os';
+
+// Resolve the machine's primary non-loopback IPv4 address at runtime
+function getLocalIP(): string {
+  const ifaces = os.networkInterfaces();
+  for (const name of Object.keys(ifaces)) {
+    // Skip VirtualBox and loopback adapters
+    if (/virtualbox|vboxnet|vmware|loopback/i.test(name)) continue;
+    for (const iface of ifaces[name] ?? []) {
+      if (iface.family === 'IPv4' && !iface.internal && !iface.address.startsWith('192.168.56.')) {
+        return iface.address;
+      }
+    }
+  }
+  return 'localhost';
+}
 import { initializeWebSocket } from './src/websocket/socketHandler';
 import { uploadQueue } from './utils/uploadQueue';
 
@@ -200,7 +216,7 @@ async function findAvailablePort(startPort: number, attempts = 6): Promise<numbe
     const proto = httpsEnabled ? 'https' : 'http';
     console.log(`🚀 AttendBox API running at ${proto}://0.0.0.0:${chosenPort}`);
     console.log(`   Local:   ${proto}://localhost:${chosenPort}`);
-    console.log(`   Network: ${proto}://192.168.1.37:${chosenPort}`);
+    console.log(`   Network: ${proto}://${getLocalIP()}:${chosenPort}`);
     console.log(`🔌 WebSocket server ready for real-time updates`);
     console.log(`📤 Background upload queue initialized`);
 
@@ -211,7 +227,8 @@ async function findAvailablePort(startPort: number, attempts = 6): Promise<numbe
       const HTTP_MOBILE_PORT = Number(process.env.HTTP_MOBILE_PORT) || 5001;
       const httpMobileServer = createHttpServer(app);
       httpMobileServer.listen(HTTP_MOBILE_PORT, '0.0.0.0', () => {
-        console.log(`📱 HTTP mobile port: http://192.168.1.29:${HTTP_MOBILE_PORT}/api  (for Attendbox Mobile app)`);
+        const localIP = getLocalIP();
+        console.log(`📱 HTTP mobile port: http://${localIP}:${HTTP_MOBILE_PORT}/api  (for Attendbox Mobile app)`);
       });
     }
 
