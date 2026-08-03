@@ -415,6 +415,13 @@ export default function AdminDashboardPage() {
   } | null>(null);
   const [roomPredictionError, setRoomPredictionError] = useState<string | null>(null);
 
+  // Room Enter/Exit state
+  const [studentStatus, setStudentStatus] = useState<Record<string, {
+    room_name: string; status: 'inside' | 'outside';
+    last_distance: number; last_rssi: number; since: string;
+  }>>({});
+  const [roomEvents, setRoomEvents] = useState<any[]>([]);
+
   // Announcements state
   const [announcements, setAnnouncements] = useState<any[]>([]);
   const [annForm, setAnnForm] = useState({
@@ -514,15 +521,28 @@ export default function AdminDashboardPage() {
         setRoomPredictionError(null);
       } catch (err: any) {
         const msg = err.response?.data?.error;
-        // Don't show "no fingerprint data" as an error — just clear the panel
         if (msg?.includes('No fingerprint') || msg?.includes('No live')) {
           setRoomPrediction(null);
         }
         setRoomPredictionError(null);
       }
     };
-    fetchPrediction();
-    const interval = setInterval(fetchPrediction, 5000);
+    const fetchStatus = async () => {
+      try {
+        const { data } = await api.get('/fingerprint/student-status');
+        setStudentStatus(data);
+      } catch { /* silent */ }
+    };
+    const fetchEvents = async () => {
+      try {
+        const { data } = await api.get('/fingerprint/room-events?limit=10');
+        setRoomEvents(data);
+      } catch { /* silent */ }
+    };
+    fetchPrediction(); fetchStatus(); fetchEvents();
+    const interval = setInterval(() => {
+      fetchPrediction(); fetchStatus(); fetchEvents();
+    }, 5000);
     return () => clearInterval(interval);
   }, [tab]);
 
@@ -1203,6 +1223,99 @@ export default function AdminDashboardPage() {
                     <strong>Calibrate the system</strong> using the Attendbox Mobile app (admin login)
                     to enable room-level detection.
                   </Typography>
+                </Paper>
+              )}
+
+              {/* ── Room Status Panel ── */}
+              {Object.keys(studentStatus).length > 0 && (
+                <Paper elevation={2} sx={{ mt: 2, borderRadius: 2, overflow: 'hidden', border: '2px solid #0891b2' }}>
+                  <Box sx={{ p: 2, bgcolor: '#ecfeff', borderBottom: '1px solid #a5f3fc',
+                    display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Typography sx={{ fontSize: '1.1rem' }}>🚪</Typography>
+                    <Box>
+                      <Typography fontWeight={700} color="#0e7490" fontSize="0.95rem">
+                        Student Room Status
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        Inside / Outside detection — updates every 5 seconds
+                      </Typography>
+                    </Box>
+                  </Box>
+                  <Box sx={{ p: 1.5, display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                    {Object.entries(studentStatus).map(([sid, s]) => (
+                      <Box key={sid} sx={{
+                        display: 'flex', alignItems: 'center', gap: 1,
+                        px: 1.5, py: 1, borderRadius: 2,
+                        bgcolor: s.status === 'inside' ? '#f0fdf4' : '#fef2f2',
+                        border: `1px solid ${s.status === 'inside' ? '#86efac' : '#fca5a5'}`,
+                        minWidth: 180,
+                      }}>
+                        <Box sx={{
+                          width: 10, height: 10, borderRadius: '50%',
+                          bgcolor: s.status === 'inside' ? '#22c55e' : '#ef4444',
+                          flexShrink: 0,
+                        }} />
+                        <Box>
+                          <Typography fontSize="0.82rem" fontWeight={700} color="#1e293b">
+                            {/* student name not in status — show id for now */}
+                            Student {sid}
+                          </Typography>
+                          <Typography fontSize="0.72rem" color="text.secondary">
+                            {s.status === 'inside'
+                              ? `Inside ${s.room_name} · ${s.last_distance.toFixed(1)}m`
+                              : `Outside ${s.room_name}`}
+                          </Typography>
+                        </Box>
+                        <Chip
+                          label={s.status === 'inside' ? 'Inside' : 'Outside'}
+                          size="small"
+                          color={s.status === 'inside' ? 'success' : 'error'}
+                          sx={{ ml: 'auto', fontSize: '0.65rem', height: 18 }}
+                        />
+                      </Box>
+                    ))}
+                  </Box>
+                </Paper>
+              )}
+
+              {/* ── Room Events Feed ── */}
+              {roomEvents.length > 0 && (
+                <Paper elevation={2} sx={{ mt: 2, borderRadius: 2, overflow: 'hidden', border: '1px solid #e2e8f0' }}>
+                  <Box sx={{ p: 2, bgcolor: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
+                    <Typography fontWeight={700} fontSize="0.9rem">📋 Recent Enter/Exit Events</Typography>
+                    <Typography variant="caption" color="text.secondary">Last 10 events</Typography>
+                  </Box>
+                  <Box sx={{ maxHeight: 240, overflowY: 'auto' }}>
+                    {roomEvents.map((ev: any, i: number) => (
+                      <Box key={ev.id || i} sx={{
+                        display: 'flex', alignItems: 'center', gap: 1.5,
+                        px: 2, py: 1, borderBottom: '1px solid #f1f5f9',
+                        bgcolor: i % 2 === 0 ? '#fff' : '#fafafa',
+                      }}>
+                        <Typography sx={{ fontSize: '1rem' }}>
+                          {ev.event_type === 'enter' ? '🚶' : '🚪'}
+                        </Typography>
+                        <Box flex={1}>
+                          <Typography fontSize="0.82rem" fontWeight={600}>{ev.student_name}</Typography>
+                          <Typography fontSize="0.72rem" color="text.secondary">
+                            {ev.event_type === 'enter' ? 'Entered' : 'Exited'} {ev.room_name}
+                            {ev.distance_m != null ? ` · ${ev.distance_m.toFixed(1)}m` : ''}
+                          </Typography>
+                        </Box>
+                        <Chip
+                          label={ev.event_type === 'enter' ? 'Enter' : 'Exit'}
+                          size="small"
+                          color={ev.event_type === 'enter' ? 'success' : 'default'}
+                          sx={{ fontSize: '0.65rem', height: 18 }}
+                        />
+                        <Typography fontSize="0.7rem" color="text.secondary" sx={{ whiteSpace: 'nowrap' }}>
+                          {ev.occurred_at
+                            ? format(new Date(ev.occurred_at), 'hh:mm a')
+                            : '—'}
+                        </Typography>
+                      </Box>
+                    ))}
+                  </Box>
                 </Paper>
               )}
 
