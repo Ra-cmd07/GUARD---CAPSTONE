@@ -1,18 +1,18 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Box, Grid, Paper, Typography, Chip, Avatar, IconButton,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Button, TextField, Select, MenuItem, FormControl, InputLabel,
   Alert, CircularProgress, Snackbar, Switch, FormControlLabel, FormGroup,
   Dialog, DialogTitle, DialogContent, DialogActions, Tooltip,
-  Drawer, AppBar, Toolbar, useMediaQuery, useTheme as useMuiTheme,
+  Drawer, AppBar, Toolbar, useMediaQuery, useTheme as useMuiTheme, InputAdornment,
 } from '@mui/material';
 import {
   People, School, Router, Sms, Dashboard, Logout, Add, Edit,
   ToggleOn, ToggleOff, LockReset, Menu, Close, PersonAdd,
   CheckCircle, Cancel, AccessTime, Assessment, PhotoCamera, Delete,
   QrCode2, Bluetooth, CreditCard, Download, LocationOn, Campaign,
-  Class as ClassIcon,
+  Class as ClassIcon, Settings, Search,
 } from '@mui/icons-material';
 import { QRCodeCanvas } from 'qrcode.react';
 import { format } from 'date-fns';
@@ -29,18 +29,19 @@ import KiosksPage from './KiosksPage';
 import AssignmentsPage from './AssignmentsPage';
 
 const NAV = [
-  { id: 'dashboard',     label: 'Dashboard',     icon: <Dashboard /> },
-  { id: 'users',         label: 'Users',          icon: <People /> },
-  { id: 'students',      label: 'Students',       icon: <School /> },
-  { id: 'assignments',   label: 'Assignments',    icon: <ClassIcon /> },
-  { id: 'kiosks',        label: 'Kiosks',         icon: <Router /> },
-  { id: 'sms',           label: 'SMS Logs',       icon: <Sms /> },
-  { id: 'reports',       label: 'Reports',        icon: <Assessment /> },
-  { id: 'location',      label: 'Live Map',       icon: <LocationOn /> },
-  { id: 'announcements', label: 'Announcements',  icon: <Campaign /> },
+  { id: 'dashboard',      label: 'Dashboard',       icon: <Dashboard /> },
+  { id: 'users',          label: 'Users',            icon: <People /> },
+  { id: 'students',       label: 'Students',         icon: <School /> },
+  { id: 'assignments',    label: 'Assignments',      icon: <ClassIcon /> },
+  { id: 'kiosks',         label: 'Kiosks',           icon: <Router /> },
+  { id: 'sms',            label: 'SMS Logs',         icon: <Sms /> },
+  { id: 'reports',        label: 'Reports',          icon: <Assessment /> },
+  { id: 'location',       label: 'Live Map',         icon: <LocationOn /> },
+  { id: 'announcements',  label: 'Announcements',    icon: <Campaign /> },
+  { id: 'school-settings', label: 'School Settings', icon: <Settings /> },
 ];
 
-type Tab = 'dashboard' | 'users' | 'students' | 'assignments' | 'kiosks' | 'sms' | 'reports' | 'location' | 'announcements';
+type Tab = 'dashboard' | 'users' | 'students' | 'assignments' | 'kiosks' | 'sms' | 'reports' | 'location' | 'announcements' | 'school-settings';
 
 function StatCard({ label, value, icon, color }: { label: string; value: any; icon: React.ReactNode; color: string }) {
   return (
@@ -204,11 +205,352 @@ function AddParentDialog({ open, onClose, student, onCreated }: {
   );
 }
 
+// ─── EditStudentDialog ────────────────────────────────────────────────
+// Allows admin to edit all student fields including SF2 name fields
+function EditStudentDialog({
+  open, user, onClose, onSaved,
+}: {
+  open: boolean; user: any; onClose: () => void; onSaved: () => void;
+}) {
+  const [form, setForm] = useState({
+    name: '', last_name: '', first_name: '', middle_name: '',
+    lrn: '', gender: '', grade: '', section: '',
+    mac_address: '', rfid_uid: '', contact: '',
+    // SF1 fields
+    birthdate: '', birth_place: '', mother_tongue: '',
+    ip_ethnic: '', religion: '',
+    address_street: '', barangay: '', municipality: '', province: '',
+    sf1_remarks: '',
+  });
+  const [loading, setLoading] = useState(false);
+  const [error,   setError]   = useState('');
+  const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }));
+
+  // Load user data into form when dialog opens
+  useEffect(() => {
+    if (!open || !user) return;
+    // Fetch full profile to get student fields
+    api.get(`/admin/users/${user.id}`)
+      .then(r => {
+        const p = r.data?.profile || {};
+        setForm({
+          name:         p.name         || user.username || '',
+          last_name:    p.last_name    || '',
+          first_name:   p.first_name   || '',
+          middle_name:  p.middle_name  || '',
+          lrn:          p.lrn          || '',
+          gender:       p.gender === 'M' ? 'Male' : p.gender === 'F' ? 'Female' : '',
+          grade:        p.grade        || '',
+          section:      p.section      || '',
+          mac_address:  p.mac_address  || '',
+          rfid_uid:     p.rfid_uid     || '',
+          contact:      p.contact      || '',
+          // SF1 fields
+          birthdate:      p.birthdate      ? String(p.birthdate).split('T')[0] : '',
+          birth_place:    p.birth_place    || '',
+          mother_tongue:  p.mother_tongue  || '',
+          ip_ethnic:      p.ip_ethnic      || '',
+          religion:       p.religion       || '',
+          address_street: p.address_street || '',
+          barangay:       p.barangay       || '',
+          municipality:   p.municipality   || '',
+          province:       p.province       || '',
+          sf1_remarks:    p.sf1_remarks    || '',
+        });
+      })
+      .catch(() => {});
+  }, [open, user]);
+
+  const handleSave = async () => {
+    setError('');
+    setLoading(true);
+    try {
+      await api.put(`/admin/users/${user.id}`, {
+        role: 'student',
+        name:         form.name,
+        last_name:    form.last_name    || null,
+        first_name:   form.first_name   || null,
+        middle_name:  form.middle_name  || null,
+        lrn:          form.lrn,
+        gender:       form.gender,
+        grade:        form.grade,
+        section:      form.section,
+        mac_address:  form.mac_address  || null,
+        rfid_uid:     form.rfid_uid     || null,
+        contact:      form.contact      || null,
+        // SF1 fields
+        birthdate:      form.birthdate      || null,
+        birth_place:    form.birth_place    || null,
+        mother_tongue:  form.mother_tongue  || null,
+        ip_ethnic:      form.ip_ethnic      || null,
+        religion:       form.religion       || null,
+        address_street: form.address_street || null,
+        barangay:       form.barangay       || null,
+        municipality:   form.municipality   || null,
+        province:       form.province       || null,
+        sf1_remarks:    form.sf1_remarks     || null,
+      });
+      onSaved();
+    } catch (e: any) {
+      setError(e.response?.data?.error || 'Failed to save');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!user) return null;
+
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
+      <DialogTitle sx={{ bgcolor: '#1565c0', color: '#fff', display: 'flex', justifyContent: 'space-between' }}>
+        <span>✏️ Edit Student — {user.username}</span>
+        <IconButton onClick={onClose} sx={{ color: '#fff' }}><Close /></IconButton>
+      </DialogTitle>
+      <DialogContent sx={{ pt: 3 }}>
+        {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+
+        {/* SF2 Name Fields */}
+        <Typography variant="subtitle2" sx={{ fontWeight: 700, color: '#1565c0', mb: 1.5 }}>
+          🎓 Name for SF2 (Last Name, First Name, Middle Name)
+        </Typography>
+        <Grid container spacing={2} sx={{ mb: 2 }}>
+          <Grid size={{ xs: 12, sm: 4 }}>
+            <TextField label="Last Name" fullWidth value={form.last_name}
+              onChange={e => set('last_name', e.target.value)}
+              helperText="e.g. Dela Cruz" />
+          </Grid>
+          <Grid size={{ xs: 12, sm: 4 }}>
+            <TextField label="First Name" fullWidth value={form.first_name}
+              onChange={e => set('first_name', e.target.value)} />
+          </Grid>
+          <Grid size={{ xs: 12, sm: 4 }}>
+            <TextField label="Middle Name" fullWidth value={form.middle_name}
+              onChange={e => set('middle_name', e.target.value)}
+              helperText="Optional" />
+          </Grid>
+        </Grid>
+
+        <Typography variant="subtitle2" sx={{ fontWeight: 700, color: '#555', mb: 1.5 }}>
+          Student Information
+        </Typography>
+        <Grid container spacing={2}>
+          <Grid size={{ xs: 12, sm: 6 }}>
+            <TextField label="Full Name (system)" fullWidth value={form.name}
+              onChange={e => set('name', e.target.value)}
+              helperText="Auto-updated from Last/First/Middle when saved" />
+          </Grid>
+          <Grid size={{ xs: 12, sm: 6 }}>
+            <TextField label="LRN *" fullWidth value={form.lrn}
+              onChange={e => set('lrn', e.target.value)} />
+          </Grid>
+          <Grid size={{ xs: 12, sm: 4 }}>
+            <FormControl fullWidth>
+              <InputLabel>Gender</InputLabel>
+              <Select value={form.gender} label="Gender" onChange={e => set('gender', e.target.value)}>
+                <MenuItem value="Male">Male</MenuItem>
+                <MenuItem value="Female">Female</MenuItem>
+              </Select>
+            </FormControl>
+          </Grid>
+          <Grid size={{ xs: 12, sm: 4 }}>
+            <TextField label="Grade Level" fullWidth value={form.grade}
+              onChange={e => set('grade', e.target.value)} placeholder="e.g. Grade 9" />
+          </Grid>
+          <Grid size={{ xs: 12, sm: 4 }}>
+            <TextField label="Section" fullWidth value={form.section}
+              onChange={e => set('section', e.target.value)} placeholder="e.g. IT3R4" />
+          </Grid>
+          <Grid size={{ xs: 12, sm: 6 }}>
+            <TextField label="RFID UID" fullWidth value={form.rfid_uid}
+              onChange={e => set('rfid_uid', e.target.value)} />
+          </Grid>
+          <Grid size={{ xs: 12, sm: 6 }}>
+            <TextField label="MAC Address (BLE)" fullWidth value={form.mac_address}
+              onChange={e => set('mac_address', e.target.value)} />
+          </Grid>
+          <Grid size={{ xs: 12, sm: 6 }}>
+            <TextField label="Contact" fullWidth value={form.contact}
+              onChange={e => set('contact', e.target.value)} />
+          </Grid>
+        </Grid>
+
+        {/* SF1 Fields */}
+        <Typography variant="subtitle2" sx={{ fontWeight: 700, color: '#2e7d32', mb: 1.5, mt: 2.5 }}>
+          📄 SF1 Fields (School Register)
+        </Typography>
+        <Grid container spacing={2}>
+          <Grid size={{ xs: 12, sm: 4 }}>
+            <TextField label="Birthdate" type="date" fullWidth value={form.birthdate}
+              onChange={e => set('birthdate', e.target.value)}
+              InputLabelProps={{ shrink: true }}
+              helperText="mm/dd/yyyy format in SF1" />
+          </Grid>
+          <Grid size={{ xs: 12, sm: 4 }}>
+            <TextField label="Birth Place (Province)" fullWidth value={form.birth_place}
+              onChange={e => set('birth_place', e.target.value)} />
+          </Grid>
+          <Grid size={{ xs: 12, sm: 4 }}>
+            <TextField label="Mother Tongue" fullWidth value={form.mother_tongue}
+              onChange={e => set('mother_tongue', e.target.value)}
+              placeholder="e.g. Cebuano" />
+          </Grid>
+          <Grid size={{ xs: 12, sm: 4 }}>
+            <TextField label="IP / Ethnic Group" fullWidth value={form.ip_ethnic}
+              onChange={e => set('ip_ethnic', e.target.value)}
+              placeholder="Leave blank if not applicable" />
+          </Grid>
+          <Grid size={{ xs: 12, sm: 4 }}>
+            <TextField label="Religion" fullWidth value={form.religion}
+              onChange={e => set('religion', e.target.value)}
+              placeholder="e.g. Roman Catholic" />
+          </Grid>
+          <Grid size={{ xs: 12, sm: 4 }}>
+            <TextField label="SF1 Remarks" fullWidth value={form.sf1_remarks}
+              onChange={e => set('sf1_remarks', e.target.value)}
+              placeholder="e.g. T/O, DRP, CCT" />
+          </Grid>
+          <Grid size={{ xs: 12 }}>
+            <TextField label="House # / Street / Sitio / Purok" fullWidth value={form.address_street}
+              onChange={e => set('address_street', e.target.value)} />
+          </Grid>
+          <Grid size={{ xs: 12, sm: 4 }}>
+            <TextField label="Barangay" fullWidth value={form.barangay}
+              onChange={e => set('barangay', e.target.value)} />
+          </Grid>
+          <Grid size={{ xs: 12, sm: 4 }}>
+            <TextField label="Municipality / City" fullWidth value={form.municipality}
+              onChange={e => set('municipality', e.target.value)} />
+          </Grid>
+          <Grid size={{ xs: 12, sm: 4 }}>
+            <TextField label="Province" fullWidth value={form.province}
+              onChange={e => set('province', e.target.value)} />
+          </Grid>
+        </Grid>
+      </DialogContent>
+      <DialogActions sx={{ px: 3, pb: 2 }}>
+        <Button onClick={onClose} variant="outlined">Cancel</Button>
+        <Button onClick={handleSave} variant="contained" disabled={loading}
+          sx={{ bgcolor: '#1565c0', '&:hover': { bgcolor: '#0d47a1' } }}>
+          {loading ? <CircularProgress size={20} sx={{ color: '#fff' }} /> : '💾 Save Changes'}
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+}
+
+// ─── SchoolSettingsPanel ─────────────────────────────────────────────
+function SchoolSettingsPanel() {
+  const [form, setForm] = useState({
+    school_id: '', region: '', division: '', district: '',
+    school_name: '', school_year: '', school_head_name: '',
+  });
+  const [loading,  setLoading]  = useState(true);
+  const [saving,   setSaving]   = useState(false);
+  const [snack,    setSnack]    = useState({ open: false, msg: '', sev: 'success' as any });
+
+  useEffect(() => {
+    api.get('/admin/school-settings')
+      .then(r => {
+        const d = r.data || {};
+        setForm({
+          school_id:        d.school_id        || '',
+          region:           d.region           || '',
+          division:         d.division         || '',
+          district:         d.district         || '',
+          school_name:      d.school_name      || '',
+          school_year:      d.school_year      || '',
+          school_head_name: d.school_head_name || '',
+        });
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await api.put('/admin/school-settings', form);
+      setSnack({ open: true, msg: 'School settings saved', sev: 'success' });
+    } catch {
+      setSnack({ open: true, msg: 'Failed to save settings', sev: 'error' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) return <Box textAlign="center" py={6}><CircularProgress /></Box>;
+
+  return (
+    <Box maxWidth={600}>
+      <Paper elevation={2} sx={{ borderRadius: 2, overflow: 'hidden' }}>
+        <Box sx={{ p: 2.5, background: '#1565c0', color: '#fff' }}>
+          <Typography sx={{ fontWeight: 700, fontSize: 18 }}>🏫 School Settings</Typography>
+          <Typography variant="caption" sx={{ opacity: 0.85 }}>
+            Used to populate SF1 &amp; SF2 report headers and system identification
+          </Typography>
+        </Box>
+        <Box sx={{ p: 3 }}>
+          <Grid container spacing={2}>
+            <Grid size={{ xs: 12, sm: 6 }}>
+              <TextField label="School ID" fullWidth value={form.school_id}
+                onChange={e => setForm(f => ({ ...f, school_id: e.target.value }))}
+                helperText="DepEd-assigned school ID number" />
+            </Grid>
+            <Grid size={{ xs: 12, sm: 6 }}>
+              <TextField label="School Year" fullWidth value={form.school_year}
+                onChange={e => setForm(f => ({ ...f, school_year: e.target.value }))}
+                placeholder="e.g. 2025-2026" />
+            </Grid>
+            <Grid size={{ xs: 12 }}>
+              <TextField label="Name of School" fullWidth value={form.school_name}
+                onChange={e => setForm(f => ({ ...f, school_name: e.target.value }))}
+                placeholder="e.g. Iponan National High School" />
+            </Grid>
+            {/* SF1 fields */}
+            <Grid size={{ xs: 12, sm: 4 }}>
+              <TextField label="Region" fullWidth value={form.region}
+                onChange={e => setForm(f => ({ ...f, region: e.target.value }))}
+                placeholder="e.g. Region X" helperText="For SF1 header" />
+            </Grid>
+            <Grid size={{ xs: 12, sm: 4 }}>
+              <TextField label="Division" fullWidth value={form.division}
+                onChange={e => setForm(f => ({ ...f, division: e.target.value }))}
+                placeholder="e.g. Cagayan de Oro City" helperText="For SF1 header" />
+            </Grid>
+            <Grid size={{ xs: 12, sm: 4 }}>
+              <TextField label="District" fullWidth value={form.district}
+                onChange={e => setForm(f => ({ ...f, district: e.target.value }))}
+                placeholder="e.g. District III" helperText="For SF1 header" />
+            </Grid>
+            <Grid size={{ xs: 12 }}>
+              <TextField label="School Head Name" fullWidth value={form.school_head_name}
+                onChange={e => setForm(f => ({ ...f, school_head_name: e.target.value }))}
+                helperText="Appears on SF1 &amp; SF2 signature line" />
+            </Grid>
+            <Grid size={{ xs: 12 }}>
+              <Button variant="contained" onClick={handleSave} disabled={saving}
+                sx={{ bgcolor: '#1565c0', '&:hover': { bgcolor: '#0d47a1' } }}>
+                {saving ? <CircularProgress size={18} sx={{ color: '#fff' }} /> : '💾 Save Settings'}
+              </Button>
+            </Grid>
+          </Grid>
+        </Box>
+      </Paper>
+      <Snackbar open={snack.open} autoHideDuration={3000} onClose={() => setSnack(s => ({ ...s, open: false }))}>
+        <Alert severity={snack.sev} onClose={() => setSnack(s => ({ ...s, open: false }))}>{snack.msg}</Alert>
+      </Snackbar>
+    </Box>
+  );
+}
+
 function CreateUserDialog({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: () => void }) {
   const [form, setForm] = useState({
     username: '', password: '', role: 'teacher', name: '',
     gender: '', contact: '', address: '', lrn: '',
     subject: '', room: '', schedule: '', employee_id: '',
+    grade: '', section: '',
+    // SF2 name fields
+    last_name: '', first_name: '', middle_name: '',
   });
   const [parents, setParents] = useState([
     { username: '', password: '', name: '', relationship: 'Father', contact: '' },
@@ -226,15 +568,17 @@ function CreateUserDialog({ open, onClose, onCreated }: { open: boolean; onClose
     setError('');
     setLoading(true);
     try {
-      // If student role, include parent accounts
-      const payload = form.role === 'student' 
+      const payload = form.role === 'student'
         ? { ...form, parents: parents.filter(p => p.username && p.name) }
         : form;
-      
       await api.post('/admin/users', payload);
       onCreated();
       onClose();
-      setForm({ username:'', password:'', role:'teacher', name:'', gender:'', section:'', contact:'', address:'', lrn:'', grade:'', subject:'', room:'', schedule:'', relationship:'', employee_id:'' });
+      setForm({
+        username:'', password:'', role:'teacher', name:'', gender:'', section:'',
+        contact:'', address:'', lrn:'', grade:'', subject:'', room:'', schedule:'',
+        employee_id:'', last_name:'', first_name:'', middle_name:'',
+      });
       setParents([
         { username: '', password: '', name: '', relationship: 'Father', contact: '' },
         { username: '', password: '', name: '', relationship: 'Mother', contact: '' },
@@ -271,7 +615,8 @@ function CreateUserDialog({ open, onClose, onCreated }: { open: boolean; onClose
             </FormControl>
           </Grid>
           <Grid size={{ xs: 12, sm: 6 }}>
-            <TextField label="Full Name *" fullWidth value={form.name} onChange={e => set('name', e.target.value)} />
+            <TextField label="Full Name *" fullWidth value={form.name} onChange={e => set('name', e.target.value)}
+              helperText={form.role === 'student' ? 'Auto-filled from Last/First/Middle below' : ''} />
           </Grid>
           <Grid size={{ xs: 12, sm: 6 }}>
             <FormControl fullWidth>
@@ -285,13 +630,45 @@ function CreateUserDialog({ open, onClose, onCreated }: { open: boolean; onClose
           <Grid size={{ xs: 12, sm: 6 }}>
             <TextField label="Contact" fullWidth value={form.contact} onChange={e => set('contact', e.target.value)} />
           </Grid>
-          {form.role === 'teacher' && <>
-            <Grid size={{ xs: 12, sm: 6 }}><TextField label="Employee ID" fullWidth value={form.employee_id} onChange={e => set('employee_id', e.target.value)} /></Grid>
-          </>}
-          {form.role === 'student' && <>
-            <Grid size={{ xs: 12, sm: 6 }}><TextField label="LRN *" fullWidth value={form.lrn} onChange={e => set('lrn', e.target.value)} /></Grid>
-          </>}
-            
+          {form.role === 'teacher' && (
+            <Grid size={{ xs: 12, sm: 6 }}>
+              <TextField label="Employee ID" fullWidth value={form.employee_id} onChange={e => set('employee_id', e.target.value)} />
+            </Grid>
+          )}
+          {form.role === 'student' && (<>
+            <Grid size={{ xs: 12 }}>
+              <Typography variant="subtitle2" sx={{ fontWeight: 700, color: '#1565c0', mt: 1, mb: 0.5 }}>
+                🎓 Student Information (required for SF2)
+              </Typography>
+            </Grid>
+            <Grid size={{ xs: 12, sm: 4 }}>
+              <TextField label="Last Name *" fullWidth value={form.last_name}
+                onChange={e => { set('last_name', e.target.value); }}
+                helperText="e.g. Dela Cruz" />
+            </Grid>
+            <Grid size={{ xs: 12, sm: 4 }}>
+              <TextField label="First Name *" fullWidth value={form.first_name}
+                onChange={e => { set('first_name', e.target.value); }}
+                helperText="e.g. Juan" />
+            </Grid>
+            <Grid size={{ xs: 12, sm: 4 }}>
+              <TextField label="Middle Name" fullWidth value={form.middle_name}
+                onChange={e => set('middle_name', e.target.value)}
+                helperText="Optional" />
+            </Grid>
+            <Grid size={{ xs: 12, sm: 6 }}>
+              <TextField label="LRN *" fullWidth value={form.lrn} onChange={e => set('lrn', e.target.value)}
+                helperText="12-digit Learner Reference Number" />
+            </Grid>
+            <Grid size={{ xs: 12, sm: 3 }}>
+              <TextField label="Grade Level" fullWidth value={form.grade} onChange={e => set('grade', e.target.value)}
+                placeholder="e.g. Grade 9" />
+            </Grid>
+            <Grid size={{ xs: 12, sm: 3 }}>
+              <TextField label="Section" fullWidth value={form.section} onChange={e => set('section', e.target.value)}
+                placeholder="e.g. IT3R4" />
+            </Grid>
+
             {/* Parent Accounts Section */}
             <Grid size={{ xs: 12 }}>
               <Typography variant="subtitle1" sx={{ fontWeight: 700, mt: 2, mb: 1, color: '#3b82f6' }}>
@@ -310,68 +687,40 @@ function CreateUserDialog({ open, onClose, onCreated }: { open: boolean; onClose
                   </Typography>
                   <Grid container spacing={1.5}>
                     <Grid size={{ xs: 12, sm: 6 }}>
-                      <TextField 
-                        label="Username" 
-                        size="small"
-                        fullWidth 
-                        value={parent.username} 
+                      <TextField label="Username" size="small" fullWidth value={parent.username}
                         onChange={e => setParent(index, 'username', e.target.value)}
-                        placeholder={index === 2 ? 'Optional' : ''}
-                      />
+                        placeholder={index === 2 ? 'Optional' : ''} />
                     </Grid>
                     <Grid size={{ xs: 12, sm: 6 }}>
-                      <TextField 
-                        label="Password" 
-                        size="small"
-                        type="password"
-                        fullWidth 
-                        value={parent.password} 
+                      <TextField label="Password" size="small" type="password" fullWidth value={parent.password}
                         onChange={e => setParent(index, 'password', e.target.value)}
-                        placeholder={index === 2 ? 'Optional' : ''}
-                      />
+                        placeholder={index === 2 ? 'Optional' : ''} />
                     </Grid>
                     <Grid size={{ xs: 12, sm: 6 }}>
-                      <TextField 
-                        label="Full Name" 
-                        size="small"
-                        fullWidth 
-                        value={parent.name} 
+                      <TextField label="Full Name" size="small" fullWidth value={parent.name}
                         onChange={e => setParent(index, 'name', e.target.value)}
-                        placeholder={index === 2 ? 'Optional' : ''}
-                      />
+                        placeholder={index === 2 ? 'Optional' : ''} />
                     </Grid>
                     <Grid size={{ xs: 12, sm: 3 }}>
                       <FormControl fullWidth size="small">
                         <InputLabel>Relationship</InputLabel>
-                        <Select 
-                          value={parent.relationship} 
-                          label="Relationship"
-                          onChange={e => setParent(index, 'relationship', e.target.value)}
-                        >
-                          <MenuItem value="Father">Father</MenuItem>
-                          <MenuItem value="Mother">Mother</MenuItem>
-                          <MenuItem value="Guardian">Guardian</MenuItem>
-                          <MenuItem value="Grandfather">Grandfather</MenuItem>
-                          <MenuItem value="Grandmother">Grandmother</MenuItem>
-                          <MenuItem value="Uncle">Uncle</MenuItem>
-                          <MenuItem value="Aunt">Aunt</MenuItem>
+                        <Select value={parent.relationship} label="Relationship"
+                          onChange={e => setParent(index, 'relationship', e.target.value)}>
+                          {['Father','Mother','Guardian','Grandfather','Grandmother','Uncle','Aunt'].map(r => (
+                            <MenuItem key={r} value={r}>{r}</MenuItem>
+                          ))}
                         </Select>
                       </FormControl>
                     </Grid>
                     <Grid size={{ xs: 12, sm: 3 }}>
-                      <TextField 
-                        label="Contact" 
-                        size="small"
-                        fullWidth 
-                        value={parent.contact} 
-                        onChange={e => setParent(index, 'contact', e.target.value)}
-                        placeholder="09xxxxxxxxx"
-                      />
+                      <TextField label="Contact" size="small" fullWidth value={parent.contact}
+                        onChange={e => setParent(index, 'contact', e.target.value)} placeholder="09xxxxxxxxx" />
                     </Grid>
                   </Grid>
                 </Paper>
               </Grid>
             ))}
+          </>)}
           <Grid size={{ xs: 12 }}><TextField label="Address" fullWidth value={form.address} onChange={e => set('address', e.target.value)} /></Grid>
         </Grid>
       </DialogContent>
@@ -402,6 +751,8 @@ export default function AdminDashboardPage() {
   const [snack,      setSnack]      = useState({ open: false, msg: '', sev: 'success' as any });
   const [addParentOpen, setAddParentOpen] = useState(false);
   const [selectedStudent, setSelectedStudent] = useState<any>(null);
+  const [editOpen,    setEditOpen]    = useState(false);
+  const [editUser,    setEditUser]    = useState<any>(null);
 
   // Attendance alerts state
   const [alerts, setAlerts] = useState<any[]>([]);
@@ -624,9 +975,24 @@ export default function AdminDashboardPage() {
 
   const handleLogout = () => { logout(); navigate('/login', { replace: true }); };
 
-  const filteredUsers = tab === 'students'
-    ? users.filter(u => u.role === 'student')
-    : users;
+  // Search state for students/users tab
+  const [userSearch, setUserSearch] = useState('');
+  useEffect(() => { setUserSearch(''); }, [tab]); // clear on tab change
+
+  const filteredUsers = useMemo(() => {
+    const base = tab === 'students'
+      ? users.filter(u => u.role === 'student')
+      : users;
+    if (!userSearch.trim()) return base;
+    const q = userSearch.trim().toLowerCase();
+    return base.filter(u =>
+      (u.username || '').toLowerCase().includes(q) ||
+      (u.name     || '').toLowerCase().includes(q) ||
+      (u.lrn      || '').toLowerCase().includes(q) ||
+      (u.section  || '').toLowerCase().includes(q) ||
+      (u.role     || '').toLowerCase().includes(q)
+    );
+  }, [users, tab, userSearch]);
 
   const STATUS_COLOR: Record<string, any> = {
     'Time-In': 'success', 'Time-Out': 'info', Late: 'warning', Absent: 'error', Excused: 'default',
@@ -956,11 +1322,42 @@ export default function AdminDashboardPage() {
                   </Button>
                 </Box>
               </Box>
+              {/* Search bar */}
+              <Box sx={{ px: 2, py: 1.5, borderBottom: '1px solid #eee', bgcolor: '#fafafa' }}>
+                <TextField
+                  size="small"
+                  fullWidth
+                  placeholder={tab === 'students' ? 'Search by name, LRN, username, section…' : 'Search by username or role…'}
+                  value={userSearch}
+                  onChange={e => setUserSearch(e.target.value)}
+                  InputProps={{
+                    startAdornment: (
+                      <InputAdornment position="start">
+                        <Search sx={{ color: '#aaa', fontSize: 20 }} />
+                      </InputAdornment>
+                    ),
+                    endAdornment: userSearch ? (
+                      <InputAdornment position="end">
+                        <IconButton size="small" onClick={() => setUserSearch('')}>
+                          <Close sx={{ fontSize: 16 }} />
+                        </IconButton>
+                      </InputAdornment>
+                    ) : null,
+                  }}
+                  sx={{ bgcolor: '#fff', borderRadius: 1 }}
+                />
+                {userSearch && (
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
+                    {filteredUsers.length} result{filteredUsers.length !== 1 ? 's' : ''} found
+                  </Typography>
+                )}
+              </Box>
               <TableContainer>
                 <Table size="small">
                   <TableHead>
                     <TableRow>
                       <TableCell>Username</TableCell>
+                      {tab === 'students' && <TableCell>Full Name</TableCell>}
                       <TableCell>Role</TableCell>
                       {tab === 'students' && <TableCell>Preferred Method</TableCell>}
                       <TableCell>Status</TableCell>
@@ -970,7 +1367,7 @@ export default function AdminDashboardPage() {
                   </TableHead>
                   <TableBody>
                     {filteredUsers.length === 0 && (
-                      <TableRow><TableCell colSpan={tab === 'students' ? 6 : 5} align="center" sx={{ py: 4, color: 'text.secondary' }}>No users found</TableCell></TableRow>
+                      <TableRow><TableCell colSpan={tab === 'students' ? 7 : 5} align="center" sx={{ py: 4, color: 'text.secondary' }}>No users found</TableCell></TableRow>
                     )}
                     {filteredUsers.map(u => (
                       <TableRow key={u.id} hover>
@@ -1010,6 +1407,14 @@ export default function AdminDashboardPage() {
                             <b>{u.username}</b>
                           )}
                         </TableCell>
+                        {/* Full Name — students tab only */}
+                        {tab === 'students' && (
+                          <TableCell>
+                            <Typography variant="body2" sx={{ fontWeight: u.name ? 500 : 400, color: u.name ? '#1a1a1a' : '#999', fontStyle: u.name ? 'normal' : 'italic' }}>
+                              {u.name || '—'}
+                            </Typography>
+                          </TableCell>
+                        )}
                         <TableCell>
                           <Chip label={u.role} size="small"
                             color={u.role === 'admin' ? 'error' : u.role === 'teacher' ? 'primary' : u.role === 'parent' ? 'warning' : 'default'} />
@@ -1044,15 +1449,22 @@ export default function AdminDashboardPage() {
                         <TableCell>{u.created_at ? format(new Date(u.created_at), 'MM/dd/yyyy') : '—'}</TableCell>
                         <TableCell align="center">
                           {tab === 'students' && (
-                            <Tooltip title="Download QR Code">
-                              <IconButton 
-                                size="small" 
-                                color="primary"
-                                onClick={() => handleDownloadQR(u)}
-                              >
-                                <Download />
-                              </IconButton>
-                            </Tooltip>
+                            <>
+                              <Tooltip title="Edit Student Info (SF2 fields)">
+                                <IconButton size="small" color="primary"
+                                  onClick={() => {
+                                    setEditUser(u);
+                                    setEditOpen(true);
+                                  }}>
+                                  <Edit />
+                                </IconButton>
+                              </Tooltip>
+                              <Tooltip title="Download QR Code">
+                                <IconButton size="small" color="primary" onClick={() => handleDownloadQR(u)}>
+                                  <Download />
+                                </IconButton>
+                              </Tooltip>
+                            </>
                           )}
                           <Tooltip title={u.is_active ? 'Deactivate' : 'Activate'}>
                             <IconButton size="small" color={u.is_active ? 'error' : 'success'}
@@ -1497,6 +1909,11 @@ export default function AdminDashboardPage() {
             </Box>
           )}
 
+          {/* ── School Settings Tab ── */}
+          {tab === 'school-settings' && (
+            <SchoolSettingsPanel />
+          )}
+
         </Box>
       </Box>
 
@@ -1517,6 +1934,19 @@ export default function AdminDashboardPage() {
           showSnack('Parent account created and linked successfully');
           setAddParentOpen(false);
           setSelectedStudent(null);
+        }}
+      />
+
+      {/* Edit Student Dialog */}
+      <EditStudentDialog
+        open={editOpen}
+        user={editUser}
+        onClose={() => { setEditOpen(false); setEditUser(null); }}
+        onSaved={() => {
+          showSnack('Student updated successfully');
+          loadUsers();
+          setEditOpen(false);
+          setEditUser(null);
         }}
       />
 

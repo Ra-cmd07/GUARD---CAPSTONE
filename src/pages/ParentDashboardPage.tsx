@@ -1053,6 +1053,8 @@ export default function ParentDashboardPage() {
                       <TableHead>
                         <TableRow>
                           <TableCell sx={{ bgcolor: '#3b82f6', color: '#fff', fontWeight: 700 }}>Date</TableCell>
+                          <TableCell sx={{ bgcolor: '#3b82f6', color: '#fff', fontWeight: 700 }}>Session</TableCell>
+                          <TableCell sx={{ bgcolor: '#3b82f6', color: '#fff', fontWeight: 700 }}>Subject</TableCell>
                           <TableCell sx={{ bgcolor: '#3b82f6', color: '#fff', fontWeight: 700 }}>Status</TableCell>
                           <TableCell sx={{ bgcolor: '#3b82f6', color: '#fff', fontWeight: 700 }}>Time</TableCell>
                           <TableCell sx={{ bgcolor: '#3b82f6', color: '#fff', fontWeight: 700 }}>Method</TableCell>
@@ -1063,14 +1065,14 @@ export default function ParentDashboardPage() {
                       <TableBody>
                         {loading && (
                           <TableRow>
-                            <TableCell colSpan={6} align="center" sx={{ py: 3 }}>
+                            <TableCell colSpan={8} align="center" sx={{ py: 3 }}>
                               <CircularProgress size={24} sx={{ color: '#3b82f6' }} />
                             </TableCell>
                           </TableRow>
                         )}
                         {!loading && records.length === 0 && (
                           <TableRow>
-                            <TableCell colSpan={6} align="center" sx={{ py: 4, color: '#666' }}>
+                            <TableCell colSpan={8} align="center" sx={{ py: 4, color: '#666' }}>
                               No attendance records found
                             </TableCell>
                           </TableRow>
@@ -1082,45 +1084,68 @@ export default function ParentDashboardPage() {
                               : String(r.date).replace(/T.*$/,'');
                             const dateStr = rawDate ? format(new Date(rawDate + 'T12:00:00'), 'MMM d, yyyy') : '—';
                             const timeStr = r.time_in || (r.timestamp ? format(new Date(r.timestamp), 'hh:mm a') : '—');
-                            const canExcuse = r.status === 'Absent' || r.status === 'Late';
+                            const isPending = (r as any).record_type === 'pending';
+                            // Strip "(pending)" suffix added by backend for clean chip display
+                            const displayStatus = isPending
+                              ? (r.status || '').replace(' (pending)', '')
+                              : r.status;
+                            const canExcuse = !isPending && (r.status === 'Absent' || r.status === 'Late');
                             const isOverridden = r.is_overridden === 1;
-                            // Clean up notes — strip the " | " separator prefix and show only the last meaningful note
                             const rawNotes = r.notes || '';
                             const cleanNotes = rawNotes
                               .split('|')
                               .map((n: string) => n.trim())
                               .filter((n: string) => n.length > 0)
                               .join(' • ');
+                            const sessionVal = (r as any).session || 'AM';
+                            const subjectVal = (r as any).subject || null;
                             return (
-                              <TableRow key={r.id} hover sx={{ '&:hover': { bgcolor: '#f5f7fa' }, bgcolor: isOverridden ? '#fffde7' : '#fff' }}>
-                                <TableCell sx={{ color: '#1a1a1a' }}>{dateStr}</TableCell>
+                              <TableRow key={`${r.id}-${(r as any).record_type}`} hover
+                                sx={{ bgcolor: isPending ? '#fffde7' : isOverridden ? '#fff3e0' : '#fff', '&:hover': { bgcolor: '#f5f7fa' } }}>
+                                <TableCell sx={{ color: '#1a1a1a', whiteSpace: 'nowrap' }}>{dateStr}</TableCell>
+                                {/* Session */}
+                                <TableCell>
+                                  <Chip label={sessionVal} size="small"
+                                    sx={{
+                                      bgcolor: sessionVal === 'AM' ? '#e3f2fd' : '#f3e5f5',
+                                      color: sessionVal === 'AM' ? '#1565c0' : '#6a1b9a',
+                                      fontWeight: 700, fontSize: '0.68rem',
+                                    }} />
+                                </TableCell>
+                                {/* Subject */}
+                                <TableCell>
+                                  {isPending ? (
+                                    <Chip label="Kiosk Scan" size="small"
+                                      sx={{ bgcolor: '#fff8e1', color: '#e65100', fontSize: '0.68rem', fontWeight: 600 }} />
+                                  ) : subjectVal ? (
+                                    <Chip label={subjectVal} size="small"
+                                      sx={{ bgcolor: '#e8f5e9', color: '#2e7d32', fontSize: '0.68rem', fontWeight: 600 }} />
+                                  ) : (
+                                    <Chip label="General" size="small"
+                                      sx={{ bgcolor: '#fce4ec', color: '#c62828', fontSize: '0.68rem', fontWeight: 600 }} />
+                                  )}
+                                </TableCell>
+                                {/* Status */}
                                 <TableCell>
                                   <Box display="flex" alignItems="center" gap={0.5}>
-                                    <Chip 
-                                      label={r.status || 'Unknown'} 
-                                      size="small" 
-                                      color={STATUS_COLOR[r.status] || 'default'} 
-                                    />
-                                    {isOverridden && (
-                                      <Tooltip
-                                        title={cleanNotes || `📝 Manually updated${r.teacher_name ? ` by ${r.teacher_name}` : ''}`}
-                                        arrow
-                                      >
+                                    <Chip label={displayStatus || 'Unknown'} size="small"
+                                      color={STATUS_COLOR[displayStatus] || 'default'} />
+                                    {isPending && (
+                                      <Tooltip title="Kiosk scan recorded — awaiting teacher confirmation">
+                                        <span style={{ cursor: 'default', fontSize: '0.85rem' }}>⏳</span>
+                                      </Tooltip>
+                                    )}
+                                    {isOverridden && !isPending && (
+                                      <Tooltip title={cleanNotes || `Manually updated${r.teacher_name ? ` by ${r.teacher_name}` : ''}`} arrow>
                                         <span style={{ cursor: 'default', fontSize: '0.85rem' }}>📝</span>
                                       </Tooltip>
                                     )}
                                   </Box>
                                 </TableCell>
-                                <TableCell sx={{ color: '#666', fontSize: '0.85rem' }}>
-                                  {timeStr}
-                                </TableCell>
+                                <TableCell sx={{ color: '#666', fontSize: '0.85rem' }}>{timeStr}</TableCell>
                                 <TableCell>
-                                  <Chip 
-                                    label={r.scan_method || 'QR'} 
-                                    size="small" 
-                                    variant="outlined" 
-                                    sx={{ color: '#666', borderColor: '#e0e0e0' }} 
-                                  />
+                                  <Chip label={r.scan_method || 'QR'} size="small" variant="outlined"
+                                    sx={{ color: '#666', borderColor: '#e0e0e0' }} />
                                 </TableCell>
                                 <TableCell sx={{ maxWidth: 200 }}>
                                   {cleanNotes ? (
@@ -1133,32 +1158,35 @@ export default function ParentDashboardPage() {
                                 </TableCell>
                                 <TableCell>
                                   {canExcuse && (
-                                    <Button
-                                      size="small"
-                                      variant="outlined"
-                                      onClick={() => setExcuseDialog({
-                                        open: true,
-                                        record: r,
-                                        reason: '',
-                                        loading: false,
-                                        error: '',
-                                        success: false,
-                                      })}
+                                    <Button size="small" variant="outlined"
+                                      onClick={() => setExcuseDialog({ open: true, record: r, reason: '', loading: false, error: '', success: false })}
                                       sx={{
-                                        fontSize: '0.72rem',
-                                        textTransform: 'none',
+                                        fontSize: '0.72rem', textTransform: 'none',
                                         borderColor: theme.colors.status.warning.main,
                                         color: theme.colors.status.warning.main,
-                                        '&:hover': {
-                                          bgcolor: '#fff3e0',
-                                          borderColor: theme.colors.status.warning.dark,
-                                        },
+                                        '&:hover': { bgcolor: '#fff3e0', borderColor: theme.colors.status.warning.dark },
                                         whiteSpace: 'nowrap',
-                                      }}
-                                    >
+                                      }}>
                                       Submit Excuse
                                     </Button>
                                   )}
+                                  <Tooltip title="Hide this record from your view">
+                                    <IconButton size="small"
+                                      onClick={async () => {
+                                        if (!window.confirm('Hide this attendance record from your view?')) return;
+                                        try {
+                                          await api.delete(
+                                            `/students/${selected?.id}/attendance/${r.id}/hide?type=${(r as any).record_type || 'confirmed'}`
+                                          );
+                                          setRecords(prev => prev.filter(x => x.id !== r.id));
+                                        } catch {
+                                          showSnack('Failed to hide record', 'error');
+                                        }
+                                      }}
+                                      sx={{ color: '#c62828', '&:hover': { bgcolor: '#ffebee' }, ml: 0.5 }}>
+                                      <Delete fontSize="small" />
+                                    </IconButton>
+                                  </Tooltip>
                                 </TableCell>
                               </TableRow>
                             );
@@ -1408,9 +1436,29 @@ export default function ParentDashboardPage() {
                                   {msg.subject}
                                 </Typography>
                               </Box>
-                              <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: 'nowrap', ml: 1 }}>
-                                {msg.created_at ? format(new Date(msg.created_at), 'MMM d, h:mm aa') : '—'}
-                              </Typography>
+                              <Box display="flex" alignItems="center" gap={0.5}>
+                                <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: 'nowrap' }}>
+                                  {msg.created_at ? format(new Date(msg.created_at), 'MMM d, h:mm aa') : '—'}
+                                </Typography>
+                                <Tooltip title="Delete this message">
+                                  <IconButton size="small"
+                                    onClick={async (e) => {
+                                      e.stopPropagation();
+                                      if (!window.confirm('Delete this message?')) return;
+                                      try {
+                                        await api.delete(`/messages/parent/${msg.id}`);
+                                        setParentMessages(prev => prev.filter(m => m.id !== msg.id));
+                                        setUnreadMsgCount(c => msg.is_read ? c : Math.max(0, c - 1));
+                                        showSnack('Message deleted', 'success');
+                                      } catch {
+                                        showSnack('Failed to delete message', 'error');
+                                      }
+                                    }}
+                                    sx={{ color: '#c62828', '&:hover': { bgcolor: '#ffebee' } }}>
+                                    <Delete fontSize="small" />
+                                  </IconButton>
+                                </Tooltip>
+                              </Box>
                             </Box>
                             <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
                               From: <strong>{msg.teacher_name}</strong> • Re: {msg.student_name}

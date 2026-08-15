@@ -4,7 +4,7 @@ import {
   DialogActions, DialogContent, DialogTitle, Divider, IconButton,
   InputAdornment, List, ListItem, ListItemButton, ListItemIcon,
   ListItemText, Paper, Table, TableBody, TableCell, TableHead,
-  TableRow, TextField, Typography, Tooltip, Alert,
+  TableRow, TextField, Typography, Tooltip, Alert, Select, MenuItem,
 } from '@mui/material';
 import { Add, Delete, Edit, Save, Search, Close, Check, ArrowDropDown } from '@mui/icons-material';
 import api from '../api/client';
@@ -21,16 +21,21 @@ const SUBJECTS    = [
   'Earth Science','Statistics and Probability','Computer Programming',
 ];
 
+const SESSION_OPTIONS: { value: 'AM' | 'PM' | 'BOTH'; label: string; color: string }[] = [
+  { value: 'AM',   label: 'AM',   color: '#1565c0' },
+  { value: 'PM',   label: 'PM',   color: '#6a1b9a' },
+  { value: 'BOTH', label: 'BOTH', color: '#2e7d32' },
+];
+
 interface TeacherOpt { id: number; name: string; username: string; }
 interface StudentOpt { id: number; lrn: string; name: string; grade?: string; section?: string; }
 
 interface SubjectRow {
-  id: number | null;     // null = unsaved new row
+  id: number | null;
   subject: string;
+  session: 'AM' | 'PM' | 'BOTH';
   subject_teacher_id: number | null;
   subject_teacher_name: string | null;
-  student_ids: number[];
-  student_count: number;
   _dirty?: boolean;
   _new?: boolean;
 }
@@ -43,6 +48,7 @@ interface ClassBlock {
   section: string;
   adviser_id: number | null;
   adviser_name: string | null;
+  student_ids: number[];   // ← section-level shared roster
   subjects: SubjectRow[];
   _editing?: boolean;
 }
@@ -260,14 +266,14 @@ function ClassBlockCard(props: {
   onDeleteRow: (blockKey: string, rowId: number) => Promise<void>;
   onDeleteBlock: (blockKey: string) => void;
   onUpdateAdviser: (blockKey: string, adviserId: number | null, adviserName: string | null) => Promise<void>;
+  onUpdateStudents: (blockKey: string, studentIds: number[]) => Promise<void>;
 }) {
-  const { block, onSaveRow, onDeleteRow, onDeleteBlock, onUpdateAdviser } = props;
+  const { block, onSaveRow, onDeleteRow, onDeleteBlock, onUpdateAdviser, onUpdateStudents } = props;
   const [teachers, setTeachers] = useState<TeacherOpt[]>(props.teachers);
   const [students, setStudents] = useState<StudentOpt[]>(props.students);
 
-  const [loading,    setLoadingState] = useState(true);
+  const [loading, setLoadingState] = useState(true);
 
-  // Always fetch fresh teacher + student lists when the card mounts
   useEffect(() => {
     api.get('/admin/assignments/metadata')
       .then(r => {
@@ -278,34 +284,23 @@ function ClassBlockCard(props: {
       .catch(() => { setLoadingState(false); });
   }, []);
 
-  // Sync with prop updates too
-  useEffect(() => {
-    if (props.teachers.length > 0) setTeachers(props.teachers);
-  }, [props.teachers]);
+  useEffect(() => { if (props.teachers.length > 0) setTeachers(props.teachers); }, [props.teachers]);
+  useEffect(() => { if (props.students.length > 0) setStudents(props.students); }, [props.students]);
 
-  useEffect(() => {
-    if (props.students.length > 0) setStudents(props.students);
-  }, [props.students]);
-
-  // Per-row dialog state
   const [subjectDlg, setSubjectDlg] = useState<{open:boolean; rowIdx:number|null}>({ open:false, rowIdx:null });
   const [teacherDlg, setTeacherDlg] = useState<{open:boolean; rowIdx:number|null}>({ open:false, rowIdx:null });
-  const [studentDlg, setStudentDlg] = useState<{open:boolean; rowIdx:number|null}>({ open:false, rowIdx:null });
+  const [studentDlg, setStudentDlg] = useState(false);  // section-level
   const [adviserDlg, setAdviserDlg] = useState(false);
   const [rows,       setRows]       = useState<SubjectRow[]>(block.subjects);
   const [saving,     setSaving]     = useState<number|null>(null);
   const [error,      setError]      = useState('');
 
-  // Only sync from block.subjects when saved rows come back from DB (id changes)
-  // Don't overwrite dirty/new local rows on every render
   const [lastSyncKey, setLastSyncKey] = useState(block.key);
   useEffect(() => {
-    // Only reset if the block key changed (different section) or subjects came from DB
     if (block.key !== lastSyncKey) {
       setRows(block.subjects);
       setLastSyncKey(block.key);
     } else if (block.subjects.length > 0 && rows.filter(r => !r._new).length === 0) {
-      // First load: populate from DB
       setRows(block.subjects);
     }
   }, [block.subjects, block.key]); // eslint-disable-line
@@ -314,8 +309,9 @@ function ClassBlockCard(props: {
 
   const addRow = () => {
     setRows(prev => [...prev, {
-      id: null, subject: '', subject_teacher_id: null, subject_teacher_name: null,
-      student_ids: [], student_count: 0, _new: true, _dirty: true,
+      id: null, subject: '', session: 'AM',
+      subject_teacher_id: null, subject_teacher_name: null,
+      _new: true, _dirty: true,
     }]);
   };
 
@@ -350,7 +346,8 @@ function ClassBlockCard(props: {
     }
   };
 
-  const adviser = teachers.find(t => t.id === block.adviser_id);
+  const adviser        = teachers.find(t => t.id === block.adviser_id);
+  const sectionStudents = students.filter(s => block.student_ids.includes(s.id));
 
   return (
     <Paper elevation={2} sx={{ mb: 3, borderRadius: 2, overflow: 'hidden', border: '1px solid #e0e0e0' }}>
@@ -394,20 +391,47 @@ function ClassBlockCard(props: {
         </Box>
       </Box>
 
-      {/* ── Subject/Teacher/Students table ── */}
+      {/* ── Section-level student roster row ── */}
+      <Box sx={{ px: 2, py: 1.5, bgcolor: '#f0fff4', borderBottom: '1px solid #e0e0e0',
+          display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
+        <Typography variant="body2" sx={{ fontWeight: 700, minWidth: 60 }}>Students ☑</Typography>
+        <Box display="flex" alignItems="center" gap={1} flex={1}>
+          {sectionStudents.length > 0 ? (
+            <Chip
+              label={`${sectionStudents.length} student${sectionStudents.length !== 1 ? 's' : ''} in this section`}
+              size="small" color="success"
+              sx={{ fontWeight: 700 }}
+            />
+          ) : (
+            <Typography variant="body2" sx={{ color: '#999', fontStyle: 'italic' }}>
+              No students assigned yet
+            </Typography>
+          )}
+          <Button size="small" variant="outlined" endIcon={<ArrowDropDown />}
+            onClick={() => setStudentDlg(true)}
+            sx={{ textTransform: 'none', fontSize: '0.75rem', py: 0.25, px: 1, ml: 1 }}>
+            {loading ? 'Loading...' : `Choose (${students.length})`}
+          </Button>
+        </Box>
+        <Typography variant="caption" sx={{ color: '#888' }}>
+          All subjects in this section share the same student group
+        </Typography>
+      </Box>
+
+      {/* ── Subject/Teacher table (no Students column) ── */}
       {error && <Alert severity="error" sx={{ mx: 2, mt: 1 }}>{error}</Alert>}
       <Box sx={{ overflowX: 'auto' }}>
         <Table size="small">
           <TableHead>
             <TableRow sx={{ bgcolor: '#f8f9fa' }}>
-              <TableCell sx={{ fontWeight: 700, width: '30%' }}>
+              <TableCell sx={{ fontWeight: 700, width: '35%' }}>
                 Subjects ☑ {loading && <CircularProgress size={10} sx={{ ml: 0.5 }} />}
               </TableCell>
-              <TableCell sx={{ fontWeight: 700, width: '30%' }}>
-                Teachers ☑ {!loading && <span style={{ fontSize: '0.75rem', color: '#666' }}>({teachers.length})</span>}
+              <TableCell sx={{ fontWeight: 700, width: '15%' }}>
+                Session
               </TableCell>
-              <TableCell sx={{ fontWeight: 700, width: '25%' }}>
-                Students ☑ {!loading && <span style={{ fontSize: '0.75rem', color: '#666' }}>({students.length})</span>}
+              <TableCell sx={{ fontWeight: 700, width: '35%' }}>
+                Teachers ☑ {!loading && <span style={{ fontSize: '0.75rem', color: '#666' }}>({teachers.length})</span>}
               </TableCell>
               <TableCell sx={{ fontWeight: 700, width: '15%', textAlign: 'center' }}>Actions</TableCell>
             </TableRow>
@@ -422,8 +446,7 @@ function ClassBlockCard(props: {
             )}
             {rows.map((row, idx) => {
               const rowTeacher = teachers.find(t => t.id === row.subject_teacher_id);
-              const rowStudents = students.filter(s => row.student_ids.includes(s.id));
-              const isSaving = saving === idx;
+              const isSaving   = saving === idx;
               return (
                 <TableRow key={idx} sx={{ bgcolor: row._dirty ? '#fffde7' : '#fff', '&:hover': { bgcolor: '#f5f5f5' } }}>
                   {/* Subject cell */}
@@ -437,6 +460,41 @@ function ClassBlockCard(props: {
                       </IconButton>
                     </Box>
                   </TableCell>
+                  {/* Session cell */}
+                  <TableCell>
+                    <Select
+                      size="small"
+                      value={row.session || 'AM'}
+                      onChange={e => updateRow(idx, { session: e.target.value as 'AM' | 'PM' | 'BOTH' })}
+                      sx={{ fontSize: '0.78rem', minWidth: 72 }}
+                      renderValue={(v) => {
+                        const opt = SESSION_OPTIONS.find(o => o.value === v);
+                        return (
+                          <Box sx={{
+                            bgcolor: opt?.color || '#1565c0', color: '#fff', borderRadius: '4px',
+                            px: 1, py: 0.2, fontSize: '0.72rem', fontWeight: 700, display: 'inline-block',
+                          }}>
+                            {v}
+                          </Box>
+                        );
+                      }}
+                    >
+                      {SESSION_OPTIONS.map(opt => (
+                        <MenuItem key={opt.value} value={opt.value} sx={{ fontSize: '0.82rem' }}>
+                          <Box sx={{
+                            bgcolor: opt.color, color: '#fff', borderRadius: '4px',
+                            px: 1, py: 0.2, fontSize: '0.72rem', fontWeight: 700, mr: 1,
+                            display: 'inline-block', minWidth: 36, textAlign: 'center',
+                          }}>
+                            {opt.value}
+                          </Box>
+                          {opt.value === 'AM'   && 'Morning only'}
+                          {opt.value === 'PM'   && 'Afternoon only'}
+                          {opt.value === 'BOTH' && 'Full day (Adviser)'}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </TableCell>
                   {/* Teacher cell */}
                   <TableCell>
                     <Box display="flex" alignItems="center" gap={0.5}>
@@ -444,23 +502,6 @@ function ClassBlockCard(props: {
                         {loading ? 'Loading...' : (rowTeacher ? rowTeacher.name : 'Select teacher...')}
                       </Box>
                       <IconButton size="small" disabled={loading} onClick={() => setTeacherDlg({ open: true, rowIdx: idx })}>
-                        {loading ? <CircularProgress size={14} /> : <ArrowDropDown fontSize="small" />}
-                      </IconButton>
-                    </Box>
-                  </TableCell>
-                  {/* Students cell */}
-                  <TableCell>
-                    <Box display="flex" alignItems="center" gap={0.5}>
-                      <Box sx={{ flex: 1, fontSize: '0.8rem' }}>
-                        {loading ? (
-                          <span style={{ color: '#999', fontStyle: 'italic' }}>Loading...</span>
-                        ) : rowStudents.length === 0 ? (
-                          <span style={{ color: '#999', fontStyle: 'italic' }}>No students</span>
-                        ) : (
-                          <Chip label={`${rowStudents.length} student${rowStudents.length !== 1 ? 's' : ''}`} size="small" color="primary" />
-                        )}
-                      </Box>
-                      <IconButton size="small" disabled={loading} onClick={() => setStudentDlg({ open: true, rowIdx: idx })}>
                         {loading ? <CircularProgress size={14} /> : <ArrowDropDown fontSize="small" />}
                       </IconButton>
                     </Box>
@@ -502,8 +543,7 @@ function ClassBlockCard(props: {
       <SelectionDialog open={subjectDlg.open} title="Choose Subject"
         items={SUBJECTS.map((s, i) => ({ id: i, name: s, username: '' }))}
         selectedIds={subjectDlg.rowIdx !== null && rows[subjectDlg.rowIdx]?.subject
-          ? [SUBJECTS.indexOf(rows[subjectDlg.rowIdx].subject)]
-          : []}
+          ? [SUBJECTS.indexOf(rows[subjectDlg.rowIdx].subject)] : []}
         multiple={false} itemLabel={i => i.name}
         onClose={() => setSubjectDlg({ open: false, rowIdx: null })}
         onConfirm={ids => {
@@ -513,7 +553,8 @@ function ClassBlockCard(props: {
       />
       {/* Teacher */}
       <SelectionDialog open={teacherDlg.open} title="Choose Teacher"
-        items={teachers} selectedIds={teacherDlg.rowIdx !== null && rows[teacherDlg.rowIdx]?.subject_teacher_id
+        items={teachers}
+        selectedIds={teacherDlg.rowIdx !== null && rows[teacherDlg.rowIdx]?.subject_teacher_id
           ? [rows[teacherDlg.rowIdx].subject_teacher_id!] : []}
         multiple={false} itemLabel={t => `${t.name} (${t.username})`}
         searchPlaceholder="Search teachers…"
@@ -526,17 +567,17 @@ function ClassBlockCard(props: {
           setTeacherDlg({ open: false, rowIdx: null });
         }}
       />
-      {/* Students — multiple + Select All */}
-      <SelectionDialog open={studentDlg.open} title="Select Students"
+      {/* Section-level Students — multiple + Select All */}
+      <SelectionDialog open={studentDlg} title={`Select Students for ${block.section}`}
         items={students}
-        selectedIds={studentDlg.rowIdx !== null ? rows[studentDlg.rowIdx]?.student_ids || [] : []}
+        selectedIds={block.student_ids}
         multiple showSelectAll
         itemLabel={s => `${s.name} (${s.lrn})${s.grade ? ` — ${s.grade}` : ''}${s.section ? ` ${s.section}` : ''}`}
         searchPlaceholder="Search students by name or LRN…"
-        onClose={() => setStudentDlg({ open: false, rowIdx: null })}
-        onConfirm={ids => {
-          if (studentDlg.rowIdx !== null) updateRow(studentDlg.rowIdx, { student_ids: ids, student_count: ids.length });
-          setStudentDlg({ open: false, rowIdx: null });
+        onClose={() => setStudentDlg(false)}
+        onConfirm={async ids => {
+          await onUpdateStudents(block.key, ids);
+          setStudentDlg(false);
         }}
       />
       {/* Adviser */}
@@ -585,24 +626,49 @@ function AssignmentsPage() {
             section: row.section,
             adviser_id: row.teacher_id || null,
             adviser_name: row.adviser_name || null,
+            student_ids: [],
             subjects: [],
           };
         }
         groups[key].subjects.push({
           id: row.id, subject: row.subject,
+          session: (row.session as 'AM' | 'PM' | 'BOTH') || 'AM',
           subject_teacher_id: row.subject_teacher_id || null,
           subject_teacher_name: row.subject_teacher_name || null,
-          student_ids: [], student_count: Number(row.student_count) || 0,
         });
       }
 
       // Try to get student_ids per assignment from grouped endpoint (if available)
       try {
         const { data: grouped } = await api.get('/admin/assignments/grouped');
-        // If grouped works, use it (has student_ids)
-        setBlocks(grouped as ClassBlock[]);
+        // grouped has student_ids — merge them at section level (union of all assignment rows)
+        const groupedBlocks = grouped as any[];
+        const mergedBlocks: ClassBlock[] = groupedBlocks.map((b: any) => {
+          // Collect all unique student_ids across all subject rows in this section
+          const allStudentIds = new Set<number>();
+          (b.subjects || []).forEach((s: any) => {
+            (s.student_ids || []).forEach((id: number) => allStudentIds.add(id));
+          });
+          return {
+            key: b.key || `${b.year_level}|${b.strand||''}|${b.track||''}|${b.section}`,
+            year_level:   b.year_level,
+            strand:       b.strand || null,
+            track:        b.track  || null,
+            section:      b.section,
+            adviser_id:   b.adviser_id || null,
+            adviser_name: b.adviser_name || null,
+            student_ids:  Array.from(allStudentIds),
+            subjects:     (b.subjects || []).map((s: any) => ({
+              id:                   s.id,
+              subject:              s.subject,
+              session:              (s.session as 'AM' | 'PM' | 'BOTH') || 'AM',
+              subject_teacher_id:   s.subject_teacher_id || null,
+              subject_teacher_name: s.subject_teacher_name || null,
+            })),
+          };
+        });
+        setBlocks(mergedBlocks);
       } catch {
-        // Use client-side grouped data
         setBlocks(Object.values(groups));
       }
     } catch (e) {
@@ -618,13 +684,15 @@ function AssignmentsPage() {
   const handleAddBlock = (partial: Omit<ClassBlock, 'key' | 'subjects' | '_editing'>) => {
     const key = `${partial.year_level}|${partial.strand||''}|${partial.track||''}|${partial.section}`;
     if (blocks.find(b => b.key === key)) { setSnack('This section block already exists'); return; }
-    setBlocks(prev => [...prev, { ...partial, key, subjects: [], _editing: true }]);
+    setBlocks(prev => [...prev, { ...partial, key, student_ids: [], subjects: [], _editing: true }]);
   };
 
-  // Save a single subject row (create or update)
+  // Save a single subject row (create or update) — no per-row students
   const handleSaveRow = async (blockKey: string, row: SubjectRow) => {
     const block = blocks.find(b => b.key === blockKey);
     if (!block) return;
+    // Use section-level student_ids for the row
+    const studentIds = block.student_ids;
     if (row._new || !row.id) {
       const { data } = await api.post('/admin/assignments', {
         year_level: block.year_level,
@@ -632,11 +700,11 @@ function AssignmentsPage() {
         track: block.track,
         section: block.section,
         subject: row.subject,
+        session: row.session || 'AM',
         teacher_id: block.adviser_id,
         subject_teacher_id: row.subject_teacher_id,
-        student_ids: row.student_ids,
+        student_ids: studentIds,
       });
-      // Update the row with the new id
       setBlocks(prev => prev.map(b => b.key !== blockKey ? b : {
         ...b,
         subjects: b.subjects.map(s =>
@@ -652,9 +720,10 @@ function AssignmentsPage() {
         track: block.track,
         section: block.section,
         subject: row.subject,
+        session: row.session || 'AM',
         teacher_id: block.adviser_id,
         subject_teacher_id: row.subject_teacher_id,
-        student_ids: row.student_ids,
+        student_ids: studentIds,
       });
       setBlocks(prev => prev.map(b => b.key !== blockKey ? b : {
         ...b,
@@ -662,8 +731,25 @@ function AssignmentsPage() {
       }));
     }
     setSnack('Saved successfully');
-    // Don't call load() here — local state is already updated above
-    // load() would fail on /grouped and clear the blocks
+  };
+
+  // Update section-level student roster — syncs to ALL subject rows in this section
+  const handleUpdateStudents = async (blockKey: string, studentIds: number[]) => {
+    const block = blocks.find(b => b.key === blockKey);
+    if (!block) return;
+    // Update local state immediately
+    setBlocks(prev => prev.map(b => b.key !== blockKey ? b : { ...b, student_ids: studentIds }));
+    // Persist to DB if there are saved rows
+    if (block.subjects.some(s => s.id)) {
+      await api.patch('/admin/assignments/section-students', {
+        year_level:  block.year_level,
+        strand:      block.strand,
+        track:       block.track,
+        section:     block.section,
+        student_ids: studentIds,
+      });
+      setSnack(`Student roster updated — ${studentIds.length} students assigned to all subjects in ${block.section}`);
+    }
   };
 
   // Delete a single subject row
@@ -744,6 +830,7 @@ function AssignmentsPage() {
             onDeleteRow={handleDeleteRow}
             onDeleteBlock={handleDeleteBlock}
             onUpdateAdviser={handleUpdateAdviser}
+            onUpdateStudents={handleUpdateStudents}
           />
         ))
       )}

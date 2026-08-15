@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Box, Grid, Paper, Typography, Table, TableBody, TableCell,
   TableContainer, TableHead, TableRow, Chip, Avatar, Button,
@@ -11,7 +11,7 @@ import {
 import {
   CheckCircle, Cancel, AccessTime, People, School,
   Edit, Logout, Refresh, Dashboard, Add, Note, EventAvailable,
-  TrendingUp, Class as ClassIcon, Menu as MenuIcon, PhotoCamera, Email,
+  TrendingUp, Class as ClassIcon, Menu as MenuIcon, PhotoCamera, Email, Description,
 } from '@mui/icons-material';
 import { format } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
@@ -447,48 +447,535 @@ function AddNoteDialog({
   );
 }
 
-// ─── PartialAttendanceRow ─────────────────────────────────────────────
-function PartialAttendanceRow({ record, onVerify, verifyingId }: {
-  record: any;
-  onVerify: (id: number, status: string) => Promise<void>;
-  verifyingId: number | null;
-}) {
-  const [selectedStatus, setSelectedStatus] = useState(record.status || 'Time-In');
-  const isBusy = verifyingId === record.id;
-  const statusOptions = ['Time-In', 'Late', 'Absent', 'Time-Out'];
+// ─── SF1GeneratorPanel ───────────────────────────────────────────────
+function SF1GeneratorPanel({ section, onClose }: { section: string; onClose: () => void }) {
+  const [generating,     setGenerating]     = useState(false);
+  const [previewData,    setPreviewData]    = useState<any>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [error,          setError]          = useState('');
+  const [templateFile,   setTemplateFile]   = useState<File | null>(null);
+  const [uploading,      setUploading]      = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handlePreview = async () => {
+    setPreviewLoading(true);
+    setError('');
+    try {
+      const { data } = await api.get(`/sf1/preview?section=${encodeURIComponent(section)}`);
+      setPreviewData(data);
+    } catch (e: any) {
+      setError(e.response?.data?.error || 'Failed to load preview');
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const handleUploadTemplate = async () => {
+    if (!templateFile) {
+      setError('Please select a template file');
+      return;
+    }
+    setUploading(true);
+    setError('');
+    try {
+      const formData = new FormData();
+      formData.append('template', templateFile);
+
+      await api.post('/sf1/upload-template', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+
+      setTemplateFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      alert('✅ Template uploaded successfully! Future SF1 generations will use this template.');
+    } catch (e: any) {
+      setError('Failed to upload template. Please try again.');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleDownloadTemplate = async () => {
+    try {
+      const response = await api.get('/sf1/download-template', {
+        responseType: 'blob',
+      });
+
+      const url  = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href  = url;
+      link.setAttribute('download', 'School_Form_1_Template.xlsx');
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (e: any) {
+      setError('Failed to download template');
+    }
+  };
+
+  const handleResetTemplate = async () => {
+    if (!confirm('Reset to default SF1 template? Your custom template will be deleted.')) return;
+    try {
+      await api.delete('/sf1/reset-template');
+      alert('✅ Template reset to default');
+    } catch (e: any) {
+      setError('Failed to reset template');
+    }
+  };
+
+  const handleGenerate = async () => {
+    setGenerating(true);
+    setError('');
+    try {
+      const formData = new FormData();
+      formData.append('section', section);
+
+      const response = await api.post('/sf1/generate', formData, {
+        responseType: 'blob',
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+
+      const url  = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href  = url;
+      const filename = response.headers['content-disposition']
+        ?.split('filename=')[1]?.replace(/"/g, '')
+        || `SF1_${section}.xlsx`;
+      link.setAttribute('download', filename);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (e: any) {
+      setError('Failed to generate SF1. Please try again.');
+    } finally {
+      setGenerating(false);
+    }
+  };
 
   return (
-    <TableRow hover sx={{ bgcolor: '#fffdf5', '&:hover': { bgcolor: '#fff9e6' } }}>
-      <TableCell sx={{ fontWeight: 700 }}>{record.student_name}</TableCell>
-      <TableCell sx={{ fontSize: '0.8rem' }}>{record.lrn}</TableCell>
-      <TableCell sx={{ fontSize: '0.8rem' }}>
-        {record.time_in || (record.timestamp ? format(new Date(record.timestamp), 'hh:mm a') : '—')}
-      </TableCell>
+    <Box>
+      <Paper sx={{ borderRadius: 2, overflow: 'hidden', mb: 3 }}>
+        {/* Header */}
+        <Box sx={{
+          p: 2.5, background: 'linear-gradient(135deg, #1b5e20 0%, #2e7d32 100%)', color: '#fff',
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        }}>
+          <Box>
+            <Typography sx={{ fontWeight: 700, fontSize: 18 }}>📄 SF1 Generator</Typography>
+            <Typography variant="caption" sx={{ opacity: 0.85 }}>
+              School Form 1 — School Register · Section: {section}
+            </Typography>
+          </Box>
+          <Button size="small" variant="outlined" onClick={onClose}
+            sx={{ color: '#fff', borderColor: 'rgba(255,255,255,0.5)', textTransform: 'none' }}>
+            ← Back
+          </Button>
+        </Box>
+
+        <Box sx={{ p: 3 }}>
+          {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError('')}>{error}</Alert>}
+
+          {/* Step 1: Preview */}
+          <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1.5, color: '#2e7d32' }}>
+            Step 1 — Preview Student Data
+          </Typography>
+          <Button size="small" variant="outlined" startIcon={previewLoading ? <CircularProgress size={14} /> : undefined}
+            onClick={handlePreview} disabled={previewLoading}
+            sx={{ mb: 2, textTransform: 'none', borderColor: '#2e7d32', color: '#2e7d32' }}>
+            {previewLoading ? 'Loading...' : '👁 Preview Data'}
+          </Button>
+
+          {previewData && (
+            <Box sx={{ mb: 3, p: 2, bgcolor: '#f1f8e9', borderRadius: 1, border: '1px solid #c8e6c9' }}>
+              <Typography variant="body2" sx={{ fontWeight: 700, color: '#2e7d32', mb: 0.5 }}>
+                Section: {previewData.section} — {previewData.count} students ({previewData.page_count} page{previewData.page_count !== 1 ? 's' : ''})
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                {previewData.students?.filter((s: any) => !s.birthdate).length > 0 && (
+                  `⚠️ ${previewData.students.filter((s: any) => !s.birthdate).length} students have no birthdate set — update in Admin → Students`
+                )}
+              </Typography>
+            </Box>
+          )}
+
+          <Divider sx={{ my: 3 }} />
+
+          {/* Step 2: Template Management */}
+          <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1.5, color: '#2e7d32' }}>
+            Step 2 — Template Management (Optional)
+          </Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
+            Upload a custom SF1 template if the format changes. The system uses the official DepEd template by default.
+          </Typography>
+
+          <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 3 }}>
+            <Button size="small" variant="outlined" onClick={handleDownloadTemplate}
+              sx={{ textTransform: 'none', borderColor: '#2e7d32', color: '#2e7d32' }}>
+              ⬇ Download Current Template
+            </Button>
+            <Button size="small" variant="outlined" onClick={() => fileInputRef.current?.click()}
+              sx={{ textTransform: 'none', borderColor: '#2e7d32', color: '#2e7d32' }}>
+              📤 Choose Template File
+            </Button>
+            {templateFile && (
+              <Button size="small" variant="contained" onClick={handleUploadTemplate} disabled={uploading}
+                sx={{ textTransform: 'none', bgcolor: '#2e7d32', '&:hover': { bgcolor: '#1b5e20' } }}>
+                {uploading ? <CircularProgress size={14} sx={{ color: '#fff' }} /> : '✓ Upload Template'}
+              </Button>
+            )}
+            <Button size="small" variant="outlined" onClick={handleResetTemplate}
+              sx={{ textTransform: 'none', borderColor: '#f44336', color: '#f44336' }}>
+              ↺ Reset to Default
+            </Button>
+          </Box>
+
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".xlsx,.xls"
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) {
+                setTemplateFile(file);
+                setError('');
+              }
+            }}
+          />
+
+          {templateFile && (
+            <Box sx={{ p: 1.5, bgcolor: '#f1f8e9', borderRadius: 1, mb: 2, border: '1px solid #c8e6c9' }}>
+              <Typography variant="caption" sx={{ color: '#2e7d32', fontWeight: 600 }}>
+                📎 Selected: {templateFile.name}
+              </Typography>
+            </Box>
+          )}
+
+          <Divider sx={{ my: 3 }} />
+
+          {/* Step 3: Generate */}
+          <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1.5, color: '#2e7d32' }}>
+            Step 3 — Generate &amp; Download
+          </Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
+            Downloads a filled SF1 using the official DepEd School Register format.
+          </Typography>
+          <Button variant="contained" size="large" onClick={handleGenerate}
+            disabled={generating}
+            sx={{ bgcolor: '#2e7d32', '&:hover': { bgcolor: '#1b5e20' }, textTransform: 'none', fontWeight: 700 }}>
+            {generating
+              ? <><CircularProgress size={18} sx={{ color: '#fff', mr: 1 }} /> Generating SF1...</>
+              : '⬇ Generate & Download SF1'}
+          </Button>
+        </Box>
+      </Paper>
+    </Box>
+  );
+}
+
+// ─── SF2GeneratorPanel ───────────────────────────────────────────────
+function SF2GeneratorPanel({ section, onClose }: { section: string; onClose: () => void }) {
+  const [month,       setMonth]       = useState(new Date().getMonth() + 1);
+  const [year,        setYear]        = useState(new Date().getFullYear());
+  const [templateFile, setTemplateFile] = useState<File | null>(null);
+  const [generating,  setGenerating]  = useState(false);
+  const [previewData, setPreviewData] = useState<any>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [error,       setError]       = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const months = [
+    'January','February','March','April','May','June',
+    'July','August','September','October','November','December',
+  ];
+
+  const handlePreview = async () => {
+    setPreviewLoading(true);
+    setError('');
+    try {
+      const { data } = await api.get(
+        `/sf2/preview?month=${month}&year=${year}&section=${encodeURIComponent(section)}`
+      );
+      setPreviewData(data);
+    } catch (e: any) {
+      setError(e.response?.data?.error || 'Failed to load preview');
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const handleGenerate = async () => {
+    if (!templateFile) { setError('Please upload a blank SF2 template (.xlsx)'); return; }
+    setGenerating(true);
+    setError('');
+    try {
+      const formData = new FormData();
+      formData.append('template', templateFile);
+      formData.append('month',   String(month));
+      formData.append('year',    String(year));
+      formData.append('section', section);
+
+      const response = await api.post('/sf2/generate', formData, {
+        responseType: 'blob',
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+
+      // Trigger download
+      const url      = window.URL.createObjectURL(new Blob([response.data]));
+      const link     = document.createElement('a');
+      link.href      = url;
+      const filename = response.headers['content-disposition']
+        ?.split('filename=')[1]?.replace(/"/g, '')
+        || `SF2_${section}_${months[month-1]}_${year}.xlsx`;
+      link.setAttribute('download', filename);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (e: any) {
+      setError('Failed to generate SF2. Please check the template and try again.');
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  return (
+    <Box>
+      <Paper sx={{ borderRadius: 2, overflow: 'hidden', mb: 3 }}>
+        {/* Header */}
+        <Box sx={{
+          p: 2.5, background: 'linear-gradient(135deg, #1565c0 0%, #0d47a1 100%)', color: '#fff',
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        }}>
+          <Box>
+            <Typography sx={{ fontWeight: 700, fontSize: 18 }}>📋 SF2 Generator</Typography>
+            <Typography variant="caption" sx={{ opacity: 0.85 }}>
+              School Form 2 — Daily Attendance Report of Learners · Section: {section}
+            </Typography>
+          </Box>
+          <Button size="small" variant="outlined" onClick={onClose}
+            sx={{ color: '#fff', borderColor: 'rgba(255,255,255,0.5)', textTransform: 'none' }}>
+            ← Back
+          </Button>
+        </Box>
+
+        <Box sx={{ p: 3 }}>
+          {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError('')}>{error}</Alert>}
+
+          {/* Step 1: Pick month/year */}
+          <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1.5, color: '#1565c0' }}>
+            Step 1 — Select Month &amp; Year
+          </Typography>
+          <Box display="flex" gap={2} mb={3} flexWrap="wrap">
+            <FormControl size="small" sx={{ minWidth: 150 }}>
+              <InputLabel>Month</InputLabel>
+              <Select value={month} label="Month" onChange={e => setMonth(Number(e.target.value))}>
+                {months.map((m, i) => (
+                  <MenuItem key={i+1} value={i+1}>{m}</MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <TextField size="small" label="Year" type="number" value={year}
+              onChange={e => setYear(Number(e.target.value))}
+              inputProps={{ min: 2020, max: 2100 }} sx={{ width: 100 }} />
+            <Button variant="outlined" size="small" onClick={handlePreview} disabled={previewLoading}
+              sx={{ textTransform: 'none' }}>
+              {previewLoading ? <CircularProgress size={16} /> : '👁 Preview Data'}
+            </Button>
+          </Box>
+
+          {/* Preview result */}
+          {previewData && (
+            <Box sx={{ mb: 3, p: 2, bgcolor: '#f0f7ff', borderRadius: 2, border: '1px solid #bbdefb' }}>
+              <Typography variant="body2" sx={{ fontWeight: 700, mb: 1, color: '#1565c0' }}>
+                Preview — {months[month-1]} {year} · {previewData.section}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                {previewData.school_days} school days &nbsp;·&nbsp;
+                {previewData.students?.filter((s: any) => s.gender === 'M').length || 0} boys &nbsp;·&nbsp;
+                {previewData.students?.filter((s: any) => s.gender === 'F').length || 0} girls &nbsp;·&nbsp;
+                {previewData.students?.filter((s: any) => !s.gender).length || 0} gender unknown
+              </Typography>
+              {previewData.students?.filter((s: any) => !s.gender).length > 0 && (
+                <Alert severity="warning" sx={{ mt: 1, py: 0.5 }}>
+                  Some students have no gender set — they will be appended to the boys section on SF2.
+                </Alert>
+              )}
+            </Box>
+          )}
+
+          {/* Step 2: Upload template */}
+          <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1.5, color: '#1565c0' }}>
+            Step 2 — Upload Blank SF2 Template
+          </Typography>
+          <Box sx={{ mb: 3 }}>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".xlsx,.xls"
+              style={{ display: 'none' }}
+              onChange={e => setTemplateFile(e.target.files?.[0] || null)}
+            />
+            <Button variant="outlined" size="small"
+              onClick={() => fileInputRef.current?.click()}
+              sx={{ textTransform: 'none', mr: 2 }}>
+              📂 Choose Template File
+            </Button>
+            {templateFile ? (
+              <Chip label={templateFile.name} size="small" color="success" onDelete={() => setTemplateFile(null)} />
+            ) : (
+              <Typography variant="caption" color="text.secondary">No file selected (.xlsx only)</Typography>
+            )}
+            <Typography variant="caption" display="block" sx={{ mt: 1, color: '#888' }}>
+              Upload your school's blank official SF2 template. The system will fill in the attendance grid.
+            </Typography>
+          </Box>
+
+          {/* Step 3: Generate */}
+          <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1.5, color: '#1565c0' }}>
+            Step 3 — Generate &amp; Download
+          </Typography>
+          <Button variant="contained" size="large" onClick={handleGenerate}
+            disabled={generating || !templateFile}
+            sx={{ bgcolor: '#1565c0', '&:hover': { bgcolor: '#0d47a1' }, textTransform: 'none', fontWeight: 700 }}>
+            {generating
+              ? <><CircularProgress size={18} sx={{ color: '#fff', mr: 1 }} /> Generating SF2...</>
+              : '⬇ Generate & Download SF2'}
+          </Button>
+        </Box>
+      </Paper>
+    </Box>
+  );
+}
+
+// ─── RosterRow ───────────────────────────────────────────────────────
+function RosterRow({
+  row,
+  session,
+  onConfirm,
+  confirmingId,
+  onMessage,
+}: {
+  row: any;
+  session: 'AM' | 'PM';
+  onConfirm: (studentId: number, session: string, status: string, timeIn: string) => Promise<void>;
+  confirmingId: number | null;
+  onMessage: (studentId: number, studentName: string) => void;
+}) {
+  const [selectedStatus, setSelectedStatus] = useState(row.scan_status || 'Time-In');
+  // Pre-fill with kiosk scan time if available; blank otherwise for manual entry
+  const [manualTime, setManualTime] = useState<string>(row.scan_time || '');
+  const isBusy     = confirmingId === row.student_id;
+  const canConfirm = !row.already_confirmed && (
+    session === 'PM'
+      ? (row.has_scan || row.has_am_confirmed)
+      : row.has_scan
+  );
+  const statusOptions = ['Time-In', 'Late', 'Absent'];
+
+  const lockReason = row.already_confirmed
+    ? ''
+    : session === 'PM' && !row.has_scan && !row.has_am_confirmed
+      ? 'Student has not scanned the kiosk and has no confirmed AM attendance'
+      : !row.has_scan
+        ? 'Student has not scanned the kiosk'
+        : '';
+
+  return (
+    <TableRow hover sx={{
+      bgcolor: row.already_confirmed ? '#f0fdf4' : canConfirm ? '#fffde7' : '#fafafa',
+      opacity: !canConfirm && !row.already_confirmed ? 0.65 : 1,
+    }}>
+      <TableCell sx={{ fontWeight: 700 }}>{row.student_name}</TableCell>
+      <TableCell sx={{ fontSize: '0.8rem', color: '#555' }}>{row.lrn}</TableCell>
+      {/* Subject column */}
       <TableCell>
-        <Chip label={record.scan_method || 'QR'} size="small" />
+        {row.subject ? (
+          <Chip label={row.subject} size="small"
+            sx={{ bgcolor: '#e3f2fd', color: '#1565c0', fontSize: '0.68rem', fontWeight: 600 }} />
+        ) : (
+          <Chip label="General" size="small"
+            sx={{ bgcolor: '#f3e5f5', color: '#6a1b9a', fontSize: '0.68rem', fontWeight: 600 }} />
+        )}
       </TableCell>
+      {/* Kiosk scan status */}
       <TableCell>
-        <Chip label={record.status} size="small"
-          color={record.status === 'Time-In' ? 'success' : record.status === 'Late' ? 'warning' : record.status === 'Time-Out' ? 'info' : record.status === 'Excused' ? 'default' : 'error'} />
+        {row.has_scan ? (
+          <Chip label={`${session} scan`} size="small"
+            sx={{ bgcolor: '#e8f5e9', color: '#2e7d32', fontWeight: 700, fontSize: '0.7rem' }} />
+        ) : session === 'PM' && row.has_am_confirmed ? (
+          <Chip label="AM confirmed" size="small"
+            sx={{ bgcolor: '#e3f2fd', color: '#1565c0', fontWeight: 700, fontSize: '0.7rem' }} />
+        ) : (
+          <Chip label="No scan" size="small"
+            sx={{ bgcolor: '#f5f5f5', color: '#999', fontSize: '0.7rem' }} />
+        )}
       </TableCell>
+      {/* Editable time input — pre-filled from kiosk scan, always editable */}
       <TableCell>
-        <Select size="small" value={selectedStatus}
-          onChange={e => setSelectedStatus(e.target.value)}
-          sx={{ fontSize: '0.78rem', minWidth: 110 }}>
-          {statusOptions.map(s => (
-            <MenuItem key={s} value={s} sx={{ fontSize: '0.78rem' }}>{s}</MenuItem>
-          ))}
-        </Select>
+        {row.already_confirmed ? (
+          <Typography sx={{ fontSize: '0.8rem', color: '#555' }}>
+            {row.scan_time || '—'}
+          </Typography>
+        ) : (
+          <TextField
+            size="small"
+            value={manualTime}
+            onChange={e => setManualTime(e.target.value)}
+            placeholder="e.g. 1:15 PM"
+            disabled={!canConfirm}
+            sx={{ width: 110, fontSize: '0.78rem',
+              '& .MuiInputBase-input': { fontSize: '0.78rem', py: 0.6, px: 1 } }}
+            inputProps={{ maxLength: 12 }}
+          />
+        )}
       </TableCell>
+      {/* Status selector */}
       <TableCell>
-        <Button size="small" variant="contained" disabled={isBusy}
-          onClick={() => onVerify(record.id, selectedStatus)}
-          sx={{
-            bgcolor: '#2e7d32', '&:hover': { bgcolor: '#1b5e20' },
-            fontSize: '0.7rem', px: 1.5, py: 0.5, textTransform: 'none', fontWeight: 700,
-          }}>
-          {isBusy ? <CircularProgress size={14} sx={{ color: '#fff' }} /> : '✓ Confirm'}
-        </Button>
+        {row.already_confirmed ? (
+          <Chip label={row[`final_${session.toLowerCase()}`]?.status || 'Confirmed'}
+            size="small" color="success" />
+        ) : (
+          <Select size="small" value={selectedStatus}
+            onChange={e => setSelectedStatus(e.target.value)}
+            disabled={!canConfirm} sx={{ fontSize: '0.78rem', minWidth: 100 }}>
+            {statusOptions.map(s => (
+              <MenuItem key={s} value={s} sx={{ fontSize: '0.78rem' }}>{s}</MenuItem>
+            ))}
+          </Select>
+        )}
+      </TableCell>
+      {/* Action */}
+      <TableCell>
+        <Box display="flex" gap={0.5} alignItems="center">
+          {row.already_confirmed ? (
+            <Chip label="✓ Done" size="small" color="success" variant="outlined" />
+          ) : (
+            <Tooltip title={lockReason || `Confirm ${session} attendance`}>
+              <span>
+                <Button size="small" variant="contained"
+                  disabled={!canConfirm || isBusy}
+                  onClick={() => onConfirm(row.student_id, session, selectedStatus, manualTime)}
+                  sx={{
+                    bgcolor: canConfirm ? '#2e7d32' : '#bdbdbd',
+                    '&:hover': { bgcolor: '#1b5e20' },
+                    fontSize: '0.7rem', px: 1.5, py: 0.5, textTransform: 'none', fontWeight: 700,
+                  }}>
+                  {isBusy ? <CircularProgress size={14} sx={{ color: '#fff' }} />
+                    : canConfirm ? '✓ Confirm' : '🔒 No scan'}
+                </Button>
+              </span>
+            </Tooltip>
+          )}
+          <Tooltip title={`Message parent of ${row.student_name}`}>
+            <IconButton size="small" onClick={() => onMessage(row.student_id, row.student_name)}
+              sx={{ color: '#1565c0', '&:hover': { bgcolor: '#e3f2fd' } }}>
+              <Email fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        </Box>
       </TableCell>
     </TableRow>
   );
@@ -527,11 +1014,16 @@ export default function TeacherDashboardPageNew() {
     open: boolean; request: any | null; action: 'approve' | 'reject'; note: string; loading: boolean; error: string;
   }>({ open: false, request: null, action: 'approve', note: '', loading: false, error: '' });
 
-  // Message-parent dialog state
+  // Message-parent dialog state (from Final Attendance List)
   const [msgDialog, setMsgDialog] = useState<{
     open: boolean; studentName: string; studentId: number | null;
     subject: string; body: string; loading: boolean; error: string; success: boolean;
   }>({ open: false, studentName: '', studentId: null, subject: '', body: '', loading: false, error: '', success: false });
+
+  // Message-parent dialog from roster (same dialog, reused)
+  const handleRosterMessage = useCallback((studentId: number, studentName: string) => {
+    setMsgDialog({ open: true, studentName, studentId, subject: '', body: '', loading: false, error: '', success: false });
+  }, []);
 
   // At-risk students (below threshold)
   const [atRiskIds, setAtRiskIds] = useState<Set<number>>(new Set());
@@ -553,8 +1045,8 @@ export default function TeacherDashboardPageNew() {
   // Subject assignments (from Image 1 config) — determines sidebar nav
   const [subjectAssignments, setSubjectAssignments] = useState<any[]>([]);
   const [advisoryAssignments, setAdvisoryAssignments] = useState<any[]>([]);
-  // Active view: 'dashboard' (main class), 'excuses', or assignment id (subject class)
-  const [activeView, setActiveView] = useState<'dashboard' | 'excuses' | number>('dashboard');
+  // Active view: 'dashboard' (main class), 'excuses', 'sf2', 'sf1', or assignment id (subject class)
+  const [activeView, setActiveView] = useState<'dashboard' | 'excuses' | 'sf2' | 'sf1' | number>('dashboard');
   // Subject attendance (partial + final)
   const [subjectDate, setSubjectDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [partialAttendance, setPartialAttendance] = useState<any[]>([]);
@@ -567,6 +1059,14 @@ export default function TeacherDashboardPageNew() {
   const [advisoryPartial,   setAdvisoryPartial]   = useState<any[]>([]);
   const [advisoryVerifyId,  setAdvisoryVerifyId]  = useState<number | null>(null);
 
+  // ── NEW: Full roster for AM / PM sessions ────────────────────────────
+  const [activeSession,      setActiveSession]      = useState<'AM' | 'PM'>('AM');
+  const [authorizedSession,  setAuthorizedSession]  = useState<'AM' | 'PM' | 'BOTH'>('BOTH');
+  const [roster,             setRoster]             = useState<any[]>([]);
+  const [rosterLoading,      setRosterLoading]      = useState(false);
+  const [confirmingId,       setConfirmingId]       = useState<number | null>(null);
+  const [autoAbsentBusy,     setAutoAbsentBusy]     = useState(false);
+
   // Fetch teacher's classes
   const fetchClasses = useCallback(async () => {
     try {
@@ -578,7 +1078,43 @@ export default function TeacherDashboardPageNew() {
     }
   }, []);
 
-  // Fetch today's attendance
+  // ── NEW: Fetch full class roster with kiosk scan status ──────────────
+  // targetSection: pass when a subject teacher is viewing a section different from their advisory
+  const fetchRoster = useCallback(async (session: 'AM' | 'PM', targetDate?: string, targetSection?: string) => {
+    setRosterLoading(true);
+    const d = targetDate || date;
+    const sectionParam = targetSection ? `&section=${encodeURIComponent(targetSection)}` : '';
+    try {
+      const { data } = await api.get(`/teacher/attendance/roster?date=${d}&session=${session}${sectionParam}`);
+      setRoster(data.roster || []);
+      if (data.authorized_session && data.authorized_session !== 'BOTH') {
+        setAuthorizedSession(data.authorized_session);
+        setActiveSession(data.authorized_session as 'AM' | 'PM');
+      } else {
+        setAuthorizedSession('BOTH');
+      }
+      setRosterLoading(false);
+    } catch (e: any) {
+      if (e.response?.status === 403 && e.response?.data?.authorized_session) {
+        const correct = e.response.data.authorized_session as 'AM' | 'PM';
+        setAuthorizedSession(correct);
+        setActiveSession(correct);
+        if (correct !== session) {
+          try {
+            const { data: retryData } = await api.get(`/teacher/attendance/roster?date=${d}&session=${correct}${sectionParam}`);
+            setRoster(retryData.roster || []);
+          } catch {
+            showSnack('Failed to load attendance roster', 'error');
+          }
+        }
+      } else {
+        showSnack('Failed to load attendance roster', 'error');
+      }
+      setRosterLoading(false);
+    }
+  }, [date]);
+
+  // Fetch today's attendance  ← moved above handleConfirmAttendance / handleAutoAbsent
   const fetchAttendance = useCallback(async () => {
     setLoading(true);
     try {
@@ -595,6 +1131,57 @@ export default function TeacherDashboardPageNew() {
     }
   }, [date]);
 
+  // ── NEW: Confirm a student's attendance for a session ────────────────
+  const handleConfirmAttendance = useCallback(async (
+    studentId: number, session: string, status: string, timeIn: string
+  ) => {
+    setConfirmingId(studentId);
+    const asg = typeof activeView === 'number'
+      ? subjectAssignments.find((a: any) => a.id === activeView)
+      : null;
+    const currentSection = asg?.section || undefined;
+    const currentSubject = asg?.subject || null;
+    try {
+      await api.post('/teacher/attendance/confirm', {
+        student_id: studentId,
+        session,
+        status,
+        date,
+        subject: currentSubject,
+        time_in: timeIn || null,
+      });
+      showSnack(`${session} attendance confirmed`);
+      fetchRoster(activeSession, date, currentSection);
+      fetchAttendance();
+    } catch (e: any) {
+      showSnack(e.response?.data?.error || 'Failed to confirm attendance', 'error');
+    } finally {
+      setConfirmingId(null);
+    }
+  }, [date, activeSession, activeView, subjectAssignments, fetchAttendance, fetchRoster]);
+
+  // ── NEW: Auto-mark absent for end of session ─────────────────────────
+  const handleAutoAbsent = useCallback(async (session: 'AM' | 'PM') => {
+    if (!window.confirm(
+      `This will mark all students with no confirmed ${session} attendance as Absent for ${session}.\n\nProceed?`
+    )) return;
+    const asg = typeof activeView === 'number'
+      ? subjectAssignments.find((a: any) => a.id === activeView)
+      : null;
+    const currentSection = asg?.section || undefined;
+    setAutoAbsentBusy(true);
+    try {
+      const { data } = await api.post('/teacher/attendance/auto-absent', { session, date });
+      showSnack(`${data.marked} student(s) marked Absent for ${session}`);
+      fetchRoster(activeSession, date, currentSection);
+      fetchAttendance();
+    } catch (e: any) {
+      showSnack(e.response?.data?.error || 'Failed to auto-mark absent', 'error');
+    } finally {
+      setAutoAbsentBusy(false);
+    }
+  }, [date, activeSession, activeView, subjectAssignments, fetchAttendance, fetchRoster]);
+
   useEffect(() => {
     fetchClasses();
   }, [fetchClasses]);
@@ -602,6 +1189,18 @@ export default function TeacherDashboardPageNew() {
   useEffect(() => {
     fetchAttendance();
   }, [fetchAttendance]);
+
+  // Fetch roster whenever date or active session changes
+  useEffect(() => {
+    if (activeView === 'dashboard' || typeof activeView === 'number') {
+      // For subject views, pass the section of that assignment
+      const asg = typeof activeView === 'number'
+        ? subjectAssignments.find((a: any) => a.id === activeView)
+        : null;
+      const targetSection = asg?.section || undefined;
+      fetchRoster(activeSession, date, targetSection);
+    }
+  }, [date, activeSession, activeView, fetchRoster, subjectAssignments]);
 
   // Fetch subject assignments for sidebar nav
   const fetchSubjectAssignments = useCallback(async () => {
@@ -883,6 +1482,44 @@ export default function TeacherDashboardPageNew() {
           </Box>
         )}
 
+        {/* ── SF2 Generator — only for advisers ── */}
+        {teacherData?.is_adviser !== false && (
+          <Box
+            onClick={() => { setActiveView('sf2'); setExcuseTab('dashboard'); setMobileOpen(false); }}
+            sx={{
+              display: 'flex', alignItems: 'center', gap: 1.5,
+              px: 2, py: 1.2, cursor: 'pointer', borderRadius: 1, mb: 1,
+              bgcolor: activeView === 'sf2' ? 'rgba(255,255,255,0.2)' : 'transparent',
+              borderLeft: activeView === 'sf2' ? '3px solid #fbc02d' : '3px solid transparent',
+              '&:hover': { bgcolor: 'rgba(255,255,255,0.15)' },
+            }}
+          >
+            <Description sx={{ fontSize: 18, color: '#fbc02d' }} />
+            <Typography variant="body2" sx={{ fontWeight: activeView === 'sf2' ? 700 : 400 }}>
+              📋 SF2 Generator
+            </Typography>
+          </Box>
+        )}
+
+        {/* ── SF1 Generator — only for advisers ── */}
+        {teacherData?.is_adviser !== false && (
+          <Box
+            onClick={() => { setActiveView('sf1'); setExcuseTab('dashboard'); setMobileOpen(false); }}
+            sx={{
+              display: 'flex', alignItems: 'center', gap: 1.5,
+              px: 2, py: 1.2, cursor: 'pointer', borderRadius: 1, mb: 1,
+              bgcolor: activeView === 'sf1' ? 'rgba(255,255,255,0.2)' : 'transparent',
+              borderLeft: activeView === 'sf1' ? '3px solid #66bb6a' : '3px solid transparent',
+              '&:hover': { bgcolor: 'rgba(255,255,255,0.15)' },
+            }}
+          >
+            <Description sx={{ fontSize: 18, color: '#66bb6a' }} />
+            <Typography variant="body2" sx={{ fontWeight: activeView === 'sf1' ? 700 : 400 }}>
+              📄 SF1 Generator
+            </Typography>
+          </Box>
+        )}
+
         {/* ── Subject Classes (dynamic from assignments) ── */}
         {subjectAssignments.length > 0 && (
           <>
@@ -1035,6 +1672,22 @@ export default function TeacherDashboardPageNew() {
 
         {/* Content */}
         <Box sx={{ flex: 1, overflow: 'auto', p: { xs: 2, sm: 3 } }}>
+
+          {/* ── SF2 GENERATOR VIEW ── */}
+          {activeView === 'sf2' && excuseTab === 'dashboard' && (
+            <SF2GeneratorPanel
+              section={teacherData?.section || ''}
+              onClose={() => setActiveView('dashboard')}
+            />
+          )}
+
+          {/* ── SF1 GENERATOR VIEW ── */}
+          {activeView === 'sf1' && excuseTab === 'dashboard' && (
+            <SF1GeneratorPanel
+              section={teacherData?.section || ''}
+              onClose={() => setActiveView('dashboard')}
+            />
+          )}
 
           {/* ── EXCUSE REQUESTS TAB ── */}
           {excuseTab === 'excuses' && (
@@ -1240,58 +1893,139 @@ export default function TeacherDashboardPageNew() {
             </Grid>
           </Paper>
 
-          {/* ── ADVISORY: Automated Partial Attendance List ── */}
+          {/* ── ADVISORY: Automated Partial Attendance List (Full Roster) ── */}
           <Paper sx={{ mb: 3, borderRadius: 2, overflow: 'hidden' }}>
+            {/* Header */}
             <Box sx={{
               p: 2, bgcolor: '#fff8e1', borderBottom: '1px solid #ffe082',
-              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
             }}>
-              <Box>
-                <Typography sx={{ fontWeight: 700, fontSize: '0.95rem', color: '#e65100' }}>
-                  ⏳ Automated Partial Attendance List
-                </Typography>
-                <Typography variant="caption" color="text.secondary">
-                  Kiosk scans — verify each entry to move it to the Final List
-                </Typography>
+              <Box display="flex" justifyContent="space-between" alignItems="center" flexWrap="wrap" gap={1}>
+                <Box>
+                  <Typography sx={{ fontWeight: 700, fontSize: '0.95rem', color: '#e65100' }}>
+                    ⏳ Automated Partial Attendance List
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    All assigned students — Confirm is enabled only for students who have scanned the kiosk
+                  </Typography>
+                </Box>
+                <Box display="flex" gap={1} alignItems="center" flexWrap="wrap">
+                  {/* Session toggle — locked if teacher is AM-only or PM-only */}
+                  <Box sx={{ display: 'flex', bgcolor: '#f5f5f5', borderRadius: 1, p: 0.5, gap: 0.5 }}>
+                    {(['AM', 'PM'] as const).map(s => {
+                      const isLocked = authorizedSession !== 'BOTH' && authorizedSession !== s;
+                      return (
+                        <Tooltip
+                          key={s}
+                          title={isLocked ? `You are only authorized to manage ${authorizedSession} attendance` : `Switch to ${s} session`}
+                        >
+                          <span>
+                            <Button
+                              size="small"
+                              variant={activeSession === s ? 'contained' : 'text'}
+                              disabled={isLocked}
+                              onClick={() => !isLocked && setActiveSession(s)}
+                              sx={{
+                                minWidth: 48, py: 0.3, fontWeight: 700,
+                                bgcolor: activeSession === s ? (s === 'AM' ? '#1565c0' : '#6a1b9a') : 'transparent',
+                                color: activeSession === s ? '#fff' : isLocked ? '#ccc' : '#555',
+                                '&:hover': { bgcolor: activeSession === s ? undefined : '#e0e0e0' },
+                                '&.Mui-disabled': { color: '#ccc' },
+                              }}
+                            >
+                              {s}
+                              {isLocked && ' 🔒'}
+                            </Button>
+                          </span>
+                        </Tooltip>
+                      );
+                    })}
+                  </Box>
+                  <Chip
+                    label={`${roster.filter(r => r.has_scan && !r.already_confirmed).length} pending`}
+                    size="small"
+                    sx={{
+                      bgcolor: roster.some(r => r.has_scan && !r.already_confirmed) ? '#ffa000' : '#e0e0e0',
+                      color:   roster.some(r => r.has_scan && !r.already_confirmed) ? '#fff' : '#666',
+                      fontWeight: 700,
+                    }}
+                  />
+                  <Tooltip title={`Auto-mark all unconfirmed students as Absent for ${activeSession}`}>
+                    <span>
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        color="error"
+                        disabled={autoAbsentBusy}
+                        onClick={() => handleAutoAbsent(activeSession)}
+                        sx={{ fontSize: '0.72rem', py: 0.5, px: 1.5, textTransform: 'none', fontWeight: 700 }}
+                      >
+                        {autoAbsentBusy
+                          ? <CircularProgress size={14} />
+                          : `Mark ${activeSession} Absent`}
+                      </Button>
+                    </span>
+                  </Tooltip>
+                  <IconButton size="small" onClick={() => fetchRoster(activeSession, date)}>
+                    <Refresh fontSize="small" />
+                  </IconButton>
+                </Box>
               </Box>
-              <Chip label={`${advisoryPartial.length} pending`} size="small"
-                sx={{ bgcolor: advisoryPartial.length > 0 ? '#ffa000' : '#e0e0e0',
-                  color: advisoryPartial.length > 0 ? '#fff' : '#666', fontWeight: 700 }} />
             </Box>
+
+            {/* Roster table */}
             <TableContainer>
               <Table size="small">
                 <TableHead>
                   <TableRow>
-                    {['Student', 'LRN', 'Time', 'Method', 'Status', 'Verify As', 'Action'].map(h => (
+                    {['Student', 'LRN', 'Subject', 'Kiosk Scan', 'Time', 'Record As', 'Action'].map(h => (
                       <TableCell key={h} sx={{ fontWeight: 700, bgcolor: '#fffde7' }}>{h}</TableCell>
                     ))}
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {advisoryPartial.length === 0 ? (
+                  {rosterLoading ? (
                     <TableRow>
-                      <TableCell colSpan={7} align="center" sx={{ py: 4, color: '#aaa', fontStyle: 'italic' }}>
-                        No pending scans — all attendance verified
+                      <TableCell colSpan={7} align="center" sx={{ py: 4 }}>
+                        <CircularProgress size={24} />
                       </TableCell>
                     </TableRow>
-                  ) : advisoryPartial.map(r => (
-                    <PartialAttendanceRow
-                      key={r.id} record={r}
-                      onVerify={async (id, status) => {
-                        setAdvisoryVerifyId(id);
-                        try {
-                          await api.post('/teacher/attendance/verify', { attendance_id: id, status });
-                          showSnack(`Verified as ${status}`);
-                          fetchAttendance();
-                        } catch { showSnack('Failed to verify', 'error'); }
-                        finally { setAdvisoryVerifyId(null); }
-                      }}
-                      verifyingId={advisoryVerifyId}
+                  ) : roster.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={7} align="center" sx={{ py: 4, color: '#aaa', fontStyle: 'italic' }}>
+                        No students assigned to this section
+                      </TableCell>
+                    </TableRow>
+                  ) : roster.map(row => (
+                    <RosterRow
+                      key={row.student_id}
+                      row={row}
+                      session={activeSession}
+                      onConfirm={handleConfirmAttendance}
+                      confirmingId={confirmingId}
+                      onMessage={handleRosterMessage}
                     />
                   ))}
                 </TableBody>
               </Table>
             </TableContainer>
+
+            {/* Summary bar */}
+            {roster.length > 0 && (
+              <Box sx={{ px: 2, py: 1.5, bgcolor: '#fffde7', borderTop: '1px solid #ffe082', display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+                <Typography variant="caption" sx={{ color: '#555' }}>
+                  <strong>{roster.filter(r => r.already_confirmed).length}</strong> confirmed
+                </Typography>
+                <Typography variant="caption" sx={{ color: '#e65100' }}>
+                  <strong>{roster.filter(r => r.has_scan && !r.already_confirmed).length}</strong> scanned, awaiting confirmation
+                </Typography>
+                <Typography variant="caption" sx={{ color: '#999' }}>
+                  <strong>{roster.filter(r => !r.has_scan && !r.already_confirmed).length}</strong> not yet scanned
+                </Typography>
+                <Typography variant="caption" sx={{ color: '#555', ml: 'auto' }}>
+                  Total: <strong>{roster.length}</strong> students
+                </Typography>
+              </Box>
+            )}
           </Paper>
 
           {/* ── ADVISORY: Final Attendance List ── */}
@@ -1315,18 +2049,18 @@ export default function TeacherDashboardPageNew() {
               <Table stickyHeader size="small">
                 <TableHead>
                   <TableRow>
-                    {['Student', 'Date', 'LRN', 'Time', 'Method', 'Photo', 'Status', 'Actions'].map(h => (
+                    {['Student', 'Date', 'LRN', 'Time', 'Subject', 'Method', 'Photo', 'Status', 'Actions'].map(h => (
                       <TableCell key={h} sx={{ fontWeight: 700, bgcolor: theme.colors.primary.light, color: '#fff' }}>{h}</TableCell>
                     ))}
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   {loading && (
-                    <TableRow><TableCell colSpan={8} align="center" sx={{ py: 4 }}><CircularProgress size={28} /></TableCell></TableRow>
+                    <TableRow><TableCell colSpan={9} align="center" sx={{ py: 4 }}><CircularProgress size={28} /></TableCell></TableRow>
                   )}
                   {!loading && attendanceRecords.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={8} align="center" sx={{ py: 4, color: '#aaa', fontStyle: 'italic' }}>
+                      <TableCell colSpan={9} align="center" sx={{ py: 4, color: '#aaa', fontStyle: 'italic' }}>
                         No verified attendance for this date
                       </TableCell>
                     </TableRow>
@@ -1347,7 +2081,19 @@ export default function TeacherDashboardPageNew() {
                         {formatAttendanceDate(r.date)}
                       </TableCell>
                       <TableCell>{r.lrn}</TableCell>
-                      <TableCell>{format(new Date(r.timestamp), 'hh:mm a')}</TableCell>
+                      <TableCell>
+                        {/* Show kiosk scan time (time_in), not confirmation time (timestamp) */}
+                        {r.time_in || (r.timestamp ? (() => { try { return format(new Date(r.timestamp), 'hh:mm a'); } catch { return '—'; } })() : '—')}
+                      </TableCell>
+                      <TableCell>
+                        {r.subject ? (
+                          <Chip label={r.subject} size="small"
+                            sx={{ bgcolor: '#e3f2fd', color: '#1565c0', fontSize: '0.68rem', fontWeight: 600 }} />
+                        ) : (
+                          <Chip label="General" size="small"
+                            sx={{ bgcolor: '#f3e5f5', color: '#6a1b9a', fontSize: '0.68rem', fontWeight: 600 }} />
+                        )}
+                      </TableCell>
                       <TableCell><Chip label={r.scan_method} size="small" /></TableCell>
                       <TableCell align="center">
                         <Tooltip title={r.photo_path ? 'View Photo' : 'No photo'}>
@@ -1559,7 +2305,10 @@ export default function TeacherDashboardPageNew() {
                     </Box>
                     <Box display="flex" alignItems="center" gap={1}>
                       <TextField type="date" size="small" value={subjectDate}
-                        onChange={e => setSubjectDate(e.target.value)}
+                        onChange={e => {
+                          setSubjectDate(e.target.value);
+                          fetchRoster(activeSession, e.target.value, asg.section);
+                        }}
                         sx={{ width: 150, bgcolor: 'rgba(255,255,255,0.15)', borderRadius: 1,
                           '& input': { color: '#fff' }, '& .MuiOutlinedInput-notchedOutline': { borderColor: 'rgba(255,255,255,0.4)' } }}
                       />
@@ -1576,55 +2325,119 @@ export default function TeacherDashboardPageNew() {
                   <Box textAlign="center" py={4}><CircularProgress /></Box>
                 ) : (
                   <>
-                    {/* ── 1. Automated Partial Attendance List ── */}
+                    {/* ── 1. Automated Partial Attendance List (Full Roster) ── */}
                     <Paper sx={{ mb: 3, borderRadius: 2, overflow: 'hidden' }}>
-                      <Box sx={{ p: 2, bgcolor: '#fff8e1', borderBottom: '1px solid #ffe082',
-                          display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <Box>
-                          <Typography sx={{ fontWeight: 700, fontSize: '0.95rem', color: '#e65100' }}>
-                            ⏳ Automated Partial Attendance List
-                          </Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            Kiosk scans — verify each entry to move it to the Final List
-                          </Typography>
+                      <Box sx={{ p: 2, bgcolor: '#fff8e1', borderBottom: '1px solid #ffe082' }}>
+                        <Box display="flex" justifyContent="space-between" alignItems="center" flexWrap="wrap" gap={1}>
+                          <Box>
+                            <Typography sx={{ fontWeight: 700, fontSize: '0.95rem', color: '#e65100' }}>
+                              ⏳ Automated Partial Attendance List
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              All assigned students — Confirm is enabled only for students who have scanned the kiosk
+                            </Typography>
+                          </Box>
+                          <Box display="flex" gap={1} alignItems="center" flexWrap="wrap">
+                            {/* Session toggle — locked to authorized session */}
+                            <Box sx={{ display: 'flex', bgcolor: '#f5f5f5', borderRadius: 1, p: 0.5, gap: 0.5 }}>
+                              {(['AM', 'PM'] as const).map(s => {
+                                const isLocked = authorizedSession !== 'BOTH' && authorizedSession !== s;
+                                return (
+                                  <Tooltip key={s} title={isLocked ? `You are only authorized to manage ${authorizedSession} attendance` : `Switch to ${s}`}>
+                                    <span>
+                                      <Button size="small"
+                                        variant={activeSession === s ? 'contained' : 'text'}
+                                        disabled={isLocked}
+                                        onClick={() => !isLocked && setActiveSession(s)}
+                                        sx={{
+                                          minWidth: 48, py: 0.3, fontWeight: 700,
+                                          bgcolor: activeSession === s ? (s === 'AM' ? '#1565c0' : '#6a1b9a') : 'transparent',
+                                          color: activeSession === s ? '#fff' : isLocked ? '#ccc' : '#555',
+                                        }}
+                                      >
+                                        {s}{isLocked && ' 🔒'}
+                                      </Button>
+                                    </span>
+                                  </Tooltip>
+                                );
+                              })}
+                            </Box>
+                            <Chip
+                              label={`${roster.filter(r => r.has_scan && !r.already_confirmed).length} pending`}
+                              size="small"
+                              sx={{
+                                bgcolor: roster.some(r => r.has_scan && !r.already_confirmed) ? '#ffa000' : '#e0e0e0',
+                                color:   roster.some(r => r.has_scan && !r.already_confirmed) ? '#fff' : '#666',
+                                fontWeight: 700,
+                              }}
+                            />
+                            <Tooltip title={`Auto-mark all unconfirmed students as Absent for ${activeSession}`}>
+                              <span>
+                                <Button size="small" variant="outlined" color="error"
+                                  disabled={autoAbsentBusy}
+                                  onClick={() => handleAutoAbsent(activeSession)}
+                                  sx={{ fontSize: '0.72rem', py: 0.5, px: 1.5, textTransform: 'none', fontWeight: 700 }}>
+                                  {autoAbsentBusy ? <CircularProgress size={14} /> : `Mark ${activeSession} Absent`}
+                                </Button>
+                              </span>
+                            </Tooltip>
+                            <IconButton size="small" onClick={() => fetchRoster(activeSession, subjectDate, asg.section)}>
+                              <Refresh fontSize="small" />
+                            </IconButton>
+                          </Box>
                         </Box>
-                        <Chip label={`${partialAttendance.length} pending`} size="small"
-                          sx={{ bgcolor: '#ffa000', color: '#fff', fontWeight: 700 }} />
                       </Box>
                       <TableContainer>
                         <Table size="small">
                           <TableHead>
                             <TableRow>
-                              {['Student', 'LRN', 'Time', 'Method', 'Status', 'Verify As', 'Action'].map(h => (
+                              {['Student', 'LRN', 'Subject', 'Kiosk Scan', 'Time', 'Record As', 'Action'].map(h => (
                                 <TableCell key={h} sx={{ fontWeight: 700, bgcolor: '#fffde7' }}>{h}</TableCell>
                               ))}
                             </TableRow>
                           </TableHead>
                           <TableBody>
-                            {partialAttendance.length === 0 ? (
+                            {rosterLoading ? (
                               <TableRow>
-                                <TableCell colSpan={7} align="center" sx={{ py: 4, color: '#aaa', fontStyle: 'italic' }}>
-                                  No pending scans — all attendance verified
+                                <TableCell colSpan={7} align="center" sx={{ py: 4 }}>
+                                  <CircularProgress size={24} />
                                 </TableCell>
                               </TableRow>
-                            ) : partialAttendance.map(r => (
-                              <PartialAttendanceRow
-                                key={r.id} record={r}
-                                onVerify={async (id, status) => {
-                                  setVerifyingId(id);
-                                  try {
-                                    await api.post('/teacher/attendance/verify', { attendance_id: id, status });
-                                    showSnack(`Attendance verified as ${status}`);
-                                    fetchSubjectAttendance(activeView, subjectDate);
-                                  } catch { showSnack('Failed to verify', 'error'); }
-                                  finally { setVerifyingId(null); }
-                                }}
-                                verifyingId={verifyingId}
+                            ) : roster.length === 0 ? (
+                              <TableRow>
+                                <TableCell colSpan={7} align="center" sx={{ py: 4, color: '#aaa', fontStyle: 'italic' }}>
+                                  No students assigned to this class
+                                </TableCell>
+                              </TableRow>
+                            ) : roster.map(row => (
+                              <RosterRow
+                                key={row.student_id}
+                                row={row}
+                                session={activeSession}
+                                onConfirm={handleConfirmAttendance}
+                                confirmingId={confirmingId}
+                                onMessage={handleRosterMessage}
                               />
                             ))}
                           </TableBody>
                         </Table>
                       </TableContainer>
+                      {roster.length > 0 && (
+                        <Box sx={{ px: 2, py: 1.5, bgcolor: '#fffde7', borderTop: '1px solid #ffe082', display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+                          <Typography variant="caption" sx={{ color: '#555' }}>
+                            <strong>{roster.filter(r => r.already_confirmed).length}</strong> confirmed
+                          </Typography>
+                          <Typography variant="caption" sx={{ color: '#e65100' }}>
+                            <strong>{roster.filter(r => r.has_scan && !r.already_confirmed).length}</strong> scanned, awaiting confirmation
+                          </Typography>
+                          <Typography variant="caption" sx={{ color: '#999' }}>
+                            <strong>{roster.filter(r => !r.has_scan && !r.already_confirmed).length}</strong> not yet scanned
+                          </Typography>
+                          <Typography variant="caption" sx={{ color: '#555', ml: 'auto' }}>
+                            Total: <strong>{roster.length}</strong> students
+                          </Typography>
+                        </Box>
+                      )}
                     </Paper>
 
                     {/* ── 2. Final Attendance List ── */}
@@ -1646,7 +2459,7 @@ export default function TeacherDashboardPageNew() {
                         <Table stickyHeader size="small">
                           <TableHead>
                             <TableRow>
-                              {['Student', 'Date', 'LRN', 'Time', 'Method', 'Status', 'Photo'].map(h => (
+                              {['Student', 'Date', 'LRN', 'Time', 'Subject', 'Method', 'Status', 'Photo'].map(h => (
                                 <TableCell key={h} sx={{ fontWeight: 700, bgcolor: theme.colors.primary.light, color: '#fff' }}>{h}</TableCell>
                               ))}
                             </TableRow>
@@ -1654,7 +2467,7 @@ export default function TeacherDashboardPageNew() {
                           <TableBody>
                             {finalAttendance.length === 0 ? (
                               <TableRow>
-                                <TableCell colSpan={7} align="center" sx={{ py: 4, color: '#aaa', fontStyle: 'italic' }}>
+                                <TableCell colSpan={8} align="center" sx={{ py: 4, color: '#aaa', fontStyle: 'italic' }}>
                                   No verified attendance for this date
                                 </TableCell>
                               </TableRow>
@@ -1665,7 +2478,18 @@ export default function TeacherDashboardPageNew() {
                                   {formatAttendanceDate(r.date)}
                                 </TableCell>
                                 <TableCell>{r.lrn}</TableCell>
-                                <TableCell>{r.time_in || (r.timestamp ? format(new Date(r.timestamp), 'hh:mm a') : '—')}</TableCell>
+                                <TableCell>
+                                  {r.time_in || (r.timestamp ? format(new Date(r.timestamp), 'hh:mm a') : '—')}
+                                </TableCell>
+                                <TableCell>
+                                  {r.subject ? (
+                                    <Chip label={r.subject} size="small"
+                                      sx={{ bgcolor: '#e3f2fd', color: '#1565c0', fontSize: '0.68rem', fontWeight: 600 }} />
+                                  ) : (
+                                    <Chip label="General" size="small"
+                                      sx={{ bgcolor: '#f3e5f5', color: '#6a1b9a', fontSize: '0.68rem', fontWeight: 600 }} />
+                                  )}
+                                </TableCell>
                                 <TableCell><Chip label={r.scan_method} size="small" /></TableCell>
                                 <TableCell>
                                   <Chip label={r.status} size="small"
