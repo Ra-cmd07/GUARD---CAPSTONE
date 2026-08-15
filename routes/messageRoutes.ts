@@ -5,21 +5,19 @@ import {
   getTeacherMessages,
   getParentMessages,
   markMessageRead,
+  deleteParentMessage,
 } from '../controllers/messageController';
 
 const router = express.Router();
 router.use(protect);
 
 // ─── Teacher routes ───────────────────────────────────────────────────
-// POST /api/messages/teacher          — send message to parent
 router.post('/teacher', sendMessage);
-// GET  /api/messages/teacher          — view sent messages
-router.get('/teacher', getTeacherMessages);
+router.get('/teacher',  getTeacherMessages);
 
 // ─── Parent routes ────────────────────────────────────────────────────
-// GET  /api/messages/parent           — view received messages
-router.get('/parent', getParentMessages);
-// PATCH /api/messages/parent/:id/read — mark one message as read
-router.patch('/parent/:id/read', markMessageRead);
+router.get('/parent',              getParentMessages);
+router.patch('/parent/:id/read',   markMessageRead);
+router.delete('/parent/:id',       deleteParentMessage);
 
 export default router;

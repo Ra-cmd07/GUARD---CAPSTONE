@@ -14,6 +14,22 @@ const http_1 = require("http");
 const https_1 = require("https");
 const net_1 = __importDefault(require("net"));
 const fs_1 = __importDefault(require("fs"));
+const os_1 = __importDefault(require("os"));
+// Resolve the machine's primary non-loopback IPv4 address at runtime
+function getLocalIP() {
+    const ifaces = os_1.default.networkInterfaces();
+    for (const name of Object.keys(ifaces)) {
+        // Skip VirtualBox and loopback adapters
+        if (/virtualbox|vboxnet|vmware|loopback/i.test(name))
+            continue;
+        for (const iface of ifaces[name] ?? []) {
+            if (iface.family === 'IPv4' && !iface.internal && !iface.address.startsWith('192.168.56.')) {
+                return iface.address;
+            }
+        }
+    }
+    return 'localhost';
+}
 const socketHandler_1 = require("./src/websocket/socketHandler");
 dotenv_1.default.config();
 // ─── Route imports ────────────────────────────────────────────────────
@@ -38,7 +54,10 @@ const excuseRoutes_1 = __importDefault(require("./routes/excuseRoutes"));
 const messageRoutes_1 = __importDefault(require("./routes/messageRoutes"));
 const alertRoutes_1 = __importDefault(require("./routes/alertRoutes"));
 const announcementRoutes_1 = __importDefault(require("./routes/announcementRoutes"));
+const sf1Routes_1 = __importDefault(require("./routes/sf1Routes"));
+const fingerprintRoutes_1 = __importDefault(require("./routes/fingerprintRoutes"));
 const assignmentRoutes_1 = __importDefault(require("./routes/assignmentRoutes"));
+const sf2Routes_1 = __importDefault(require("./routes/sf2Routes"));
 const attendanceAlertController_1 = require("./controllers/attendanceAlertController");
 const errorMiddleware_1 = require("./middleware/errorMiddleware");
 const app = (0, express_1.default)();
@@ -108,6 +127,9 @@ app.use('/api/excuse', excuseRoutes_1.default);
 app.use('/api/messages', messageRoutes_1.default);
 app.use('/api/alerts', alertRoutes_1.default);
 app.use('/api/announcements', announcementRoutes_1.default);
+app.use('/api/sf1', sf1Routes_1.default);
+app.use('/api/fingerprint', fingerprintRoutes_1.default);
+app.use('/api/sf2', sf2Routes_1.default);
 // ─── Health Check ─────────────────────────────────────────────────────
 app.get('/api/health', (_req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
@@ -189,9 +211,20 @@ async function findAvailablePort(startPort, attempts = 6) {
         const proto = httpsEnabled ? 'https' : 'http';
         console.log(`🚀 AttendBox API running at ${proto}://0.0.0.0:${chosenPort}`);
         console.log(`   Local:   ${proto}://localhost:${chosenPort}`);
-        console.log(`   Network: ${proto}://192.168.1.37:${chosenPort}`);
+        console.log(`   Network: ${proto}://${getLocalIP()}:${chosenPort}`);
         console.log(`🔌 WebSocket server ready for real-time updates`);
         console.log(`📤 Background upload queue initialized`);
+        // ── HTTP companion server for mobile app (avoids self-signed cert issues) ──
+        // React Native rejects self-signed HTTPS certs, so we expose a plain HTTP
+        // listener on port 5001 for the Attendbox Mobile app only.
+        if (httpsEnabled) {
+            const HTTP_MOBILE_PORT = Number(process.env.HTTP_MOBILE_PORT) || 5001;
+            const httpMobileServer = (0, http_1.createServer)(app);
+            httpMobileServer.listen(HTTP_MOBILE_PORT, '0.0.0.0', () => {
+                const localIP = getLocalIP();
+                console.log(`📱 HTTP mobile port: http://${localIP}:${HTTP_MOBILE_PORT}/api  (for Attendbox Mobile app)`);
+            });
+        }
         // ── Daily attendance threshold check ─────────────────────────────
         const RUN_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
         const runWithDelay = () => {

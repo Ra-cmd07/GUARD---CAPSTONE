@@ -30,9 +30,26 @@ export async function sendMessage(req: AuthRequest, res: Response) {
     if (!sRows.length) return res.status(404).json({ error: 'Student not found' });
     const student = sRows[0];
 
-    // Verify teacher owns this student's section
-    if (teacher.section.toLowerCase() !== student.section.toLowerCase())
-      return res.status(403).json({ error: 'This student is not in your class' });
+    // Verify teacher can message this student's parent:
+    // - Adviser: section must match
+    // - Subject teacher: must have an assignment linking them to this student
+    const sectionMatch = teacher.section &&
+      teacher.section.toLowerCase() === student.section.toLowerCase();
+
+    if (!sectionMatch) {
+      // Check if teacher has an assignment for this student (subject teacher path)
+      const [asgRows]: any = await pool.query(
+        `SELECT a.id FROM assignments a
+         JOIN assignment_students asg ON asg.assignment_id = a.id
+         WHERE (a.teacher_id = ? OR a.subject_teacher_id = ?)
+           AND asg.student_id = ?
+         LIMIT 1`,
+        [teacher.id, teacher.id, student_id]
+      );
+      if (!asgRows.length) {
+        return res.status(403).json({ error: 'This student is not in your class' });
+      }
+    }
 
     // Find parent(s) linked to this student
     const [parentRows]: any = await pool.query(
@@ -138,6 +155,7 @@ export async function getParentMessages(req: AuthRequest, res: Response) {
        JOIN students s ON s.id = m.student_id
        JOIN teachers t ON t.user_id = m.sender_id
        WHERE m.recipient_parent_id = ?
+         AND (m.deleted_by_parent IS NULL OR m.deleted_by_parent = 0)
        ORDER BY m.is_read ASC, m.created_at DESC
        LIMIT 100`,
       [parentId]
@@ -159,7 +177,6 @@ export async function markMessageRead(req: AuthRequest, res: Response) {
     const { id } = req.params;
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
-    // Verify ownership
     const [pRows]: any = await pool.query(
       'SELECT id FROM parents WHERE user_id = ? LIMIT 1', [userId]
     );
@@ -177,4 +194,40 @@ export async function markMessageRead(req: AuthRequest, res: Response) {
   }
 }
 
-export default { sendMessage, getTeacherMessages, getParentMessages, markMessageRead };
+// ─── DELETE /parent/messages/:id ─────────────────────────────────────
+// Parent soft-deletes a message (hides from their inbox)
+export async function deleteParentMessage(req: AuthRequest, res: Response) {
+  try {
+    const userId = req.user?.id;
+    const { id } = req.params;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const [pRows]: any = await pool.query(
+      'SELECT id FROM parents WHERE user_id = ? LIMIT 1', [userId]
+    );
+    if (!pRows.length) return res.status(404).json({ error: 'Parent not found' });
+
+    const parentId = pRows[0].id;
+
+    // Verify message belongs to this parent
+    const [msgRows]: any = await pool.query(
+      'SELECT id FROM messages WHERE id = ? AND recipient_parent_id = ?',
+      [id, parentId]
+    );
+    if (!(msgRows as any[]).length) {
+      return res.status(404).json({ error: 'Message not found' });
+    }
+
+    await pool.query(
+      'UPDATE messages SET deleted_by_parent = 1 WHERE id = ? AND recipient_parent_id = ?',
+      [id, parentId]
+    );
+
+    res.json({ success: true, message: 'Message deleted' });
+  } catch (error) {
+    console.error('Error deleting message:', error);
+    res.status(500).json({ error: 'Failed to delete message' });
+  }
+}
+
+export default { sendMessage, getTeacherMessages, getParentMessages, markMessageRead, deleteParentMessage };

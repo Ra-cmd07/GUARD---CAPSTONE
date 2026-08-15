@@ -126,54 +126,44 @@ async function approveDetection(req, res) {
         const localHour = hour24;
         const localMinute = phTime.getUTCMinutes();
         const session = hour24 < 12 ? 'AM' : 'PM';
-        // AUTO-TOGGLE: Check last attendance record for THIS SESSION (AM/PM) to determine next status
-        const [lastRecord] = await db_1.default.execute(`SELECT status FROM attendance
-       WHERE student_id = ? AND date = ? AND session = ?
-       ORDER BY timestamp DESC
-       LIMIT 1`, [student.id, localDate, session]);
+        // AUTO-TOGGLE: Check last record across both tables for THIS SESSION (AM/PM)
+        const [lastRecord] = await db_1.default.execute(`SELECT status FROM (
+         SELECT status, created_at FROM attendance
+         WHERE student_id = ? AND date = ? AND session = ?
+         UNION ALL
+         SELECT status, created_at FROM partial_attendance
+         WHERE student_id = ? AND date = ? AND session = ?
+       ) combined
+       ORDER BY created_at DESC
+       LIMIT 1`, [student.id, localDate, session, student.id, localDate, session]);
         let status;
         let attendanceId;
         let attendanceStatus;
         if (lastRecord.length > 0) {
             const lastStatus = lastRecord[0].status;
-            // Toggle based on last status IN THIS SESSION
             if (lastStatus === 'Time-Out') {
-                // Last was Time-Out, so next is Time-In (check if late)
                 status = (localHour > 8 || (localHour === 8 && localMinute > 0)) ? 'Late' : 'Time-In';
             }
             else {
-                // Last was Time-In or Late, so next is Time-Out
                 status = 'Time-Out';
             }
         }
         else {
-            // No record for this session yet, first scan is Time-In (check if late)
             status = (localHour > 8 || (localHour === 8 && localMinute > 0)) ? 'Late' : 'Time-In';
         }
-        console.log('🔍 DEBUG: Inserting attendance with values:', {
-            student_id: student.id,
-            student_name: student.name,
-            lrn: student.lrn,
-            gender: student.gender,
-            grade: student.grade,
-            section: student.section,
-            kiosk_id: detection.kiosk_id || null,
-            scan_method: 'BLE',
-            status: status,
-            session: session
-        });
-        // Insert new attendance record (session-based)
-        const [insertResult] = await db_1.default.execute(`INSERT INTO attendance 
-       (student_id, student_name, lrn, gender, grade, section, kiosk_id, 
-        scan_method, status, session, date, time_in, time_out, photo_path, local_path) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'BLE', ?, ?, ?, ?, ?, ?, ?)`, [
+        // Insert into partial_attendance (staging — teacher must verify)
+        const [insertResult] = await db_1.default.execute(`INSERT INTO partial_attendance
+       (student_id, student_name, lrn, gender, grade, section, kiosk_id,
+        scan_method, status, session, date, time_in, time_out, photo_path, local_path,
+        scanned_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'BLE', ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`, [
             student.id, student.name, student.lrn, student.gender,
             student.grade, student.section, detection.kiosk_id || null,
             status, session, localDate,
             status === 'Time-In' || status === 'Late' ? localTime : null,
             status === 'Time-Out' ? localTime : null,
             photoPath,
-            photoPath // local_path same as photo_path initially
+            photoPath,
         ]);
         attendanceId = insertResult.insertId;
         attendanceStatus = status;
@@ -182,7 +172,7 @@ async function approveDetection(req, res) {
             uploadQueue_1.uploadQueue.enqueue(attendanceId, photoPath, student.name);
             console.log('📤 BLE photo queued for Cloudinary upload');
         }
-        console.log(`✅ Attendance APPROVED (${session}): ${student.name} ${status === 'Late' ? 'LATE' : status}`);
+        console.log(`✅ Scan staged to partial_attendance (${session}): ${student.name} ${status}`);
         // Send SMS notification to parents/guardians
         const [guardians] = await db_1.default.execute(`SELECT p.name, p.contact, ps.relationship
        FROM parent_student ps
@@ -191,10 +181,11 @@ async function approveDetection(req, res) {
         const statusEmoji = attendanceStatus === 'Time-In' ? '✅' : attendanceStatus === 'Late' ? '⏰' : '🔔';
         const message = `${statusEmoji} ATTENDBOX: ${student.name} has ${attendanceStatus === 'Time-In' ? 'arrived at school' : attendanceStatus === 'Time-Out' ? 'left school' : 'arrived LATE'} at ${localTime}. Date: ${localDate}.`;
         for (const g of guardians) {
-            if (g.contact) { // Changed from g.contact_number to g.contact
-                const queued = await queueSmsForGSM(g.contact, message, student.id, attendanceId);
+            if (g.contact) {
+                // NULL attendance_id — avoids FK violation (record is in partial_attendance, not attendance yet)
+                const queued = await queueSmsForGSM(g.contact, message, student.id, null);
                 await db_1.default.execute(`INSERT INTO sms_logs (attendance_id, student_name, parent_name, phone_number, message, status, sent_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`, [attendanceId, student.name, g.name, g.contact, message,
+           VALUES (?, ?, ?, ?, ?, ?, ?)`, [null, student.name, g.name, g.contact, message,
                     queued ? 'queued' : 'failed', queued ? new Date() : null]);
             }
         }

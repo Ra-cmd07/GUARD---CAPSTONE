@@ -11,6 +11,7 @@ exports.deleteExcuseRequest = deleteExcuseRequest;
 const db_1 = __importDefault(require("../lib/db"));
 const notificationController_1 = require("./notificationController");
 const date_fns_1 = require("date-fns");
+const teacherController_1 = require("./teacherController");
 // ─── Helper: get parent row from DB ──────────────────────────────────
 async function getParentRow(userId) {
     const [rows] = await db_1.default.query(`SELECT p.id, p.user_id, p.name, p.contact
@@ -82,7 +83,9 @@ async function getParentExcuseRequests(req, res) {
         const parent = await getParentRow(userId);
         if (!parent)
             return res.status(404).json({ error: 'Parent profile not found' });
-        const [rows] = await db_1.default.query(`SELECT er.id, er.student_id, er.date, er.reason,
+        const [rows] = await db_1.default.query(`SELECT er.id, er.student_id,
+              DATE_FORMAT(er.date, '%Y-%m-%d') AS date,
+              er.reason,
               er.status, er.teacher_note, er.created_at, er.resolved_at,
               s.name AS student_name,
               t.name AS teacher_name
@@ -100,28 +103,56 @@ async function getParentExcuseRequests(req, res) {
     }
 }
 // ─── GET /teacher/excuse-requests ────────────────────────────────────
-// Teacher views pending excuse requests for their class
+// Teacher views pending excuse requests for their class.
+// For advisers: matches by section.
+// For subject teachers: matches by assignment_id (students in that assignment).
 async function getTeacherExcuseRequests(req, res) {
     try {
         const userId = req.user?.id;
         if (!userId)
             return res.status(401).json({ error: 'Unauthorized' });
-        // Get teacher row
         const [tRows] = await db_1.default.query(`SELECT id, name, section FROM teachers WHERE user_id = ? LIMIT 1`, [userId]);
         if (!tRows.length)
             return res.status(404).json({ error: 'Teacher profile not found' });
         const teacher = tRows[0];
         const statusFilter = req.query.status || 'pending';
-        const [rows] = await db_1.default.query(`SELECT er.id, er.student_id, er.date, er.reason,
-              er.status, er.teacher_note, er.created_at, er.resolved_at,
-              s.name AS student_name, s.lrn, s.section,
-              p.name AS parent_name, p.contact AS parent_contact
-       FROM excuse_requests er
-       JOIN students  s ON s.id = er.student_id
-       LEFT JOIN parents p ON p.id = er.parent_id
-       WHERE LOWER(s.section) = LOWER(?)
-         AND (? = 'all' OR er.status = ?)
-       ORDER BY er.status ASC, er.created_at DESC`, [teacher.section, statusFilter, statusFilter]);
+        const assignmentId = req.query.assignment_id ? Number(req.query.assignment_id) : null;
+        let rows;
+        if (assignmentId) {
+            // ── Subject teacher mode: fetch requests for students in this specific assignment ──
+            rows = (await db_1.default.query(`SELECT er.id, er.student_id,
+                DATE_FORMAT(er.date, '%Y-%m-%d') AS date,
+                er.reason,
+                er.status, er.teacher_note, er.created_at, er.resolved_at,
+                s.name AS student_name, s.lrn, s.section,
+                p.name AS parent_name, p.contact AS parent_contact
+         FROM excuse_requests er
+         JOIN students s ON s.id = er.student_id
+         JOIN assignment_students asg ON asg.student_id = s.id
+         LEFT JOIN parents p ON p.id = er.parent_id
+         WHERE asg.assignment_id = ?
+           AND (? = 'all' OR er.status = ?)
+         GROUP BY er.id
+         ORDER BY er.status ASC, er.created_at DESC`, [assignmentId, statusFilter, statusFilter]))[0];
+        }
+        else {
+            // ── Adviser mode: fetch requests for ALL students in any of this teacher's advisory assignments ──
+            rows = (await db_1.default.query(`SELECT er.id, er.student_id,
+                DATE_FORMAT(er.date, '%Y-%m-%d') AS date,
+                er.reason,
+                er.status, er.teacher_note, er.created_at, er.resolved_at,
+                s.name AS student_name, s.lrn, s.section,
+                p.name AS parent_name, p.contact AS parent_contact
+         FROM excuse_requests er
+         JOIN students s ON s.id = er.student_id
+         JOIN assignment_students asg ON asg.student_id = s.id
+         JOIN assignments a ON a.id = asg.assignment_id
+         LEFT JOIN parents p ON p.id = er.parent_id
+         WHERE a.teacher_id = ?
+           AND (? = 'all' OR er.status = ?)
+         GROUP BY er.id
+         ORDER BY er.status ASC, er.created_at DESC`, [teacher.id, statusFilter, statusFilter]))[0];
+        }
         const pendingCount = rows.filter((r) => r.status === 'pending').length;
         res.json({ requests: rows, pendingCount });
     }
@@ -151,44 +182,96 @@ async function resolveExcuseRequest(req, res) {
         if (!excuseRows.length)
             return res.status(404).json({ error: 'Excuse request not found' });
         const excuse = excuseRows[0];
-        if (excuse.status !== 'pending')
-            return res.status(409).json({ error: 'This request has already been resolved' });
+        if (excuse.status !== 'pending') {
+            // Allow re-resolving only if explicitly forced (e.g., changing from approved→rejected)
+            const force = req.body.force === true;
+            if (!force)
+                return res.status(409).json({
+                    error: 'This request has already been resolved',
+                    currentStatus: excuse.status,
+                });
+        }
         // Verify teacher owns this section
         const [tRows] = await db_1.default.query(`SELECT id, name, section FROM teachers WHERE user_id = ? LIMIT 1`, [userId]);
         if (!tRows.length)
             return res.status(404).json({ error: 'Teacher not found' });
-        if (tRows[0].section.toLowerCase() !== excuse.section.toLowerCase())
+        // Allow if teacher is the adviser (via assignments) OR subject teacher assigned to this student
+        const [authCheck] = await db_1.default.query(`SELECT asg.id FROM assignment_students asg
+       JOIN assignments a ON a.id = asg.assignment_id
+       WHERE asg.student_id = ?
+         AND (a.teacher_id = ? OR a.subject_teacher_id = ?)
+       LIMIT 1`, [excuse.student_id, tRows[0].id, tRows[0].id]);
+        if (!authCheck.length)
             return res.status(403).json({ error: 'This student is not in your class' });
         const newStatus = action === 'approve' ? 'approved' : 'rejected';
         // Update excuse request status
         await db_1.default.query(`UPDATE excuse_requests
        SET status = ?, teacher_note = ?, resolved_at = NOW()
        WHERE id = ?`, [newStatus, teacher_note || null, id]);
-        // If APPROVED → update attendance record status to Excused
+        // If APPROVED → set attendance status to 'Excused'
         if (action === 'approve') {
-            if (excuse.attendance_id) {
-                await db_1.default.query(`UPDATE attendance SET status = 'Absent', is_overridden = 1,
-                                 notes = CONCAT(IFNULL(notes,''), ' | Excused by teacher')
-           WHERE id = ?`, [excuse.attendance_id]);
-            }
-            else {
-                // Find the attendance record by student + date
-                const [attRows] = await db_1.default.query(`SELECT id FROM attendance
-           WHERE student_id = ? AND DATE(CONVERT_TZ(date,'+00:00','+08:00')) = ?
-           LIMIT 1`, [excuse.student_id, excuse.date]);
-                if (attRows.length) {
-                    await db_1.default.query(`UPDATE attendance SET status = 'Absent', is_overridden = 1,
-                                   notes = CONCAT(IFNULL(notes,''), ' | Excused by teacher')
-             WHERE id = ?`, [attRows[0].id]);
+            const roleLabel = await (0, teacherController_1.buildTeacherRoleLabel)(tRows[0].id, excuse.section);
+            const excuseNote = `Excused by ${tRows[0].name} (${roleLabel})`;
+            // Get full student info for potential INSERT
+            const [studentRows] = await db_1.default.query(`SELECT id, name, lrn, gender, grade, section FROM students WHERE id = ? LIMIT 1`, [excuse.student_id]);
+            const student = studentRows[0];
+            console.log(`[Excuse Approve] teacher=${tRows[0].name}, student=${student?.name}, section=${excuse.section}, date=${excuse.date}, attendance_id=${excuse.attendance_id}`);
+            try {
+                if (excuse.attendance_id) {
+                    console.log(`[Excuse Approve] Updating attendance id=${excuse.attendance_id} → Excused`);
+                    await db_1.default.query(`UPDATE attendance
+             SET status = 'Excused', is_overridden = 1,
+                 teacher_id = ?, teacher_name = ?,
+                 notes = CONCAT(IFNULL(notes,''), ' | ', ?)
+             WHERE id = ?`, [tRows[0].id, tRows[0].name, excuseNote, excuse.attendance_id]);
                 }
+                else {
+                    // Look for an existing attendance record on that date
+                    const [attRows] = await db_1.default.query(`SELECT id FROM attendance
+             WHERE student_id = ? AND DATE(CONVERT_TZ(date,'+00:00','+08:00')) = ?
+             LIMIT 1`, [excuse.student_id, excuse.date]);
+                    if (attRows.length) {
+                        console.log(`[Excuse Approve] Updating found attendance id=${attRows[0].id} → Excused`);
+                        await db_1.default.query(`UPDATE attendance
+               SET status = 'Excused', is_overridden = 1,
+                   teacher_id = ?, teacher_name = ?,
+                   notes = CONCAT(IFNULL(notes,''), ' | ', ?)
+               WHERE id = ?`, [tRows[0].id, tRows[0].name, excuseNote, attRows[0].id]);
+                    }
+                    else if (student) {
+                        console.log(`[Excuse Approve] No attendance record found — inserting new Excused record`);
+                        await db_1.default.query(`INSERT INTO attendance
+                 (student_id, student_name, lrn, gender, grade, section,
+                  scan_method, status, session, date,
+                  teacher_id, teacher_name, is_overridden, notes)
+               VALUES (?, ?, ?, ?, ?, ?, 'Manual', 'Excused', 'AM', ?,
+                       ?, ?, 1, ?)`, [
+                            student.id, student.name, student.lrn, student.gender,
+                            student.grade, student.section,
+                            excuse.date,
+                            tRows[0].id, tRows[0].name,
+                            excuseNote,
+                        ]);
+                    }
+                }
+            }
+            catch (attErr) {
+                console.error('[Excuse Approve] Attendance update/insert failed:', attErr.message, attErr.sqlMessage || '');
+                // Don't fail the whole request — excuse is still approved, attendance update is best-effort
             }
         }
         // Notify parent via in-app notification
         const actionText = action === 'approve' ? '✅ Approved' : '❌ Rejected';
-        const dateStr = (0, date_fns_1.format)(new Date(excuse.date + 'T00:00:00'), 'MMM d, yyyy');
-        await (0, notificationController_1.createNotification)(excuse.parent_user_id, `${actionText}: Excuse for ${excuse.student_name}`, action === 'approve'
-            ? `Your excuse request for ${excuse.student_name} on ${dateStr} was approved.${teacher_note ? ' Note: ' + teacher_note : ''}`
-            : `Your excuse request for ${excuse.student_name} on ${dateStr} was rejected.${teacher_note ? ' Reason: ' + teacher_note : ''}`, action === 'approve' ? 'info' : 'warning', '/parent');
+        // Safely convert date — it may come back as a Date object or string from MySQL
+        const rawDate = excuse.date instanceof Date
+            ? excuse.date.toISOString().split('T')[0]
+            : String(excuse.date).split('T')[0];
+        const dateStr = (0, date_fns_1.format)(new Date(rawDate + 'T00:00:00'), 'MMM d, yyyy');
+        if (excuse.parent_user_id) {
+            await (0, notificationController_1.createNotification)(excuse.parent_user_id, `${actionText}: Excuse for ${excuse.student_name}`, action === 'approve'
+                ? `Your excuse request for ${excuse.student_name} on ${dateStr} was approved.${teacher_note ? ' Note: ' + teacher_note : ''}`
+                : `Your excuse request for ${excuse.student_name} on ${dateStr} was rejected.${teacher_note ? ' Reason: ' + teacher_note : ''}`, action === 'approve' ? 'info' : 'warning', '/parent');
+        }
         res.json({
             success: true,
             message: `Excuse request ${newStatus}`,
@@ -214,14 +297,22 @@ async function deleteExcuseRequest(req, res) {
         if (!userId)
             return res.status(401).json({ error: 'Unauthorized' });
         // Verify teacher owns this section
-        const [tRows] = await db_1.default.query('SELECT section FROM teachers WHERE user_id = ? LIMIT 1', [userId]);
+        const [tRows] = await db_1.default.query('SELECT id, section FROM teachers WHERE user_id = ? LIMIT 1', [userId]);
         if (!tRows.length)
             return res.status(404).json({ error: 'Teacher not found' });
-        // Verify the request belongs to this teacher's section
-        const [excuseRows] = await db_1.default.query(`SELECT er.id FROM excuse_requests er
+        // Allow if adviser for the section OR subject teacher assigned to the student
+        const [excuseRows] = await db_1.default.query(`SELECT er.id, er.student_id, s.section FROM excuse_requests er
        JOIN students s ON s.id = er.student_id
-       WHERE er.id = ? AND LOWER(s.section) = LOWER(?)`, [id, tRows[0].section]);
+       WHERE er.id = ?`, [id]);
         if (!excuseRows.length)
+            return res.status(404).json({ error: 'Excuse request not found' });
+        // Allow if adviser (via assignments) OR subject teacher assigned to this student
+        const [asgCheck] = await db_1.default.query(`SELECT asg.id FROM assignment_students asg
+       JOIN assignments a ON a.id = asg.assignment_id
+       WHERE asg.student_id = ?
+         AND (a.teacher_id = ? OR a.subject_teacher_id = ?)
+       LIMIT 1`, [excuseRows[0].student_id, tRows[0].id, tRows[0].id]);
+        if (!asgCheck.length)
             return res.status(404).json({ error: 'Excuse request not found or not in your class' });
         await db_1.default.query('DELETE FROM excuse_requests WHERE id = ?', [id]);
         res.json({ success: true, message: 'Excuse request deleted' });

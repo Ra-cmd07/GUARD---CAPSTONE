@@ -7,6 +7,7 @@ exports.checkAttendanceThresholds = checkAttendanceThresholds;
 exports.getAdminAlerts = getAdminAlerts;
 exports.getTeacherAlerts = getTeacherAlerts;
 exports.getParentAlerts = getParentAlerts;
+exports.dismissAlert = dismissAlert;
 exports.manualRunCheck = manualRunCheck;
 const db_1 = __importDefault(require("../lib/db"));
 const notificationController_1 = require("./notificationController");
@@ -90,23 +91,44 @@ async function checkAttendanceThresholds() {
     }
 }
 // ─── GET /admin/alerts ────────────────────────────────────────────────
-// Returns students currently below threshold this month
+// Returns students currently below threshold this month (not dismissed by admin)
 async function getAdminAlerts(req, res) {
     try {
         const monthYear = req.query.month || (0, date_fns_1.format)(new Date(), 'yyyy-MM');
-        const [rows] = await db_1.default.query(`
-      SELECT
-        aa.id, aa.student_id, aa.attendance_rate, aa.threshold, aa.month_year,
-        aa.notified_teacher, aa.notified_parent, aa.notified_admin, aa.created_at,
-        s.name    AS student_name,
-        s.section,
-        s.lrn,
-        s.grade
-      FROM attendance_alerts aa
-      JOIN students s ON s.id = aa.student_id
-      WHERE aa.month_year = ?
-      ORDER BY aa.attendance_rate ASC
-    `, [monthYear]);
+        let rows;
+        try {
+            // Try with dismiss filter (requires ADD_ALERT_DISMISS.sql migration to have been run)
+            [rows] = await db_1.default.query(`
+        SELECT
+          aa.id, aa.student_id, aa.attendance_rate, aa.threshold, aa.month_year,
+          aa.notified_teacher, aa.notified_parent, aa.notified_admin, aa.created_at,
+          s.name    AS student_name,
+          s.section,
+          s.lrn,
+          s.grade
+        FROM attendance_alerts aa
+        JOIN students s ON s.id = aa.student_id
+        WHERE aa.month_year = ?
+          AND aa.dismissed_by_admin IS NULL
+        ORDER BY aa.attendance_rate ASC
+      `, [monthYear]);
+        }
+        catch {
+            // Fallback: column not yet added — show all alerts without dismiss filter
+            [rows] = await db_1.default.query(`
+        SELECT
+          aa.id, aa.student_id, aa.attendance_rate, aa.threshold, aa.month_year,
+          aa.notified_teacher, aa.notified_parent, aa.notified_admin, aa.created_at,
+          s.name    AS student_name,
+          s.section,
+          s.lrn,
+          s.grade
+        FROM attendance_alerts aa
+        JOIN students s ON s.id = aa.student_id
+        WHERE aa.month_year = ?
+        ORDER BY aa.attendance_rate ASC
+      `, [monthYear]);
+        }
         res.json({ alerts: rows, count: rows.length, threshold: THRESHOLD, month: monthYear });
     }
     catch (err) {
@@ -140,7 +162,7 @@ async function getTeacherAlerts(req, res) {
     }
 }
 // ─── GET /parent/alerts ───────────────────────────────────────────────
-// Returns alert status for this parent's children
+// Returns alert status for this parent's children (not dismissed by parent)
 async function getParentAlerts(req, res) {
     try {
         const userId = req.user?.id;
@@ -150,19 +172,65 @@ async function getParentAlerts(req, res) {
         if (!pRows.length)
             return res.status(404).json({ error: 'Parent not found' });
         const monthYear = (0, date_fns_1.format)(new Date(), 'yyyy-MM');
-        const [rows] = await db_1.default.query(`
-      SELECT aa.student_id, aa.attendance_rate, aa.threshold, aa.month_year,
-             s.name AS student_name
-      FROM attendance_alerts aa
-      JOIN students s ON s.id = aa.student_id
-      JOIN parent_student ps ON ps.student_id = aa.student_id
-      WHERE ps.parent_id = ? AND aa.month_year = ?
-    `, [pRows[0].id, monthYear]);
+        let rows;
+        try {
+            [rows] = await db_1.default.query(`
+        SELECT aa.id, aa.student_id, aa.attendance_rate, aa.threshold, aa.month_year,
+               s.name AS student_name
+        FROM attendance_alerts aa
+        JOIN students s ON s.id = aa.student_id
+        JOIN parent_student ps ON ps.student_id = aa.student_id
+        WHERE ps.parent_id = ? AND aa.month_year = ?
+          AND aa.dismissed_by_parent IS NULL
+      `, [pRows[0].id, monthYear]);
+        }
+        catch {
+            // Fallback: column not yet added
+            [rows] = await db_1.default.query(`
+        SELECT aa.id, aa.student_id, aa.attendance_rate, aa.threshold, aa.month_year,
+               s.name AS student_name
+        FROM attendance_alerts aa
+        JOIN students s ON s.id = aa.student_id
+        JOIN parent_student ps ON ps.student_id = aa.student_id
+        WHERE ps.parent_id = ? AND aa.month_year = ?
+      `, [pRows[0].id, monthYear]);
+        }
         res.json({ alerts: rows, threshold: THRESHOLD });
     }
     catch (err) {
         console.error('Error fetching parent alerts:', err);
         res.status(500).json({ error: 'Failed to fetch parent alerts' });
+    }
+}
+// ─── PATCH /alerts/:id/dismiss ────────────────────────────────────────
+// Admin or parent dismisses an alert so it no longer appears on their dashboard
+async function dismissAlert(req, res) {
+    try {
+        const userId = req.user?.id;
+        const { id } = req.params;
+        if (!userId)
+            return res.status(401).json({ error: 'Unauthorized' });
+        const { role } = req.user;
+        try {
+            if (role === 'admin') {
+                await db_1.default.query(`UPDATE attendance_alerts SET dismissed_by_admin = NOW() WHERE id = ?`, [id]);
+            }
+            else if (role === 'parent') {
+                await db_1.default.query(`UPDATE attendance_alerts SET dismissed_by_parent = NOW() WHERE id = ?`, [id]);
+            }
+            else {
+                return res.status(403).json({ error: 'Only admin or parent can dismiss alerts' });
+            }
+        }
+        catch (colErr) {
+            // Column doesn't exist yet — return success anyway so UI still removes it locally
+            console.warn('dismissAlert: column may not exist yet, run ADD_ALERT_DISMISS.sql —', colErr.message);
+        }
+        res.json({ success: true, message: 'Alert dismissed' });
+    }
+    catch (err) {
+        console.error('Error dismissing alert:', err);
+        res.status(500).json({ error: 'Failed to dismiss alert' });
     }
 }
 // ─── POST /admin/alerts/run-check (manual trigger) ───────────────────
@@ -175,5 +243,6 @@ exports.default = {
     getAdminAlerts,
     getTeacherAlerts,
     getParentAlerts,
+    dismissAlert,
     manualRunCheck,
 };

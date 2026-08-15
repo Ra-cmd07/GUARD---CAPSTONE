@@ -16,6 +16,8 @@ exports.updateKiosk = updateKiosk;
 exports.getSmsLogs = getSmsLogs;
 exports.getLoginLogs = getLoginLogs;
 exports.addParentToStudent = addParentToStudent;
+exports.getSchoolSettings = getSchoolSettings;
+exports.updateSchoolSettings = updateSchoolSettings;
 exports.clearSmsLogs = clearSmsLogs;
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
 const db_1 = __importDefault(require("../lib/db"));
@@ -57,8 +59,14 @@ async function getUsers(req, res) {
         const role = req.query.role;
         let query = `
       SELECT u.id, u.username, u.is_active, r.name AS role,
-             u.created_at, u.updated_at
-      FROM users u JOIN roles r ON r.id = u.role_id
+             u.created_at, u.updated_at,
+             COALESCE(s.name, t.name, p.name) AS name,
+             s.lrn, s.grade, s.section, s.preferred_method
+      FROM users u
+      JOIN roles r ON r.id = u.role_id
+      LEFT JOIN students s ON s.user_id = u.id
+      LEFT JOIN teachers t ON t.user_id = u.id
+      LEFT JOIN parents  p ON p.user_id = u.id
     `;
         const params = [];
         if (role) {
@@ -153,10 +161,19 @@ async function createUser(req, res) {
                 res.status(400).json({ error: 'LRN is required for students' });
                 return;
             }
-            const [sr] = await conn.execute(`INSERT INTO students (user_id, lrn, name, gender, grade, section, mac_address, rfid_uid, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, [userId, lrn, name,
+            const { last_name, first_name, middle_name, } = req.body;
+            // Assemble full name from parts if provided, otherwise use name field
+            const fullName = (last_name && first_name)
+                ? `${last_name}, ${first_name}${middle_name ? ` ${middle_name}` : ''}`
+                : name;
+            const [sr] = await conn.execute(`INSERT INTO students
+           (user_id, lrn, name, last_name, first_name, middle_name,
+            gender, grade, section, mac_address, rfid_uid, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [userId, lrn, fullName,
+                last_name || null, first_name || null, middle_name || null,
                 gender === 'Male' ? 'M' : gender === 'Female' ? 'F' : (gender || null),
-                grade || null, section || null, mac_address || null, rfid_uid || null, req.user.id]);
+                grade || null, section || null, mac_address || null, rfid_uid || null,
+                req.user.id]);
             profileId = sr.insertId;
             // Create parent accounts if provided
             const createdParents = [];
@@ -240,10 +257,25 @@ async function updateUser(req, res) {
             await conn.execute('UPDATE parents SET name=?, relationship=?, contact=?, address=?, updated_by=? WHERE user_id=?', [name, relationship || null, contact || null, address || null, req.user.id, id]);
         }
         else if (user.role === 'student') {
-            await conn.execute(`UPDATE students SET name=?, lrn=?, gender=?, grade=?, section=?, mac_address=?, rfid_uid=?, updated_by=?
-         WHERE user_id=?`, [name, lrn || null,
+            const { last_name, first_name, middle_name, birthdate, birth_place, mother_tongue, ip_ethnic, religion, address_street, barangay, municipality, province, sf1_remarks } = req.body;
+            const fullName = (last_name && first_name)
+                ? `${last_name}, ${first_name}${middle_name ? ` ${middle_name}` : ''}`
+                : name;
+            await conn.execute(`UPDATE students
+         SET name=?, last_name=?, first_name=?, middle_name=?,
+             lrn=?, gender=?, grade=?, section=?, mac_address=?, rfid_uid=?,
+             birthdate=?, birth_place=?, mother_tongue=?, ip_ethnic=?, religion=?,
+             address_street=?, barangay=?, municipality=?, province=?, sf1_remarks=?,
+             updated_by=?
+         WHERE user_id=?`, [fullName,
+                last_name || null, first_name || null, middle_name || null,
+                lrn || null,
                 gender === 'Male' ? 'M' : gender === 'Female' ? 'F' : (gender || null),
                 grade || null, section || null, mac_address || null, rfid_uid || null,
+                birthdate || null, birth_place || null,
+                mother_tongue || null, ip_ethnic || null, religion || null,
+                address_street || null, barangay || null,
+                municipality || null, province || null, sf1_remarks || null,
                 req.user.id, id]);
         }
         await conn.commit();
@@ -404,6 +436,45 @@ async function addParentToStudent(req, res) {
     }
     finally {
         conn.release();
+    }
+}
+// ─── GET /api/admin/school-settings ──────────────────────────────────
+async function getSchoolSettings(_req, res) {
+    try {
+        const [rows] = await db_1.default.execute('SELECT * FROM school_settings WHERE id = 1');
+        res.json(rows[0] || {});
+    }
+    catch (err) {
+        res.status(500).json({ error: 'Server error' });
+    }
+}
+// ─── PUT /api/admin/school-settings ──────────────────────────────────
+async function updateSchoolSettings(req, res) {
+    try {
+        const { school_id, region, division, district, school_name, school_year, school_head_name } = req.body;
+        await db_1.default.execute(`INSERT INTO school_settings (id, school_id, region, division, district, school_name, school_year, school_head_name)
+       VALUES (1, ?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         school_id        = VALUES(school_id),
+         region           = VALUES(region),
+         division         = VALUES(division),
+         district         = VALUES(district),
+         school_name      = VALUES(school_name),
+         school_year      = VALUES(school_year),
+         school_head_name = VALUES(school_head_name)`, [
+            school_id || null,
+            region || null,
+            division || null,
+            district || null,
+            school_name || null,
+            school_year || null,
+            school_head_name || null,
+        ]);
+        res.json({ message: 'School settings updated' });
+    }
+    catch (err) {
+        console.error('updateSchoolSettings error:', err);
+        res.status(500).json({ error: 'Server error' });
     }
 }
 // ─── DELETE /api/admin/sms-logs/clear ─────────────────────────────────

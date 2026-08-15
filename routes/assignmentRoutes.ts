@@ -7,6 +7,7 @@ import {
   createAssignment,
   updateAssignment,
   updateSectionAdviser,
+  updateSectionStudents,
   deleteAssignment,
 } from '../controllers/assignmentController';
 
@@ -18,7 +19,8 @@ router.get('/grouped',        ...admin, getAssignmentsGrouped);
 router.get('/metadata',       ...admin, getAssignmentsMetadata);
 router.post('/',              ...admin, createAssignment);
 router.put('/:id',            ...admin, updateAssignment);
-router.patch('/section-adviser', ...admin, updateSectionAdviser);
+router.patch('/section-adviser',  ...admin, updateSectionAdviser);
+router.patch('/section-students', ...admin, updateSectionStudents);
 router.delete('/:id',         ...admin, deleteAssignment);
 
 export default router;

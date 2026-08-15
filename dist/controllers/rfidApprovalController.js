@@ -141,11 +141,16 @@ async function approveRFID(req, res) {
         const timeStr = `${hour12}:${minutes}:${seconds} ${ampm}`;
         const localHour = hour24;
         const session = hour24 < 12 ? 'AM' : 'PM';
-        // AUTO-TOGGLE: Check last attendance record for THIS SESSION (AM/PM) to determine next status
-        const [lastRecord] = await db_1.default.execute(`SELECT status FROM attendance
-       WHERE student_id = ? AND date = ? AND session = ?
-       ORDER BY timestamp DESC
-       LIMIT 1`, [student.id, today, session]);
+        // AUTO-TOGGLE: Check last record across both tables for THIS SESSION (AM/PM)
+        const [lastRecord] = await db_1.default.execute(`SELECT status FROM (
+         SELECT status, created_at FROM attendance
+         WHERE student_id = ? AND date = ? AND session = ?
+         UNION ALL
+         SELECT status, created_at FROM partial_attendance
+         WHERE student_id = ? AND date = ? AND session = ?
+       ) combined
+       ORDER BY created_at DESC
+       LIMIT 1`, [student.id, today, session, student.id, today, session]);
         let status;
         if (lastRecord.length > 0) {
             const lastStatus = lastRecord[0].status;
@@ -168,18 +173,18 @@ async function approveRFID(req, res) {
             status = (hour > 8 || (hour === 8 && min > 0)) ? 'Late' : 'Time-In';
         }
         // REMOVED: Duplicate check - now allows unlimited attendance records per day
-        // Insert attendance IMMEDIATELY (don't wait for photo)
-        const [attResult] = await db_1.default.execute(`INSERT INTO attendance
+        // Insert into partial_attendance (staging — teacher must verify)
+        const [attResult] = await db_1.default.execute(`INSERT INTO partial_attendance
        (student_id, student_name, lrn, gender, grade, section,
         kiosk_id, scan_method, status, session, date, time_in, time_out,
-        photo_path)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+        photo_path, scanned_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`, [
             student.id, student.name, student.lrn, student.gender,
             student.grade, student.section,
             detection.kiosk_id || null, 'RFID', status, session, today,
             status === 'Time-In' || status === 'Late' ? timeStr : null,
             status === 'Time-Out' ? timeStr : null,
-            null, // Photo path will be updated later
+            null,
         ]);
         const attendanceId = attResult.insertId;
         // Upload photo to local storage in BACKGROUND (async)
@@ -189,10 +194,10 @@ async function approveRFID(req, res) {
                     const base64Data = photo_base64.replace(/^data:image\/\w+;base64,/, '');
                     const photoPath = await (0, localPhotoUpload_1.savePhotoLocally)(base64Data, student.name, 'rfid');
                     console.log('📸 RFID photo saved locally:', photoPath);
-                    // Update attendance record with photo path (both local_path and photo_path for compatibility)
-                    await db_1.default.execute('UPDATE attendance SET local_path = ?, photo_path = ? WHERE id = ?', [photoPath, photoPath, attendanceId]);
-                    // Log photo
-                    await db_1.default.execute('INSERT INTO scan_photos (attendance_id, student_name, status, photo_path, local_path) VALUES (?, ?, ?, ?, ?)', [attendanceId, student.name, status, photoPath, photoPath]);
+                    // Update partial_attendance record with photo path
+                    await db_1.default.execute('UPDATE partial_attendance SET local_path = ?, photo_path = ? WHERE id = ?', [photoPath, photoPath, attendanceId]);
+                    // NULL attendance_id — record is in partial_attendance, not attendance yet
+                    await db_1.default.execute('INSERT INTO scan_photos (attendance_id, student_name, status, photo_path, local_path) VALUES (?, ?, ?, ?, ?)', [null, student.name, status, photoPath, photoPath]);
                     // Queue Cloudinary upload (background, non-blocking)
                     uploadQueue_1.uploadQueue.enqueue(attendanceId, photoPath, student.name);
                     console.log('📤 RFID photo queued for Cloudinary upload');
@@ -213,10 +218,11 @@ async function approveRFID(req, res) {
         const timeDisplay = now.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit', hour12: true });
         const message = `${statusEmoji} ATTENDBOX: ${student.name} has ${status === 'Time-In' ? 'arrived at school' : status === 'Time-Out' ? 'left school' : 'arrived LATE'} at ${timeDisplay}. Date: ${today}.`;
         for (const g of guardians) {
-            if (g.contact) { // Changed from g.contact_number to g.contact
+            if (g.contact) {
                 const sent = await sendSms(g.contact, message);
+                // NULL attendance_id — avoids FK violation (record is in partial_attendance)
                 await db_1.default.execute(`INSERT INTO sms_logs (attendance_id, student_name, parent_name, phone_number, message, status, sent_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`, [attendanceId, student.name, g.name, g.contact, message,
+           VALUES (?, ?, ?, ?, ?, ?, ?)`, [null, student.name, g.name, g.contact, message,
                     sent ? 'sent' : 'failed', sent ? new Date() : null]);
             }
         }

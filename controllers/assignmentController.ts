@@ -4,6 +4,7 @@ import { AuthRequest } from '../middleware/authMiddleware';
 
 // Cache for runtime schema checks to avoid querying information_schema on every request
 let _subjectTeacherColumnCache: { has?: boolean; ts?: number } = {};
+let _sessionColumnCache: { has?: boolean; ts?: number } = {};
 
 async function hasSubjectTeacherColumn(): Promise<boolean> {
   const now = Date.now();
@@ -25,36 +26,51 @@ async function hasSubjectTeacherColumn(): Promise<boolean> {
   }
 }
 
+async function hasSessionColumn(): Promise<boolean> {
+  const now = Date.now();
+  if (_sessionColumnCache.ts && now - (_sessionColumnCache.ts || 0) < 60_000) {
+    return !!_sessionColumnCache.has;
+  }
+  try {
+    const [rows] = await pool.execute(
+      `SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'assignments' AND COLUMN_NAME = 'session'`
+    ) as any[];
+    const has = rows && rows[0] && Number(rows[0].cnt) > 0;
+    _sessionColumnCache = { has, ts: now };
+    return has;
+  } catch (err) {
+    console.warn('Could not determine session column existence, assuming false', err);
+    _sessionColumnCache = { has: false, ts: now };
+    return false;
+  }
+}
+
 export async function getAssignments(_req: AuthRequest, res: Response): Promise<void> {
   try {
     const includeSubjectTeacher = await hasSubjectTeacherColumn();
-    if (includeSubjectTeacher) {
-      const [rows] = await pool.execute(
-        `SELECT a.id, a.year_level, a.strand, a.track, a.section, a.subject,
-                a.teacher_id,
-                t.name AS adviser_name,
-                u.username AS adviser_username,
-                a.subject_teacher_id,
-                st.name AS subject_teacher_name,
-                su.username AS subject_teacher_username,
-                COUNT(asg.student_id) AS student_count
-         FROM assignments a
-         LEFT JOIN teachers t ON t.id = a.teacher_id
-         LEFT JOIN users u ON u.id = t.user_id
-         LEFT JOIN teachers st ON st.id = a.subject_teacher_id
-         LEFT JOIN users su ON su.id = st.user_id
-         LEFT JOIN assignment_students asg ON asg.assignment_id = a.id
-         GROUP BY a.id, a.year_level, a.strand, a.track, a.section, a.subject, a.teacher_id, t.name, u.username, a.subject_teacher_id, st.name, su.username
-         ORDER BY a.year_level, a.strand, a.track, a.section, a.subject`,
-        []
-      ) as any[];
-      res.json(rows);
-      return;
-    }
+    const includeSession        = await hasSessionColumn();
 
-    // fallback path when DB schema doesn't have subject_teacher_id
+    const sessionCol   = includeSession        ? ', a.session'              : ", 'AM' AS session";
+    const subjectCols  = includeSubjectTeacher
+      ? `, a.subject_teacher_id,
+                st.name AS subject_teacher_name,
+                su.username AS subject_teacher_username`
+      : `, NULL AS subject_teacher_id,
+                NULL AS subject_teacher_name,
+                NULL AS subject_teacher_username`;
+    const subjectJoins = includeSubjectTeacher
+      ? `LEFT JOIN teachers st ON st.id = a.subject_teacher_id
+         LEFT JOIN users su ON su.id = st.user_id`
+      : '';
+    const subjectGroup = includeSubjectTeacher
+      ? ', a.subject_teacher_id, st.name, su.username'
+      : '';
+
     const [rows] = await pool.execute(
-      `SELECT a.id, a.year_level, a.strand, a.track, a.section, a.subject,
+      `SELECT a.id, a.year_level, a.strand, a.track, a.section, a.subject
+              ${sessionCol}
+              ${subjectCols},
               a.teacher_id,
               t.name AS adviser_name,
               u.username AS adviser_username,
@@ -62,20 +78,14 @@ export async function getAssignments(_req: AuthRequest, res: Response): Promise<
        FROM assignments a
        LEFT JOIN teachers t ON t.id = a.teacher_id
        LEFT JOIN users u ON u.id = t.user_id
+       ${subjectJoins}
        LEFT JOIN assignment_students asg ON asg.assignment_id = a.id
-       GROUP BY a.id, a.year_level, a.strand, a.track, a.section, a.subject, a.teacher_id, t.name, u.username
+       GROUP BY a.id, a.year_level, a.strand, a.track, a.section, a.subject,
+                a.teacher_id, t.name, u.username ${subjectGroup}
        ORDER BY a.year_level, a.strand, a.track, a.section, a.subject`,
       []
     ) as any[];
-
-    // normalize shape so frontend can handle missing subject teacher fields
-    const normalized = (rows as any[]).map((r) => ({
-      ...r,
-      subject_teacher_id: null,
-      subject_teacher_name: null,
-      subject_teacher_username: null,
-    }));
-    res.json(normalized);
+    res.json(rows);
   } catch (err) {
     console.error('getAssignments error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -87,8 +97,12 @@ export async function getAssignments(_req: AuthRequest, res: Response): Promise<
 // Each group = one "class block" in Image 1 layout
 export async function getAssignmentsGrouped(_req: AuthRequest, res: Response): Promise<void> {
   try {
+    const includeSession = await hasSessionColumn();
+    const sessionCol     = includeSession ? ', a.session' : ", 'AM' AS session";
+
     const [rows] = await pool.execute(
-      `SELECT a.id, a.year_level, a.strand, a.track, a.section, a.subject,
+      `SELECT a.id, a.year_level, a.strand, a.track, a.section, a.subject
+              ${sessionCol},
               a.teacher_id,
               t.name AS adviser_name,
               u.username AS adviser_username,
@@ -113,7 +127,8 @@ export async function getAssignmentsGrouped(_req: AuthRequest, res: Response): P
     // Parse student_ids_csv into arrays
     const rowsWithIds = (rows as any[]).map((r) => ({
       ...r,
-      student_ids: r.student_ids_csv ? r.student_ids_csv.split(',').map(Number) : [],
+      session:       r.session       || 'AM',
+      student_ids:   r.student_ids_csv ? r.student_ids_csv.split(',').map(Number) : [],
       student_count: Number(r.student_count),
     }));
 
@@ -124,24 +139,25 @@ export async function getAssignmentsGrouped(_req: AuthRequest, res: Response): P
       if (!groups[key]) {
         groups[key] = {
           key,
-          year_level: row.year_level,
-          strand: row.strand,
-          track: row.track,
-          section: row.section,
-          adviser_id: row.teacher_id,
-          adviser_name: row.adviser_name,
+          year_level:       row.year_level,
+          strand:           row.strand,
+          track:            row.track,
+          section:          row.section,
+          adviser_id:       row.teacher_id,
+          adviser_name:     row.adviser_name,
           adviser_username: row.adviser_username,
           subjects: [],
         };
       }
       groups[key].subjects.push({
-        id: row.id,
-        subject: row.subject,
-        subject_teacher_id: row.subject_teacher_id,
-        subject_teacher_name: row.subject_teacher_name,
-        subject_teacher_username: row.subject_teacher_username,
-        student_count: row.student_count,
-        student_ids: row.student_ids,
+        id:                        row.id,
+        subject:                   row.subject,
+        session:                   row.session,
+        subject_teacher_id:        row.subject_teacher_id,
+        subject_teacher_name:      row.subject_teacher_name,
+        subject_teacher_username:  row.subject_teacher_username,
+        student_count:             row.student_count,
+        student_ids:               row.student_ids,
       });
     }
 
@@ -188,7 +204,7 @@ export async function createAssignment(req: AuthRequest, res: Response): Promise
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
-    const { year_level, strand, track, section, subject, teacher_id, subject_teacher_id, student_ids } = req.body;
+    const { year_level, strand, track, section, subject, teacher_id, subject_teacher_id, student_ids, session } = req.body;
 
     if (!year_level || !section || !subject) {
       res.status(400).json({ error: 'year_level, section, and subject are required' });
@@ -196,20 +212,35 @@ export async function createAssignment(req: AuthRequest, res: Response): Promise
     }
 
     const includeSubjectTeacher = await hasSubjectTeacherColumn();
+    const includeSession        = await hasSessionColumn();
+
+    // Determine session value: advisers default to BOTH, subject teachers default to AM
+    const sessionVal = session || (subject_teacher_id ? 'AM' : 'BOTH');
+
     let result: any;
-    if (includeSubjectTeacher) {
+    if (includeSubjectTeacher && includeSession) {
+      [result] = await conn.execute(
+        `INSERT INTO assignments
+           (year_level, strand, track, section, subject, teacher_id, subject_teacher_id, session, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [year_level, strand || null, track || null, section, subject,
+         teacher_id || null, subject_teacher_id || null, sessionVal, req.user!.id]
+      ) as any[];
+    } else if (includeSubjectTeacher) {
       [result] = await conn.execute(
         `INSERT INTO assignments
            (year_level, strand, track, section, subject, teacher_id, subject_teacher_id, created_by)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [year_level, strand || null, track || null, section, subject, teacher_id || null, subject_teacher_id || null, req.user!.id]
+        [year_level, strand || null, track || null, section, subject,
+         teacher_id || null, subject_teacher_id || null, req.user!.id]
       ) as any[];
     } else {
       [result] = await conn.execute(
         `INSERT INTO assignments
            (year_level, strand, track, section, subject, teacher_id, created_by)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [year_level, strand || null, track || null, section, subject, teacher_id || null, req.user!.id]
+        [year_level, strand || null, track || null, section, subject,
+         teacher_id || null, req.user!.id]
       ) as any[];
     }
 
@@ -240,7 +271,7 @@ export async function updateAssignment(req: AuthRequest, res: Response): Promise
   try {
     await conn.beginTransaction();
     const { id } = req.params;
-    const { year_level, strand, track, section, subject, teacher_id, subject_teacher_id, student_ids } = req.body;
+    const { year_level, strand, track, section, subject, teacher_id, subject_teacher_id, student_ids, session } = req.body;
 
     if (!year_level || !section || !subject) {
       res.status(400).json({ error: 'year_level, section, and subject are required' });
@@ -248,19 +279,35 @@ export async function updateAssignment(req: AuthRequest, res: Response): Promise
     }
 
     const includeSubjectTeacher = await hasSubjectTeacherColumn();
-    if (includeSubjectTeacher) {
+    const includeSession        = await hasSessionColumn();
+    const sessionVal            = session || (subject_teacher_id ? 'AM' : 'BOTH');
+
+    if (includeSubjectTeacher && includeSession) {
       await conn.execute(
         `UPDATE assignments
-         SET year_level = ?, strand = ?, track = ?, section = ?, subject = ?, teacher_id = ?, subject_teacher_id = ?, updated_by = ?
+         SET year_level = ?, strand = ?, track = ?, section = ?, subject = ?,
+             teacher_id = ?, subject_teacher_id = ?, session = ?, updated_by = ?
          WHERE id = ?`,
-        [year_level, strand || null, track || null, section, subject, teacher_id || null, subject_teacher_id || null, req.user!.id, id]
+        [year_level, strand || null, track || null, section, subject,
+         teacher_id || null, subject_teacher_id || null, sessionVal, req.user!.id, id]
+      );
+    } else if (includeSubjectTeacher) {
+      await conn.execute(
+        `UPDATE assignments
+         SET year_level = ?, strand = ?, track = ?, section = ?, subject = ?,
+             teacher_id = ?, subject_teacher_id = ?, updated_by = ?
+         WHERE id = ?`,
+        [year_level, strand || null, track || null, section, subject,
+         teacher_id || null, subject_teacher_id || null, req.user!.id, id]
       );
     } else {
       await conn.execute(
         `UPDATE assignments
-         SET year_level = ?, strand = ?, track = ?, section = ?, subject = ?, teacher_id = ?, updated_by = ?
+         SET year_level = ?, strand = ?, track = ?, section = ?, subject = ?,
+             teacher_id = ?, updated_by = ?
          WHERE id = ?`,
-        [year_level, strand || null, track || null, section, subject, teacher_id || null, req.user!.id, id]
+        [year_level, strand || null, track || null, section, subject,
+         teacher_id || null, req.user!.id, id]
       );
     }
 
@@ -328,5 +375,76 @@ export async function updateSectionAdviser(req: AuthRequest, res: Response): Pro
   } catch (err) {
     console.error('updateSectionAdviser error:', err);
     res.status(500).json({ error: 'Server error' });
+  }
+}
+
+// ─── PATCH /admin/assignments/section-students ───────────────────────
+// Sets the shared student roster for ALL assignment rows in a section.
+// Deletes existing assignment_students for all rows in the section,
+// then re-inserts the new list for every row. This enforces one shared
+// student group per section across all subjects.
+export async function updateSectionStudents(req: AuthRequest, res: Response): Promise<void> {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const { year_level, strand, track, section, student_ids } = req.body;
+    if (!year_level || !section) {
+      res.status(400).json({ error: 'year_level and section are required' });
+      return;
+    }
+
+    // Get all assignment IDs for this section
+    const [asgRows] = await conn.execute(
+      `SELECT id FROM assignments
+       WHERE year_level = ?
+         AND (strand IS NULL AND ? IS NULL OR strand = ?)
+         AND (track IS NULL AND ? IS NULL OR track = ?)
+         AND section = ?`,
+      [
+        year_level,
+        strand || null, strand || null,
+        track || null, track || null,
+        section,
+      ]
+    ) as any[];
+
+    const assignmentIds = (asgRows as any[]).map((r: any) => r.id);
+    if (assignmentIds.length === 0) {
+      res.json({ message: 'No assignments found for this section', updated: 0 });
+      return;
+    }
+
+    // Delete all existing student links for this section
+    for (const asgId of assignmentIds) {
+      await conn.execute(
+        'DELETE FROM assignment_students WHERE assignment_id = ?',
+        [asgId]
+      );
+    }
+
+    // Re-insert students for all assignment rows in this section
+    if (Array.isArray(student_ids) && student_ids.length > 0) {
+      for (const asgId of assignmentIds) {
+        const values = student_ids.map((studentId: number) => [asgId, studentId, req.user!.id]);
+        await conn.query(
+          `INSERT IGNORE INTO assignment_students (assignment_id, student_id, created_by)
+           VALUES ?`,
+          [values]
+        );
+      }
+    }
+
+    await conn.commit();
+    res.json({
+      message: `Student roster updated for section ${section}`,
+      assignments_updated: assignmentIds.length,
+      students_count: Array.isArray(student_ids) ? student_ids.length : 0,
+    });
+  } catch (err) {
+    await conn.rollback();
+    console.error('updateSectionStudents error:', err);
+    res.status(500).json({ error: 'Server error' });
+  } finally {
+    conn.release();
   }
 }

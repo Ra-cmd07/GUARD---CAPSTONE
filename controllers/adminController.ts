@@ -48,8 +48,14 @@ export async function getUsers(req: AuthRequest, res: Response): Promise<void> {
     const role = req.query.role as string | undefined;
     let query = `
       SELECT u.id, u.username, u.is_active, r.name AS role,
-             u.created_at, u.updated_at
-      FROM users u JOIN roles r ON r.id = u.role_id
+             u.created_at, u.updated_at,
+             COALESCE(s.name, t.name, p.name) AS name,
+             s.lrn, s.grade, s.section, s.preferred_method
+      FROM users u
+      JOIN roles r ON r.id = u.role_id
+      LEFT JOIN students s ON s.user_id = u.id
+      LEFT JOIN teachers t ON t.user_id = u.id
+      LEFT JOIN parents  p ON p.user_id = u.id
     `;
     const params: any[] = [];
     if (role) { query += ' WHERE r.name = ?'; params.push(role); }
@@ -156,12 +162,23 @@ export async function createUser(req: AuthRequest, res: Response): Promise<void>
       profileId = (pr as any).insertId;
     } else if (role === 'student') {
       if (!lrn) { res.status(400).json({ error: 'LRN is required for students' }); return; }
+      const {
+        last_name, first_name, middle_name,
+      } = req.body;
+      // Assemble full name from parts if provided, otherwise use name field
+      const fullName = (last_name && first_name)
+        ? `${last_name}, ${first_name}${middle_name ? ` ${middle_name}` : ''}`
+        : name;
       const [sr] = await conn.execute(
-        `INSERT INTO students (user_id, lrn, name, gender, grade, section, mac_address, rfid_uid, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [userId, lrn, name,
+        `INSERT INTO students
+           (user_id, lrn, name, last_name, first_name, middle_name,
+            gender, grade, section, mac_address, rfid_uid, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [userId, lrn, fullName,
+         last_name || null, first_name || null, middle_name || null,
          gender === 'Male' ? 'M' : gender === 'Female' ? 'F' : (gender || null),
-         grade || null, section || null, mac_address || null, rfid_uid || null, req.user!.id]
+         grade || null, section || null, mac_address || null, rfid_uid || null,
+         req.user!.id]
       ) as any[];
       profileId = (sr as any).insertId;
 
@@ -279,12 +296,29 @@ export async function updateUser(req: AuthRequest, res: Response): Promise<void>
         [name, relationship || null, contact || null, address || null, req.user!.id, id]
       );
     } else if (user.role === 'student') {
+      const { last_name, first_name, middle_name,
+              birthdate, birth_place, mother_tongue, ip_ethnic, religion,
+              address_street, barangay, municipality, province, sf1_remarks } = req.body;
+      const fullName = (last_name && first_name)
+        ? `${last_name}, ${first_name}${middle_name ? ` ${middle_name}` : ''}`
+        : name;
       await conn.execute(
-        `UPDATE students SET name=?, lrn=?, gender=?, grade=?, section=?, mac_address=?, rfid_uid=?, updated_by=?
+        `UPDATE students
+         SET name=?, last_name=?, first_name=?, middle_name=?,
+             lrn=?, gender=?, grade=?, section=?, mac_address=?, rfid_uid=?,
+             birthdate=?, birth_place=?, mother_tongue=?, ip_ethnic=?, religion=?,
+             address_street=?, barangay=?, municipality=?, province=?, sf1_remarks=?,
+             updated_by=?
          WHERE user_id=?`,
-        [name, lrn || null,
+        [fullName,
+         last_name || null, first_name || null, middle_name || null,
+         lrn || null,
          gender === 'Male' ? 'M' : gender === 'Female' ? 'F' : (gender || null),
          grade || null, section || null, mac_address || null, rfid_uid || null,
+         birthdate      || null, birth_place    || null,
+         mother_tongue  || null, ip_ethnic      || null, religion       || null,
+         address_street || null, barangay       || null,
+         municipality   || null, province       || null, sf1_remarks    || null,
          req.user!.id, id]
       );
     }
@@ -483,6 +517,48 @@ export async function addParentToStudent(req: AuthRequest, res: Response): Promi
     res.status(500).json({ error: 'Server error' });
   } finally {
     conn.release();
+  }
+}
+
+// ─── GET /api/admin/school-settings ──────────────────────────────────
+export async function getSchoolSettings(_req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const [rows] = await pool.execute('SELECT * FROM school_settings WHERE id = 1') as any[];
+    res.json((rows as any[])[0] || {});
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+
+// ─── PUT /api/admin/school-settings ──────────────────────────────────
+export async function updateSchoolSettings(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const { school_id, region, division, district, school_name, school_year, school_head_name } = req.body;
+    await pool.execute(
+      `INSERT INTO school_settings (id, school_id, region, division, district, school_name, school_year, school_head_name)
+       VALUES (1, ?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         school_id        = VALUES(school_id),
+         region           = VALUES(region),
+         division         = VALUES(division),
+         district         = VALUES(district),
+         school_name      = VALUES(school_name),
+         school_year      = VALUES(school_year),
+         school_head_name = VALUES(school_head_name)`,
+      [
+        school_id        || null,
+        region           || null,
+        division         || null,
+        district         || null,
+        school_name      || null,
+        school_year      || null,
+        school_head_name || null,
+      ]
+    );
+    res.json({ message: 'School settings updated' });
+  } catch (err) {
+    console.error('updateSchoolSettings error:', err);
+    res.status(500).json({ error: 'Server error' });
   }
 }
 

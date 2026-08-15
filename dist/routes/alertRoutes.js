@@ -14,6 +14,8 @@ router.get('/admin', attendanceAlertController_1.getAdminAlerts);
 router.get('/teacher', attendanceAlertController_1.getTeacherAlerts);
 // GET  /api/alerts/parent          — parent: check if their child is at risk
 router.get('/parent', attendanceAlertController_1.getParentAlerts);
+// PATCH /api/alerts/:id/dismiss    — admin or parent dismisses an alert
+router.patch('/:id/dismiss', attendanceAlertController_1.dismissAlert);
 // POST /api/alerts/run-check       — manually trigger threshold check
 router.post('/run-check', attendanceAlertController_1.manualRunCheck);
 exports.default = router;

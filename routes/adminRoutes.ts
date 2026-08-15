@@ -15,6 +15,8 @@ import {
   getLoginLogs,
   clearSmsLogs,
   addParentToStudent,
+  getSchoolSettings,
+  updateSchoolSettings,
 } from '../controllers/adminController';
 
 const router = Router();
@@ -36,5 +38,9 @@ router.put('/kiosks/:id',          ...admin, updateKiosk);
 router.get('/sms-logs',            ...admin, getSmsLogs);
 router.delete('/sms-logs/clear',   ...admin, clearSmsLogs);
 router.get('/login-logs',          ...admin, getLoginLogs);
+
+// School settings
+router.get('/school-settings',     ...admin, getSchoolSettings);
+router.put('/school-settings',     ...admin, updateSchoolSettings);
 
 export default router;

@@ -9,6 +9,9 @@ import {
   getTeacherSubjectAssignments,
   getSubjectAttendance,
   verifyPartialAttendance,
+  getAttendanceRoster,
+  confirmAttendance,
+  autoMarkAbsent,
 } from '../controllers/teacherController';
 
 const router = express.Router();
@@ -21,6 +24,21 @@ router.get('/classes', getTeacherClasses);
 
 // Get today's attendance summary for teacher's class
 router.get('/attendance/today', getTodayAttendanceSummary);
+
+// ── NEW: Full class roster with kiosk scan status ─────────────────────
+// GET /api/teacher/attendance/roster?date=2025-07-15&session=AM
+router.get('/attendance/roster', getAttendanceRoster);
+
+// ── NEW: Confirm a student from roster into Final Attendance List ─────
+// POST /api/teacher/attendance/confirm
+// Body: { student_id, session, status?, date? }
+// Enforces: student must have a kiosk scan to be confirmable
+router.post('/attendance/confirm', confirmAttendance);
+
+// ── NEW: Auto-mark absent for session cutoff ──────────────────────────
+// POST /api/teacher/attendance/auto-absent
+// Body: { session, date? }
+router.post('/attendance/auto-absent', autoMarkAbsent);
 
 // Mark manual attendance
 router.post('/attendance/manual', markManualAttendance);

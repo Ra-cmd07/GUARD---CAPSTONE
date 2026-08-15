@@ -18,7 +18,7 @@ async function getAttendanceTrend(req, res) {
             // Count total students
             const [totalStudents] = await db_1.default.execute('SELECT COUNT(*) as total FROM students WHERE is_active = 1');
             const total = totalStudents[0]?.total || 0;
-            // Count students who attended (Time-In or Late)
+            // Count students who attended (Time-In or Late) — only verified records
             const [attended] = await db_1.default.execute(`SELECT COUNT(DISTINCT student_id) as count 
          FROM attendance 
          WHERE date = ? 

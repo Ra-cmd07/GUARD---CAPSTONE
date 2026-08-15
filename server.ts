@@ -51,8 +51,10 @@ import excuseRoutes       from './routes/excuseRoutes';
 import messageRoutes      from './routes/messageRoutes';
 import alertRoutes        from './routes/alertRoutes';
 import announcementRoutes from './routes/announcementRoutes';
+import sf1Routes         from './routes/sf1Routes';
 import fingerprintRoutes  from './routes/fingerprintRoutes';
 import assignmentRoutes from './routes/assignmentRoutes';
+import sf2Routes        from './routes/sf2Routes';
 import { checkAttendanceThresholds } from './controllers/attendanceAlertController';
 
 import { errorHandler } from './middleware/errorMiddleware';
@@ -128,7 +130,9 @@ app.use('/api/excuse',         excuseRoutes);
 app.use('/api/messages',       messageRoutes);
 app.use('/api/alerts',         alertRoutes);
 app.use('/api/announcements',  announcementRoutes);
+app.use('/api/sf1',            sf1Routes);
 app.use('/api/fingerprint',    fingerprintRoutes);
+app.use('/api/sf2',            sf2Routes);
 
 // ─── Health Check ─────────────────────────────────────────────────────
 app.get('/api/health', (_req, res) => {

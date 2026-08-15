@@ -11,6 +11,7 @@ exports.getAttendanceStats = getAttendanceStats;
 exports.getOverrideLogs = getOverrideLogs;
 exports.getRecentAttendance = getRecentAttendance;
 const db_1 = __importDefault(require("../lib/db"));
+const teacherController_1 = require("./teacherController");
 // ─── GET /api/attendance ──────────────────────────────────────────────
 // Admin sees all; Teacher sees own class; Parent sees child; Student sees own
 async function getAttendance(req, res) {
@@ -64,7 +65,7 @@ async function getAttendance(req, res) {
             params.push(profileId);
         }
         else if (role === 'admin') {
-            // Admin can filter by section
+            // Admin sees all verified records; filter by section if provided
             if (section) {
                 query += ' AND a.section = ?';
                 params.push(section);
@@ -180,6 +181,16 @@ async function updateAttendance(req, res) {
             req.user.id, id]);
         // Log the override if made by a teacher
         if (role === 'teacher' && profileId && (status !== existing.status || session !== existing.session)) {
+            // Append role-context audit note
+            const roleLabel = await (0, teacherController_1.buildTeacherRoleLabel)(profileId, existing.section);
+            const [tRows] = await db_1.default.execute('SELECT name FROM teachers WHERE id = ?', [profileId]);
+            const teacherName = tRows[0]?.name || 'Teacher';
+            const auditSuffix = `Modified by ${teacherName} (${roleLabel})`;
+            await db_1.default.execute(`UPDATE attendance
+         SET notes = CONCAT(IFNULL(notes,''), ' | ', ?),
+             teacher_id = ?,
+             teacher_name = ?
+         WHERE id = ?`, [auditSuffix, profileId, teacherName, id]);
             await db_1.default.execute(`INSERT INTO attendance_override_log
            (attendance_id, teacher_id, old_status, new_status, old_session, new_session, reason)
          VALUES (?, ?, ?, ?, ?, ?, ?)`, [id, profileId, existing.status, status || existing.status,

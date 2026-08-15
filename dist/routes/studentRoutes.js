@@ -9,6 +9,7 @@ router.post('/', authMiddleware_1.protect, (0, authMiddleware_1.requireRole)('ad
 router.get('/:id', authMiddleware_1.protect, studentController_1.getStudentById);
 router.put('/:id', authMiddleware_1.protect, (0, authMiddleware_1.requireRole)('admin', 'teacher'), studentController_1.updateStudent);
 router.get('/:id/attendance', authMiddleware_1.protect, studentController_1.getStudentAttendance);
+router.delete('/:id/attendance/:recordId/hide', authMiddleware_1.protect, studentController_1.hideAttendanceRecord);
 router.get('/:id/sms-logs', authMiddleware_1.protect, studentController_1.getStudentSmsLogs);
 router.delete('/:id/sms-logs/clear', authMiddleware_1.protect, studentController_1.clearStudentSmsLogs);
 exports.default = router;

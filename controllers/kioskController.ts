@@ -98,6 +98,25 @@ export async function kioskScan(req: Request, res: Response): Promise<void> {
       return;
     }
 
+    // ── Fallback: pull section/grade from assignments if student profile is missing them ──
+    if (!student.section) {
+      const [asgRows] = await pool.execute(
+        `SELECT a.section, a.year_level FROM assignment_students asg
+         JOIN assignments a ON a.id = asg.assignment_id
+         WHERE asg.student_id = ? AND a.section IS NOT NULL LIMIT 1`,
+        [student.id]
+      ) as any[];
+      if ((asgRows as any[]).length > 0) {
+        student.section = (asgRows as any[])[0].section;
+        student.grade   = student.grade || (asgRows as any[])[0].year_level;
+        // Persist to students table so future scans work correctly
+        await pool.execute(
+          'UPDATE students SET section = ?, grade = ? WHERE id = ?',
+          [student.section, student.grade, student.id]
+        );
+      }
+    }
+
     // ── Determine status (Philippines timezone UTC+8) ────────────────
     const now = new Date();
     const phTime = new Date(now.getTime() + (8 * 60 * 60 * 1000));

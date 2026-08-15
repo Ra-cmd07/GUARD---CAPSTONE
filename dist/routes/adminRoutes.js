@@ -19,4 +19,7 @@ router.put('/kiosks/:id', ...admin, adminController_1.updateKiosk);
 router.get('/sms-logs', ...admin, adminController_1.getSmsLogs);
 router.delete('/sms-logs/clear', ...admin, adminController_1.clearSmsLogs);
 router.get('/login-logs', ...admin, adminController_1.getLoginLogs);
+// School settings
+router.get('/school-settings', ...admin, adminController_1.getSchoolSettings);
+router.put('/school-settings', ...admin, adminController_1.updateSchoolSettings);
 exports.default = router;

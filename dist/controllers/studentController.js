@@ -8,6 +8,7 @@ exports.createStudent = createStudent;
 exports.getStudentById = getStudentById;
 exports.updateStudent = updateStudent;
 exports.getStudentAttendance = getStudentAttendance;
+exports.hideAttendanceRecord = hideAttendanceRecord;
 exports.getStudentSmsLogs = getStudentSmsLogs;
 exports.clearStudentSmsLogs = clearStudentSmsLogs;
 const db_1 = __importDefault(require("../lib/db"));
@@ -153,12 +154,32 @@ async function updateStudent(req, res) {
     }
 }
 // ─── GET /api/students/:id/attendance ────────────────────────────────
+// Returns confirmed attendance records + pending kiosk scans for parent portal.
+// Shows ALL records including subject-specific ones so parents see the full picture.
+// Records hidden by the parent (via parent_hidden_attendance) are excluded.
 async function getStudentAttendance(req, res) {
     try {
         const { id } = req.params;
         const from = req.query.from;
         const to = req.query.to;
-        let q = 'SELECT *, DATE_FORMAT(date, "%Y-%m-%d") as date_str FROM attendance WHERE student_id = ?';
+        // Resolve parent_id for filtering hidden records
+        let parentId = null;
+        if (req.user?.role === 'parent' && req.user?.profileId) {
+            parentId = req.user.profileId;
+        }
+        // ── Confirmed attendance records ─────────────────────────────────
+        let q = `
+      SELECT
+        id, student_id, student_name, lrn,
+        DATE_FORMAT(date, '%Y-%m-%d') AS date,
+        DATE_FORMAT(date, '%Y-%m-%d') AS date_str,
+        session, subject, status, scan_method,
+        time_in, time_out, photo_path, notes,
+        timestamp, teacher_name,
+        'confirmed' AS record_type
+      FROM attendance
+      WHERE student_id = ?
+    `;
         const p = [id];
         if (from) {
             q += ' AND date >= ?';
@@ -168,17 +189,86 @@ async function getStudentAttendance(req, res) {
             q += ' AND date <= ?';
             p.push(to);
         }
-        q += ' ORDER BY date DESC, timestamp DESC';
-        const [rows] = await db_1.default.execute(q, p);
-        // Replace date with formatted string to avoid timezone issues
-        const formatted = rows.map(r => ({
-            ...r,
-            date: r.date_str // Use the formatted string instead of DATE object
-        }));
-        res.json(formatted);
+        if (parentId) {
+            q += ` AND id NOT IN (
+        SELECT CAST(record_id AS UNSIGNED) FROM parent_hidden_attendance
+        WHERE parent_id = ? AND record_type = 'confirmed'
+      )`;
+            p.push(parentId);
+        }
+        // ── Pending kiosk scans ──────────────────────────────────────────
+        let qPartial = `
+      SELECT
+        id, student_id, student_name, lrn,
+        DATE_FORMAT(date, '%Y-%m-%d') AS date,
+        DATE_FORMAT(date, '%Y-%m-%d') AS date_str,
+        session, NULL AS subject, status, scan_method,
+        time_in, time_out, photo_path, notes,
+        scanned_at AS timestamp, NULL AS teacher_name,
+        'pending' AS record_type
+      FROM partial_attendance
+      WHERE student_id = ?
+    `;
+        const pPartial = [id];
+        if (from) {
+            qPartial += ' AND date >= ?';
+            pPartial.push(from);
+        }
+        if (to) {
+            qPartial += ' AND date <= ?';
+            pPartial.push(to);
+        }
+        if (parentId) {
+            qPartial += ` AND id NOT IN (
+        SELECT CAST(record_id AS UNSIGNED) FROM parent_hidden_attendance
+        WHERE parent_id = ? AND record_type = 'pending'
+      )`;
+            pPartial.push(parentId);
+        }
+        const [confirmed] = await db_1.default.execute(q + ' ORDER BY date DESC, timestamp DESC', p);
+        const [pending] = await db_1.default.execute(qPartial + ' ORDER BY date DESC, scanned_at DESC', pPartial);
+        const confirmedKeys = new Set(confirmed.map((r) => `${r.date_str}_${(r.session || 'AM').toUpperCase()}`));
+        const pendingFiltered = pending.filter((r) => {
+            const key = `${r.date_str}_${(r.session || 'AM').toUpperCase()}`;
+            return !confirmedKeys.has(key);
+        });
+        const all = [
+            ...confirmed.map(r => ({ ...r, date: r.date_str })),
+            ...pendingFiltered.map(r => ({
+                ...r, date: r.date_str,
+                status: `${r.status} (pending)`,
+            })),
+        ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        res.json(all);
     }
     catch (err) {
         console.error('getStudentAttendance error:', err);
+        res.status(500).json({ error: 'Server error' });
+    }
+}
+// ─── DELETE /api/students/:id/attendance/:recordId/hide ───────────────
+// Parent hides an attendance record from their view (does NOT delete from DB)
+async function hideAttendanceRecord(req, res) {
+    try {
+        const { id, recordId } = req.params;
+        const recordType = (req.query.type || 'confirmed');
+        if (!req.user?.profileId) {
+            res.status(401).json({ error: 'Unauthorized' });
+            return;
+        }
+        const parentId = req.user.profileId;
+        // Verify this student belongs to this parent
+        const [linkRows] = await db_1.default.execute('SELECT id FROM parent_student WHERE parent_id = ? AND student_id = ?', [parentId, id]);
+        if (!linkRows.length) {
+            res.status(403).json({ error: 'This student is not linked to your account' });
+            return;
+        }
+        await db_1.default.execute(`INSERT IGNORE INTO parent_hidden_attendance (parent_id, record_id, record_type)
+       VALUES (?, ?, ?)`, [parentId, String(recordId), recordType]);
+        res.json({ success: true, message: 'Record hidden from your view' });
+    }
+    catch (err) {
+        console.error('hideAttendanceRecord error:', err);
         res.status(500).json({ error: 'Server error' });
     }
 }
