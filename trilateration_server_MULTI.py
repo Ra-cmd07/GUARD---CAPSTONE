@@ -94,8 +94,8 @@ def run_zone_detection():
 
 # Backend API configuration
 BACKEND_API_URL = "http://localhost:5000/api/location/trilateration-update"
-FINGERPRINT_CORRECT_URL = "http://192.168.1.29:5001/api/fingerprint/correct-distance"  # HTTP port for internal calls
-DETECT_ZONE_URL = "http://192.168.1.29:5001/api/fingerprint/detect-zone"               # Enter/Exit detection
+FINGERPRINT_CORRECT_URL = "http://10.145.164.63:5001/api/fingerprint/correct-distance"  # HTTP port for internal calls
+DETECT_ZONE_URL = "http://10.145.164.63:5001/api/fingerprint/detect-zone"               # Enter/Exit detection
 ENABLE_BACKEND_SYNC = True
 ENABLE_DISTANCE_CORRECTION = True
 ENABLE_ZONE_DETECTION = True   # Set False to disable Enter/Exit detection
